@@ -1,0 +1,425 @@
+import { supabase } from '../db.js';
+import { getMarketData, getMoversData } from '../services/marketData.js';
+import { getPrices } from '../services/pricePool.js';
+import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
+import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
+
+/**
+ * Get sector radar summary from cache for enriching other contexts.
+ * Returns a short string summarizing sector rotation.
+ */
+async function getRadarSummary() {
+  try {
+    const { data: cached } = await supabase.from('ai_cache').select('result,created_at').eq('cache_key', 'sector_radar').maybeSingle();
+    if (!cached?.result) return '';
+    // Only use if less than 2 hours old
+    if (Date.now() - new Date(cached.created_at).getTime() > 2 * 60 * 60 * 1000) return '';
+    const radar = JSON.parse(cached.result);
+    const parts = [];
+    if (radar.heating?.length) {
+      parts.push('Money flowing INTO: ' + radar.heating.map(s => `${s.name} (${s.signal} — ${s.thesis})`).join(', '));
+    }
+    if (radar.cooling?.length) {
+      parts.push('Money flowing OUT OF: ' + radar.cooling.map(s => `${s.name} (${s.signal} — ${s.thesis})`).join(', '));
+    }
+    if (radar.themeWatch) {
+      parts.push(`Emerging theme: ${radar.themeWatch.name} — ${radar.themeWatch.thesis}`);
+    }
+    return parts.length > 0 ? parts.join('. ') : '';
+  } catch {
+    return '';
+  }
+}
+
+export async function buildUserContext(userId, user) {
+  try {
+    // Market data comes from memory — zero Polygon calls
+    const market = getMarketData();
+
+    const [positions, watchlist] = await Promise.allSettled([
+      supabase.from('positions').select('ticker,shares,avg_cost,company_name,entry_thesis,price_target,stop_loss,trade_notes,purchased_at,created_at').eq('user_id', userId),
+      supabase.from('watchlist').select('ticker').eq('user_id', userId).limit(10),
+    ]);
+
+    const pos = positions.status === 'fulfilled' ? (positions.value.data ?? []) : [];
+    const watch = watchlist.status === 'fulfilled' ? (watchlist.value.data ?? []).map(w => w.ticker) : [];
+
+    // Get live prices from pool for accurate P&L
+    const priceMap = pos.length > 0 ? getPrices(pos.map(p => p.ticker)) : {};
+
+    // Build P&L context from positions using LIVE prices
+    const totalUnrealizedPnl = pos.reduce((sum, p) => {
+      const cost = (p.avg_cost ?? 0) * (p.shares ?? 0);
+      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+      const current = livePrice * (p.shares ?? 0);
+      return sum + (current - cost);
+    }, 0);
+    const gainers = pos.filter(p => {
+      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+      return livePrice > (p.avg_cost ?? 0);
+    }).length;
+    const losers = pos.filter(p => {
+      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+      return livePrice < (p.avg_cost ?? 0);
+    }).length;
+
+    const positionsStr = pos.length > 0
+      ? pos.map(p => {
+          const livePrice = priceMap[p.ticker]?.price;
+          const cost = p.avg_cost ?? 0;
+          const pnlPct = cost > 0 && livePrice ? ((livePrice - cost) / cost * 100).toFixed(1) : '0.0';
+          // CRITICAL: only use the user-provided purchased_at. Do NOT fall back
+          // to created_at (when the position row was added to OUR database) —
+          // that's not when the user actually bought the stock. A user adding
+          // a 3-year hold yesterday would otherwise look like a "1d" hold and
+          // the AI would invent short-term/tax-status reasoning that's wrong.
+          // When the date is unknown, say so explicitly so the AI knows not to
+          // invent a holding period.
+          const purchaseTime = p.purchased_at;
+          let holdSegment = 'hold duration unknown';
+          if (purchaseTime) {
+            const startDay = Math.floor(new Date(purchaseTime).getTime() / 86400000);
+            const endDay = Math.floor(Date.now() / 86400000);
+            const holdDays = Math.max(0, endDay - startDay);
+            const holdStr = holdDays >= 365 ? `${Math.floor(holdDays / 365)}y${holdDays % 365 > 30 ? ` ${Math.floor((holdDays % 365) / 30)}m` : ''}` : `${holdDays}d`;
+            const taxStatus = holdDays >= 365 ? 'long-term' : 'short-term';
+            holdSegment = `held ${holdStr} [${taxStatus}]`;
+          }
+          return `${p.ticker} (${p.shares} shares @ $${cost} avg, ${livePrice ? `now $${livePrice.toFixed(2)}, ` : ''}${pnlPct > 0 ? '+' : ''}${pnlPct}% P&L, ${holdSegment})`;
+        }).join(', ')
+      : 'No positions yet';
+
+    // Fetch multi-day trend data, Polygon news, and Finnhub breaking news in parallel
+    const fetchJobs = [getMarketTrend(), getMarketNews(5)];
+    if (isFinnhubAvailable()) fetchJobs.push(getBreakingNews(5));
+
+    const [trendResult, marketNewsResult, breakingResult] = await Promise.allSettled(fetchJobs);
+    const trend = trendResult.status === 'fulfilled' ? trendResult.value : { narrative: 'Trend data unavailable', momentum: 'unknown' };
+    const marketHeadlines = marketNewsResult.status === 'fulfilled' ? marketNewsResult.value : [];
+    const breakingNews = breakingResult?.status === 'fulfilled' ? (breakingResult.value ?? []) : [];
+
+    // Combine Polygon + Finnhub headlines, dedupe by title similarity
+    const allHeadlines = [...breakingNews, ...marketHeadlines];
+    const seen = new Set();
+    const dedupedHeadlines = allHeadlines.filter(a => {
+      const key = a.title?.toLowerCase().slice(0, 50);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 8);
+
+    const headlinesStr = dedupedHeadlines.length > 0
+      ? dedupedHeadlines.map(a => `${a.source}: ${a.title}`).join('\n')
+      : 'No recent headlines';
+
+    return {
+      name: user.display_name || 'Trader',
+      plan: user.plan || 'free',
+      riskTolerance: user.risk_tolerance || 'moderate',
+      tradingStyle: user.trading_style || 'swing',
+      positions: positionsStr,
+      positionCount: pos.length,
+      positionTickers: pos.map(p => p.ticker),
+      _rawPositions: pos,
+      watchlist: watch.length > 0 ? watch.join(', ') : 'Empty',
+      totalUnrealizedPnl: totalUnrealizedPnl !== 0 ? `${totalUnrealizedPnl > 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(0)}` : '$0',
+      gainers,
+      losers,
+      vix: market.vix?.value ?? 'N/A',
+      vixLabel: market.vix?.label ?? 'Unknown',
+      fearGreed: market.fearGreed?.value ?? 'N/A',
+      fearGreedLabel: market.fearGreed?.label ?? 'Unknown',
+      spyRsi: market.spyRsi?.value ?? 'N/A',
+      spyRsiLabel: market.spyRsi?.label ?? 'Unknown',
+      qqqRsi: market.qqqRsi?.value ?? 'N/A',
+      regime: market.regime,
+      marketOpen: market.marketOpen,
+      marketTrend: trend.narrative,
+      marketMomentum: trend.momentum,
+      marketHeadlines: headlinesStr,
+    };
+  } catch {
+    return {
+      name: user.display_name || 'Trader',
+      plan: user.plan || 'free',
+      riskTolerance: user.risk_tolerance || 'moderate',
+      tradingStyle: user.trading_style || 'swing',
+      positions: 'Unavailable',
+      positionCount: 0,
+      positionTickers: [],
+      _rawPositions: [],
+      watchlist: 'Unavailable',
+      totalUnrealizedPnl: '$0',
+      gainers: 0,
+      losers: 0,
+      vix: 'N/A', vixLabel: 'Unknown',
+      fearGreed: 'N/A', fearGreedLabel: 'Unknown',
+      spyRsi: 'N/A', spyRsiLabel: 'Unknown',
+      qqqRsi: 'N/A', regime: 'Neutral', marketOpen: false,
+    };
+  }
+}
+
+/**
+ * Build rich context for the agent — includes real news, movers, and price moves.
+ * This prevents Claude from hallucinating market events.
+ */
+export async function buildAgentContext(userId, user) {
+  const base = await buildUserContext(userId, user);
+
+  // Get today's date in ET for temporal grounding
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dateStr = etNow.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = etNow.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  // Get movers from memory (zero API calls)
+  const movers = getMoversData();
+
+  // Get recent news for user's position tickers + broad market
+  const newsTickers = [...new Set([...base.positionTickers.slice(0, 3), 'SPY'])];
+  let recentNews = [];
+  try {
+    const newsResults = await Promise.allSettled(newsTickers.map(t => getNews(t, 5)));
+    for (const result of newsResults) {
+      if (result.status === 'fulfilled' && result.value?.length) {
+        recentNews.push(...result.value);
+      }
+    }
+    // Dedupe by title and sort by date, take most recent
+    const seen = new Set();
+    recentNews = recentNews
+      .filter(a => { const key = a.title; if (seen.has(key)) return false; seen.add(key); return true; })
+      .sort((a, b) => new Date(b.publishedUtc) - new Date(a.publishedUtc))
+      .slice(0, 8);
+  } catch { recentNews = []; }
+
+  // Get SPY/QQQ price changes (key indices)
+  let indexMoves = '';
+  try {
+    const indices = getPrices(['SPY', 'QQQ', 'DIA', 'IWM']);
+    const parts = [];
+    for (const [ticker, data] of Object.entries(indices)) {
+      if (data?.price && data?.changePercent != null) {
+        parts.push(`${ticker}: $${data.price.toFixed(2)} (${data.changePercent >= 0 ? '+' : ''}${data.changePercent.toFixed(2)}%)`);
+      }
+    }
+    indexMoves = parts.length > 0 ? parts.join(', ') : 'No index data available';
+  } catch { indexMoves = 'No index data available'; }
+
+  // Format movers
+  const topGainers = (movers.gainers ?? []).slice(0, 3).map(m =>
+    `${m.ticker} +${m.changePercent?.toFixed(1)}% ($${m.price?.toFixed(2)})`
+  ).join(', ') || 'None available';
+
+  const topLosers = (movers.losers ?? []).slice(0, 3).map(m =>
+    `${m.ticker} ${m.changePercent?.toFixed(1)}% ($${m.price?.toFixed(2)})`
+  ).join(', ') || 'None available';
+
+  // Format news
+  const newsStr = recentNews.length > 0
+    ? recentNews.map(a => {
+        const ago = timeSince(new Date(a.publishedUtc));
+        return `[${ago}] ${a.source}: ${a.title}`;
+      }).join('\n')
+    : 'No recent news available from data feeds.';
+
+  // Position price changes for "what happened" context
+  let positionMoves = '';
+  if (base.positionTickers.length > 0) {
+    const posMap = getPrices(base.positionTickers);
+    const parts = [];
+    for (const ticker of base.positionTickers) {
+      const d = posMap[ticker];
+      if (d?.price && d?.changePercent != null) {
+        parts.push(`${ticker}: $${d.price.toFixed(2)} (${d.changePercent >= 0 ? '+' : ''}${d.changePercent.toFixed(2)}%)`);
+      }
+    }
+    positionMoves = parts.length > 0 ? parts.join(', ') : 'No live price data for positions';
+  }
+
+  // Get sector radar summary for rotation context
+  let sectorRadarStr = '';
+  try {
+    sectorRadarStr = await getRadarSummary();
+  } catch {}
+
+  // Plan adherence summary — patterns from comparing stated trade plans vs actual exits.
+  // Lets the agent ground feedback in the trader's actual behavior rather than generic advice.
+  let planAdherenceStr = '';
+  try {
+    const { getAdherenceSummaryForAgent } = await import('../services/planAdherence.js');
+    planAdherenceStr = await getAdherenceSummaryForAgent(userId);
+  } catch {}
+
+  // Performance attribution summary — where the user's edge actually lives (style, concentration).
+  let attributionStr = '';
+  try {
+    const { getAttributionSummaryForAgent } = await import('../services/performanceAttribution.js');
+    attributionStr = await getAttributionSummaryForAgent(userId);
+  } catch {}
+
+  // Build trade plans context — check if positions have plan data
+  const rawPos = base._rawPositions ?? [];
+  const tradePlans = rawPos.filter(p => p.entry_thesis || p.price_target || p.stop_loss);
+  let tradePlansStr = '';
+  const activeAlerts = []; // positions near stop or target
+  if (tradePlans.length > 0) {
+    const priceMap = getPrices(tradePlans.map(p => p.ticker));
+    tradePlansStr = '\nTRADE PLANS (the trader set these — reference them when relevant):\n' +
+      tradePlans.map(p => {
+        const live = priceMap[p.ticker]?.price;
+        const parts = [`${p.ticker}:`];
+        if (p.entry_thesis) parts.push(`Thesis: "${p.entry_thesis}"`);
+        if (p.price_target) {
+          const targetDist = live ? ((p.price_target - live) / live * 100) : null;
+          const targetStr = targetDist != null ? ` (${targetDist.toFixed(1)}% from current)` : '';
+          parts.push(`Target: $${p.price_target}${targetStr}`);
+          if (targetDist != null && targetDist >= 0 && targetDist <= 10) {
+            activeAlerts.push(`${p.ticker} is within ${targetDist.toFixed(1)}% of its price target ($${p.price_target})`);
+          }
+          if (targetDist != null && targetDist < 0) {
+            activeAlerts.push(`${p.ticker} has PASSED its price target ($${p.price_target}) — now trading at $${live.toFixed(2)}`);
+          }
+        }
+        if (p.stop_loss) {
+          const stopDist = live ? ((p.stop_loss - live) / live * 100) : null;
+          const stopStr = stopDist != null ? ` (${stopDist.toFixed(1)}% from current)` : '';
+          parts.push(`Stop: $${p.stop_loss}${stopStr}`);
+          if (stopDist != null && stopDist >= -10 && stopDist <= 0) {
+            activeAlerts.push(`${p.ticker} is within ${Math.abs(stopDist).toFixed(1)}% of its stop loss ($${p.stop_loss})`);
+          }
+          if (stopDist != null && stopDist > 0) {
+            activeAlerts.push(`${p.ticker} has BROKEN BELOW its stop loss ($${p.stop_loss}) — now at $${live.toFixed(2)}`);
+          }
+        }
+        if (p.trade_notes) parts.push(`Notes: ${p.trade_notes}`);
+        return parts.join(' | ');
+      }).join('\n');
+  }
+
+  // If any positions are near their targets/stops, add an urgent alert section
+  let alertsStr = '';
+  if (activeAlerts.length > 0) {
+    alertsStr = '\n\nACTIVE ALERTS (bring these up proactively — the trader needs to know):\n' + activeAlerts.join('\n');
+  }
+
+  return {
+    ...base,
+    currentDate: dateStr,
+    currentTime: timeStr,
+    indexMoves,
+    topGainers,
+    topLosers,
+    recentNews: newsStr,
+    positionMoves,
+    tradePlans,
+    tradePlansStr,
+    activeAlerts: alertsStr,
+    sectorRadar: sectorRadarStr,
+    planAdherence: planAdherenceStr,
+    performanceAttribution: attributionStr,
+  };
+}
+
+/**
+ * Lightweight context for the daily pre-market brief.
+ * Wraps buildUserContext and adds:
+ *   - trade plan rows with target/stop distance
+ *   - active alerts for positions near or past their target/stop
+ *   - ticker-specific headlines for any position that's a big premarket mover
+ *
+ * Designed to stay cheap at scale — runs at 7:30am ET across all paid users
+ * via the cron, so we keep extra fetches bounded (max 3 ticker-news calls).
+ */
+export async function buildBriefContext(userId, user) {
+  const base = await buildUserContext(userId, user);
+
+  const rawPos = base._rawPositions ?? [];
+  if (rawPos.length === 0) return base;
+
+  const tickers = rawPos.map(p => p.ticker);
+  const priceMap = getPrices(tickers);
+
+  // ── Trade plans + alerts (lifted from buildAgentContext, kept inline so this
+  //    helper stays self-contained) ────────────────────────────────────────────
+  const planLines = [];
+  const activeAlerts = [];
+  for (const p of rawPos) {
+    if (!p.entry_thesis && !p.price_target && !p.stop_loss) continue;
+    const live = priceMap[p.ticker]?.price;
+    const parts = [`${p.ticker}:`];
+    if (p.entry_thesis) parts.push(`thesis "${p.entry_thesis}"`);
+    if (p.price_target) {
+      const dist = live ? ((p.price_target - live) / live * 100) : null;
+      parts.push(`target $${p.price_target}${dist != null ? ` (${dist.toFixed(1)}% away)` : ''}`);
+      if (dist != null && dist >= 0 && dist <= 10) {
+        activeAlerts.push(`${p.ticker} is within ${dist.toFixed(1)}% of its target ($${p.price_target}).`);
+      } else if (dist != null && dist < 0) {
+        activeAlerts.push(`${p.ticker} has PASSED its target ($${p.price_target}) — now $${live.toFixed(2)}.`);
+      }
+    }
+    if (p.stop_loss) {
+      const dist = live ? ((p.stop_loss - live) / live * 100) : null;
+      parts.push(`stop $${p.stop_loss}${dist != null ? ` (${dist.toFixed(1)}% away)` : ''}`);
+      if (dist != null && dist >= -10 && dist <= 0) {
+        activeAlerts.push(`${p.ticker} is within ${Math.abs(dist).toFixed(1)}% of its stop ($${p.stop_loss}).`);
+      } else if (dist != null && dist > 0) {
+        activeAlerts.push(`${p.ticker} has BROKEN BELOW its stop ($${p.stop_loss}) — now $${live.toFixed(2)}.`);
+      }
+    }
+    planLines.push(parts.join(' | '));
+  }
+  const tradePlansStr = planLines.length > 0
+    ? '\nTRADE PLANS (the trader set these — reference them when relevant):\n' + planLines.join('\n')
+    : '';
+  const activeAlertsStr = activeAlerts.length > 0
+    ? '\n\nACTIVE ALERTS (lead with these — the trader needs to know):\n- ' + activeAlerts.join('\n- ')
+    : '';
+
+  // ── Ticker-specific news for big movers ──────────────────────────────────
+  // Premarket moves often have catalysts (earnings, analyst, FDA, contract).
+  // We pull headlines for up to 3 tickers with the largest absolute move so
+  // the brief can lead with WHY rather than just the percentage.
+  const moversByMove = rawPos
+    .map(p => ({
+      ticker: p.ticker,
+      changePct: priceMap[p.ticker]?.changePercent ?? 0,
+    }))
+    .filter(m => Math.abs(m.changePct) >= 3)
+    .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+    .slice(0, 3);
+
+  const tickerNewsLines = [];
+  if (moversByMove.length > 0) {
+    const newsResults = await Promise.allSettled(
+      moversByMove.map(m => getNews(m.ticker, 2))
+    );
+    for (let i = 0; i < moversByMove.length; i++) {
+      const m = moversByMove[i];
+      const r = newsResults[i];
+      const articles = r.status === 'fulfilled' ? (r.value ?? []) : [];
+      if (articles.length === 0) continue;
+      tickerNewsLines.push(
+        `${m.ticker} (${m.changePct >= 0 ? '+' : ''}${m.changePct.toFixed(1)}%): ` +
+        articles.slice(0, 2).map(a => a.title).join(' | ')
+      );
+    }
+  }
+  const tickerNewsStr = tickerNewsLines.length > 0
+    ? '\nTICKER-SPECIFIC NEWS for big movers in your portfolio:\n' + tickerNewsLines.join('\n')
+    : '';
+
+  return {
+    ...base,
+    tradePlansStr,
+    activeAlertsStr,
+    tickerNewsStr,
+  };
+}
+
+function timeSince(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}

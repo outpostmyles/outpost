@@ -1,0 +1,2078 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { api } from '../../lib/api.js';
+import { cachedFetch } from '../../lib/cache.js';
+import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
+import { renderPlainText } from '../../utils/renderText.js';
+import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
+import PlanAdherenceCard from './PlanAdherenceCard.jsx';
+import PerformanceAttributionCard from './PerformanceAttributionCard.jsx';
+import SynthesisCard from './SynthesisCard.jsx';
+
+const COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16'];
+
+/**
+ * Compute per-position attention status. Used to sort the position list so
+ * what needs the user's attention bubbles to the top, and to render a small
+ * status badge on the collapsed row.
+ *
+ * Returns:
+ *   - status: 'below_stop' | 'near_target' | 'deep_drawdown' | 'big_mover' | 'calm'
+ *   - score:  numeric, higher = more attention. Used for sort order.
+ *   - badgeLabel / badgeColor: rendering hints (only for non-calm)
+ *   - concentration: pct of portfolio (rendered as warning chip if > 25)
+ */
+function computePositionStatus(pos, totalValue) {
+  const price = pos.currentPrice ?? 0;
+  const pnlPct = pos.avg_cost > 0 && price ? ((price - pos.avg_cost) / pos.avg_cost) * 100 : 0;
+  const todayPct = pos.todayChangePercent ?? 0;
+  const concentration = totalValue > 0 && pos.currentValue > 0
+    ? (pos.currentValue / totalValue) * 100
+    : 0;
+
+  // Below stop — most urgent
+  if (pos.stop_loss && price && price < pos.stop_loss) {
+    return { status: 'below_stop', score: 100, badgeLabel: 'BELOW STOP', badgeColor: 'var(--red)', concentration };
+  }
+  // Near or hit target
+  if (pos.price_target && price) {
+    if (price >= pos.price_target) {
+      return { status: 'target_hit', score: 95, badgeLabel: 'TARGET HIT', badgeColor: 'var(--green)', concentration };
+    }
+    if (price >= pos.price_target * 0.95) {
+      const distPct = ((pos.price_target - price) / price) * 100;
+      return { status: 'near_target', score: 90, badgeLabel: `${distPct.toFixed(1)}% TO TARGET`, badgeColor: 'var(--green)', concentration };
+    }
+  }
+  // Deep drawdown
+  if (pnlPct <= -20) {
+    return { status: 'deep_drawdown', score: 85, badgeLabel: `DOWN ${Math.abs(pnlPct).toFixed(0)}%`, badgeColor: 'var(--amber)', concentration };
+  }
+  // Big mover today
+  if (Math.abs(todayPct) >= 5) {
+    return { status: 'big_mover', score: 70 + Math.min(20, Math.abs(todayPct)), badgeLabel: `${todayPct >= 0 ? '+' : ''}${todayPct.toFixed(1)}% TODAY`, badgeColor: todayPct >= 0 ? 'var(--green)' : 'var(--red)', concentration };
+  }
+  // Moderate drawdown
+  if (pnlPct <= -15) {
+    return { status: 'moderate_drawdown', score: 60, badgeLabel: `DOWN ${Math.abs(pnlPct).toFixed(0)}%`, badgeColor: 'var(--amber)', concentration };
+  }
+  // Calm — no badge, lowest sort priority
+  return { status: 'calm', score: 0, badgeLabel: null, badgeColor: null, concentration };
+}
+
+/**
+ * Compact dollar formatter — $83.4K, $1.2M, $543.
+ * Used in the 3-stat hero so the VALUE column never overflows on tall numbers.
+ */
+function fmtCompact(n) {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (abs >= 10_000)    return (n / 1000).toFixed(1) + 'K';
+  if (abs >= 1000)      return (n / 1000).toFixed(2) + 'K';
+  return n.toFixed(0);
+}
+
+/**
+ * Detect and skip options contracts.
+ * Options tickers have formats like: AAPL 250418C00200000, AAPL250418C200, AAPL_041825C200, etc.
+ */
+function isOptionsTicker(raw) {
+  if (!raw) return false;
+  // Options have digits + C/P pattern, or spaces with date+strike, or underscores
+  if (/\d{6}[CP]\d/.test(raw)) return true;         // AAPL250418C200
+  if (/\s\d{6}[CP]\d/.test(raw)) return true;       // AAPL 250418C200
+  if (/_\d{6}[CP]/.test(raw)) return true;           // AAPL_250418C200
+  if (/\d{2}\/\d{2}\/\d{2,4}/.test(raw)) return true; // Contains date-like pattern
+  if (raw.length > 6 && /[CP]\d{2,}/.test(raw)) return true;
+  return false;
+}
+
+/**
+ * Parse CSV text into position objects.
+ * Handles TWO formats:
+ * 1. Webull Order Records (transaction history with Side=Buy/Sell) — aggregates into net positions
+ * 2. Generic positions CSV (Symbol, Shares, Avg Cost columns) — imports directly
+ * Auto-filters options contracts and cancelled orders.
+ */
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return { positions: [], optionsSkipped: 0, isTransactions: false };
+
+  const parseRow = (line) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (const ch of line) {
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue; }
+      current += ch;
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+  const findCol = (candidates) => headers.findIndex(h => candidates.some(c => h.includes(c)));
+  const tickerCol = findCol(['symbol', 'ticker', 'sym']);
+  const sharesCol = findCol(['quantity', 'shares', 'qty', 'filled', 'totalqty']);
+  const costCol = findCol(['avgprice', 'avgcost', 'averagecost', 'averageprice', 'costbasis', 'costpershare', 'unitcost', 'price']);
+  const nameCol = findCol(['name', 'companyname', 'company', 'description']);
+  const dateCol = findCol(['placedtime', 'filledtime', 'purchasedate', 'date', 'opendate', 'tradedate']);
+  const sideCol = findCol(['side', 'action', 'type', 'buysell', 'transactiontype']);
+  const statusCol = findCol(['status', 'orderstatus']);
+  const filledCol = findCol(['filled']); // Webull has a separate "Filled" column for actual filled qty
+
+  if (tickerCol === -1) return { positions: [], optionsSkipped: 0, isTransactions: false };
+
+  // Detect if this is a transaction history (has Side column with Buy/Sell)
+  const isTransactions = sideCol >= 0;
+  let optionsSkipped = 0;
+
+  if (isTransactions) {
+    // ===== TRANSACTION MODE: Aggregate buys/sells into net positions =====
+    // Map: ticker → { totalShares, totalCost, companyName, firstBuyDate }
+    const agg = {};
+
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const cols = parseRow(lines[i]);
+      const rawTicker = cols[tickerCol] || '';
+
+      // Skip options
+      if (isOptionsTicker(rawTicker)) { optionsSkipped++; continue; }
+
+      // Skip cancelled/pending orders — only process filled
+      if (statusCol >= 0) {
+        const status = (cols[statusCol] || '').toLowerCase();
+        if (status !== 'filled') continue;
+      }
+
+      const ticker = rawTicker.toUpperCase().replace(/[^A-Z]/g, '');
+      if (!ticker || ticker.length > 5) continue;
+
+      const side = (cols[sideCol] || '').toLowerCase();
+      const isBuy = side.includes('buy');
+      const isSell = side.includes('sell');
+      if (!isBuy && !isSell) continue;
+
+      // Use "Filled" column for actual qty if available, otherwise "Total Qty"
+      const rawQty = filledCol >= 0 ? cols[filledCol] : (sharesCol >= 0 ? cols[sharesCol] : '');
+      const qty = parseFloat(rawQty?.replace(/[$,@]/g, ''));
+      if (!qty || qty <= 0) continue;
+
+      // Get price — Webull "Avg Price" column
+      const rawPrice = costCol >= 0 ? cols[costCol] : '';
+      const price = parseFloat(rawPrice?.replace(/[$,@]/g, ''));
+
+      if (!agg[ticker]) {
+        agg[ticker] = { totalShares: 0, totalCost: 0, companyName: ticker, firstBuyDate: '' };
+      }
+
+      const name = nameCol >= 0 ? (cols[nameCol] || ticker) : ticker;
+      if (name !== ticker) agg[ticker].companyName = name;
+
+      if (isBuy) {
+        // Weighted average cost: add to total cost and shares
+        if (price > 0) agg[ticker].totalCost += qty * price;
+        agg[ticker].totalShares += qty;
+        // Track earliest buy date
+        const dateStr = dateCol >= 0 ? (cols[dateCol] || '') : '';
+        if (dateStr && (!agg[ticker].firstBuyDate || dateStr < agg[ticker].firstBuyDate)) {
+          agg[ticker].firstBuyDate = dateStr;
+        }
+      } else if (isSell) {
+        // Reduce shares (sells reduce position)
+        agg[ticker].totalShares -= qty;
+        // Proportionally reduce cost basis
+        if (agg[ticker].totalShares > 0 && price > 0) {
+          const avgBefore = agg[ticker].totalCost / (agg[ticker].totalShares + qty);
+          agg[ticker].totalCost = avgBefore * agg[ticker].totalShares;
+        } else if (agg[ticker].totalShares <= 0) {
+          agg[ticker].totalCost = 0;
+        }
+      }
+    }
+
+    // Convert to positions — only include tickers with positive shares (still holding)
+    const positions = Object.entries(agg)
+      .filter(([, v]) => v.totalShares > 0.0001)
+      .map(([ticker, v]) => {
+        const avgCost = v.totalShares > 0 ? v.totalCost / v.totalShares : 0;
+        // Parse Webull date format: "03/31/2026 14:58:20 EDT" → "2026-03-31"
+        let purchasedAt = '';
+        if (v.firstBuyDate) {
+          const match = v.firstBuyDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+          if (match) purchasedAt = `${match[3]}-${match[1]}-${match[2]}`;
+        }
+        return {
+          ticker,
+          shares: Math.round(v.totalShares * 10000) / 10000,
+          avgCost: avgCost > 0 ? Math.round(avgCost * 1000) / 1000 : 0,
+          companyName: v.companyName,
+          purchasedAt,
+        };
+      })
+      .sort((a, b) => b.shares * b.avgCost - a.shares * a.avgCost); // Sort by position value
+
+    return { positions, optionsSkipped, isTransactions: true };
+  }
+
+  // ===== POSITIONS MODE: Direct import (generic broker CSV) =====
+  const positions = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cols = parseRow(lines[i]);
+    const rawTicker = cols[tickerCol] || '';
+
+    if (isOptionsTicker(rawTicker)) { optionsSkipped++; continue; }
+
+    const ticker = rawTicker.toUpperCase().replace(/[^A-Z]/g, '');
+    if (!ticker || ticker.length > 5) continue;
+
+    const rawShares = sharesCol >= 0 ? cols[sharesCol] : '';
+    const rawCost = costCol >= 0 ? cols[costCol] : '';
+    const shares = parseFloat(rawShares?.replace(/[$,]/g, ''));
+    const avgCost = parseFloat(rawCost?.replace(/[$,]/g, ''));
+
+    if (sharesCol >= 0 && (!shares || shares <= 0)) continue;
+
+    let perShareCost = avgCost;
+    if (costCol >= 0 && headers[costCol].includes('costbasis') && shares > 0 && avgCost > 0) {
+      perShareCost = avgCost / shares;
+    }
+
+    positions.push({
+      ticker,
+      shares: shares > 0 ? shares : 1,
+      avgCost: perShareCost > 0 ? Math.round(perShareCost * 1000) / 1000 : 0,
+      companyName: nameCol >= 0 ? (cols[nameCol] || ticker) : ticker,
+      purchasedAt: dateCol >= 0 ? (cols[dateCol] || '') : '',
+    });
+  }
+
+  return { positions, optionsSkipped, isTransactions: false };
+}
+
+/**
+ * Parse quick-paste text. Each line: TICKER SHARES AVGCOST (cost optional)
+ * Examples: "AAPL 10 150.50" or "HYMC 50 2.537" or just "TSLA 5"
+ */
+function parseQuickPaste(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const positions = [];
+  const errors = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) continue;
+
+    // Split by whitespace, comma, or tab
+    const parts = trimmed.split(/[\s,\t]+/);
+    const ticker = (parts[0] || '').toUpperCase().replace(/[^A-Z]/g, '');
+    if (!ticker || ticker.length > 5) { errors.push(`"${parts[0]}" — not a valid ticker`); continue; }
+
+    const shares = parseFloat(parts[1]);
+    if (!shares || shares <= 0) { errors.push(`${ticker} — need a share count`); continue; }
+
+    const avgCost = parts[2] ? parseFloat(parts[2].replace(/[$,]/g, '')) : 0;
+
+    positions.push({
+      ticker,
+      shares: Math.round(shares * 10000) / 10000,
+      avgCost: avgCost > 0 ? Math.round(avgCost * 1000) / 1000 : 0,
+      companyName: ticker,
+      purchasedAt: '',
+    });
+  }
+
+  return { positions, errors };
+}
+
+function ImportModal({ onClose, onDone, showToast }) {
+  const [mode, setMode] = useState('screenshot'); // screenshot, paste, or csv
+  const [step, setStep] = useState('input'); // input → preview → importing → done
+  const [parsed, setParsed] = useState([]);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const [pasteText, setPasteText] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const [optionsSkipped, setOptionsSkipped] = useState(0);
+  const [scanning, setScanning] = useState(false);
+  const [screenshotCount, setScreenshotCount] = useState(0);
+  const [editingIdx, setEditingIdx] = useState(null);
+
+  // Ref keeps parsed data reliable across async screenshot calls
+  const parsedRef = useRef([]);
+  const scCountRef = useRef(0);
+  function setParsedAndRef(val) {
+    const next = typeof val === 'function' ? val(parsedRef.current) : val;
+    parsedRef.current = next;
+    setParsed(next);
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    setError('');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const { positions, optionsSkipped: skipped } = parseCSV(e.target.result);
+      if (positions.length === 0) {
+        setError(skipped > 0
+          ? `Found ${skipped} options contracts but no stock positions. Options aren't supported yet.`
+          : 'No positions found. Make sure the CSV has a "Symbol" or "Ticker" column.');
+        return;
+      }
+      setParsedAndRef(positions);
+      setOptionsSkipped(skipped);
+      setStep('preview');
+    };
+    reader.onerror = () => setError('Failed to read file');
+    reader.readAsText(file);
+  }
+
+  function mergePositions(existing, incoming) {
+    const map = new Map();
+    for (const p of existing) map.set(p.ticker, { ...p });
+    for (const p of incoming) {
+      const prev = map.get(p.ticker);
+      if (prev) {
+        if ((!prev.shares || prev.shares === 0) && p.shares > 0) prev.shares = p.shares;
+        if ((!prev.avgCost || prev.avgCost === 0) && p.avgCost > 0) prev.avgCost = p.avgCost;
+        if (!prev.companyName && p.companyName) prev.companyName = p.companyName;
+        if (p.shares > 0 && p.avgCost > 0) { prev.shares = p.shares; prev.avgCost = p.avgCost; }
+        map.set(p.ticker, prev);
+      } else {
+        map.set(p.ticker, { ...p });
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  async function handleScreenshot(file) {
+    if (!file) return;
+    setError('');
+    if (!file.type.startsWith('image/')) { setError('Please upload an image file (PNG, JPG, etc.)'); return; }
+    if (file.size > 10 * 1024 * 1024) { setError('Image too large — under 10MB please.'); return; }
+    setScanning(true);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await api.portfolio.parseScreenshot(base64);
+      const positions = res.positions || [];
+      if (positions.length === 0) {
+        setError('No positions found. Make sure the screenshot shows your portfolio with stock symbols visible.');
+        setScanning(false);
+        return;
+      }
+      const existing = parsedRef.current;
+      const merged = existing.length > 0 ? mergePositions(existing, positions) : positions;
+      setParsedAndRef(merged);
+      scCountRef.current += 1;
+      setScreenshotCount(scCountRef.current);
+      setStep('preview');
+    } catch (e) {
+      setError(e.error || 'Failed to read screenshot. Try a clearer image.');
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (mode === 'screenshot') { if (file) handleScreenshot(file); else setError('Could not read the dropped file'); }
+    else { if (file) handleFile(file); else setError('Could not read the dropped file'); }
+  }
+
+  function handlePaste() {
+    if (!pasteText.trim()) { setError('Paste your positions above'); return; }
+    setError('');
+    const { positions, errors } = parseQuickPaste(pasteText);
+    if (positions.length === 0) {
+      setError(errors.length > 0 ? errors.join(', ') : 'No valid positions found. Format: TICKER SHARES COST (one per line)');
+      return;
+    }
+    setParsedAndRef(positions);
+    setStep('preview');
+  }
+
+  function updatePosition(idx, field, value) {
+    setParsedAndRef(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+  }
+  function removePosition(idx) {
+    setParsedAndRef(prev => prev.filter((_, i) => i !== idx));
+    setEditingIdx(null);
+  }
+
+  async function doImport() {
+    const valid = parsed.filter(p => p.shares > 0);
+    if (valid.length === 0) { setError('No valid positions to import'); return; }
+    setStep('importing');
+    try {
+      const res = await api.portfolio.importPositions(valid);
+      setResult(res);
+      setStep('done');
+      if (res.added > 0) onDone();
+    } catch (e) {
+      setError(e.error || 'Import failed');
+      setStep('preview');
+    }
+  }
+
+  const modeBtn = (id, label) => (
+    <button onClick={() => { setMode(id); setError(''); }} style={{ flex: 1, padding: '7px 0', fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: mode === id ? 'var(--blue)' : 'var(--raised)', color: mode === id ? '#fff' : 'var(--faint)' }}>
+      {label}
+    </button>
+  );
+  const inputStyle = { width: '100%', padding: '5px 8px', fontSize: 12, background: 'var(--base)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' };
+
+  return (
+    <Modal title="IMPORT POSITIONS" onClose={onClose}>
+      {step === 'input' && (
+        <div>
+          <div style={{ display: 'flex', gap: 0, marginBottom: 14, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+            {modeBtn('screenshot', 'SCREENSHOT')}
+            {modeBtn('paste', 'QUICK PASTE')}
+            {modeBtn('csv', 'CSV FILE')}
+          </div>
+
+          {mode === 'screenshot' && (
+            <div>
+              {/* Banner when coming back for another screenshot */}
+              {parsedRef.current.length > 0 && (
+                <div style={{ padding: '8px 12px', background: 'rgba(34,197,94,0.1)', borderRadius: 6, marginBottom: 10, border: '1px solid rgba(34,197,94,0.3)' }}>
+                  <p style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600 }}>
+                    {parsedRef.current.length} position{parsedRef.current.length !== 1 ? 's' : ''} loaded — add more below
+                  </p>
+                </div>
+              )}
+
+              {/* Instructions — first time only */}
+              {parsedRef.current.length === 0 && (
+                <div style={{ padding: '10px 12px', background: 'var(--raised)', borderRadius: 6, marginBottom: 12, border: '1px solid var(--border)' }}>
+                  <p style={{ fontSize: 11, color: 'var(--text)', fontWeight: 700, marginBottom: 4 }}>
+                    Screenshot your positions list
+                  </p>
+                  <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.6 }}>
+                    Open your broker app, go to your positions, and screenshot. AI reads the ticker, shares, and avg cost automatically. Works with any broker.
+                  </p>
+                </div>
+              )}
+
+              {scanning ? (
+                <div style={{ textAlign: 'center', padding: '28px 16px' }}>
+                  <Spinner />
+                  <p style={{ fontSize: 12, color: 'var(--blue)', marginTop: 12, fontWeight: 600 }}>Reading your portfolio...</p>
+                </div>
+              ) : (
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => document.getElementById('screenshot-file-input')?.click()}
+                  style={{ border: `2px dashed ${dragOver ? 'var(--blue)' : 'var(--border)'}`, borderRadius: 8, padding: '28px 16px', textAlign: 'center', cursor: 'pointer', background: dragOver ? 'rgba(59,130,246,0.08)' : 'var(--raised)', transition: 'all 0.15s' }}
+                >
+                  <p style={{ fontSize: 28, marginBottom: 6 }}>📸</p>
+                  <p style={{ fontSize: 12, color: dragOver ? 'var(--blue)' : 'var(--muted)', fontWeight: 600 }}>Drop screenshot here</p>
+                  <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 4 }}>or tap to upload</p>
+                  <input id="screenshot-file-input" type="file" accept="image/*" onChange={(e) => { handleScreenshot(e.target.files?.[0]); e.target.value = ''; }} style={{ display: 'none' }} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === 'paste' && (
+            <div>
+              <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 10 }}>
+                One position per line — just ticker, shares, and cost:
+              </p>
+              <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, fontFamily: 'monospace', lineHeight: 1.8, background: 'var(--raised)', padding: '8px 10px', borderRadius: 6 }}>
+                AAPL 10 150.50<br/>HYMC 50 2.537<br/>TSLA 5<br/>PLTR 100 24.80
+              </p>
+              <textarea
+                value={pasteText}
+                onChange={e => setPasteText(e.target.value)}
+                placeholder={'AAPL 10 150.50\nHYMC 50 2.537\nTSLA 5'}
+                style={{ width: '100%', minHeight: 120, background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 12px', color: 'var(--text)', fontSize: 12, fontFamily: 'monospace', resize: 'vertical', lineHeight: 1.8, boxSizing: 'border-box' }}
+              />
+              <button onClick={handlePaste} className="btn btn-green" style={{ width: '100%', marginTop: 10 }}>Preview Positions</button>
+            </div>
+          )}
+
+          {mode === 'csv' && (
+            <div>
+              <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 10 }}>
+                Drop a CSV export from your broker. Options are automatically filtered out.
+              </p>
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('csv-file-input')?.click()}
+                style={{ border: `2px dashed ${dragOver ? 'var(--blue)' : 'var(--border)'}`, borderRadius: 8, padding: '32px 16px', textAlign: 'center', cursor: 'pointer', background: dragOver ? 'rgba(59,130,246,0.08)' : 'var(--raised)', transition: 'all 0.15s' }}
+              >
+                <p style={{ fontSize: 20, marginBottom: 8 }}>CSV</p>
+                <p style={{ fontSize: 12, color: dragOver ? 'var(--blue)' : 'var(--muted)', fontWeight: 600 }}>Drop CSV file here</p>
+                <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 4 }}>or click to browse</p>
+                <input id="csv-file-input" type="file" accept=".csv,.txt" onChange={(e) => handleFile(e.target.files?.[0])} style={{ display: 'none' }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 'preview' && (
+        <div>
+          <p style={{ fontSize: 11, color: 'var(--green)', fontWeight: 700, marginBottom: 4 }}>
+            {parsed.length} position{parsed.length !== 1 ? 's' : ''} found
+            {screenshotCount > 1 && <span style={{ color: 'var(--faint)', fontWeight: 400 }}> (merged from {screenshotCount} screenshots)</span>}
+          </p>
+          {optionsSkipped > 0 && (
+            <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 4 }}>{optionsSkipped} options filtered out</p>
+          )}
+          <p style={{ fontSize: 9, color: 'var(--faint)', marginBottom: 8 }}>
+            Tap to edit if anything looks off
+          </p>
+
+          <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 10 }}>
+            {parsed.map((p, i) => (
+              <div key={p.ticker + i} style={{ borderBottom: '1px solid var(--border)' }}>
+                <div
+                  onClick={() => setEditingIdx(editingIdx === i ? null : i)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', cursor: 'pointer' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TickerIcon ticker={p.ticker} size={24} />
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{p.ticker}</span>
+                      {p.companyName && p.companyName !== p.ticker && <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 6 }}>{p.companyName}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ fontSize: 11, color: 'var(--text)' }}>{p.shares} shares</p>
+                      {p.avgCost > 0 && <p style={{ fontSize: 10, color: 'var(--faint)' }}>@ ${p.avgCost}</p>}
+                      {(!p.avgCost || p.avgCost === 0) && <p style={{ fontSize: 9, color: 'var(--amber)' }}>no cost — tap to add</p>}
+                    </div>
+                    <span style={{ fontSize: 10, color: 'var(--faint)', transform: editingIdx === i ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.15s' }}>▼</span>
+                  </div>
+                </div>
+
+                {editingIdx === i && (
+                  <div style={{ padding: '4px 0 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, marginBottom: 2, display: 'block' }}>SHARES</label>
+                        <input type="number" step="any" value={p.shares || ''} onChange={e => updatePosition(i, 'shares', parseFloat(e.target.value) || 0)} style={inputStyle} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, marginBottom: 2, display: 'block' }}>AVG COST</label>
+                        <input type="number" step="any" value={p.avgCost || ''} onChange={e => updatePosition(i, 'avgCost', parseFloat(e.target.value) || 0)} style={inputStyle} />
+                      </div>
+                    </div>
+                    <button onClick={() => removePosition(i)} style={{ alignSelf: 'flex-end', padding: '3px 10px', fontSize: 9, color: 'var(--red)', background: 'transparent', border: '1px solid var(--red)', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, opacity: 0.7 }}>Remove</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Add more screenshots */}
+          {mode === 'screenshot' && (
+            <button onClick={() => { setStep('input'); setError(''); }} style={{ width: '100%', padding: '8px 0', marginBottom: 8, fontSize: 10, fontWeight: 600, color: 'var(--blue)', background: 'transparent', border: '1px dashed var(--blue)', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit' }}>
+              + Add another screenshot
+            </button>
+          )}
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => { setStep('input'); setParsedAndRef([]); setError(''); setOptionsSkipped(0); setScreenshotCount(0); scCountRef.current = 0; setEditingIdx(null); }} className="btn btn-muted" style={{ flex: 1 }}>Start Over</button>
+            <button onClick={doImport} className="btn btn-green" style={{ flex: 2 }}>Import {parsed.length} Position{parsed.length !== 1 ? 's' : ''}</button>
+          </div>
+        </div>
+      )}
+
+      {step === 'importing' && (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <Spinner />
+          <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 12 }}>Importing positions...</p>
+        </div>
+      )}
+
+      {step === 'done' && result && (
+        <div>
+          {result.added > 0 && (
+            <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)', marginBottom: 8 }}>
+              {result.added} position{result.added !== 1 ? 's' : ''} imported
+            </p>
+          )}
+          {result.added === 0 && (
+            <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--amber)', marginBottom: 8 }}>No new positions added</p>
+          )}
+          {result.skipped?.length > 0 && (
+            <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 6 }}>
+              Already in portfolio: {result.skipped.join(', ')}
+            </p>
+          )}
+          {result.errors?.length > 0 && (
+            <div style={{ padding: '8px 10px', background: 'rgba(239,68,68,0.08)', borderRadius: 6, marginBottom: 8, border: '1px solid rgba(239,68,68,0.2)' }}>
+              <p style={{ fontSize: 10, fontWeight: 600, color: 'var(--red)', marginBottom: 4 }}>Issues:</p>
+              {result.errors.map((e, i) => <p key={i} style={{ fontSize: 10, color: 'var(--red)', marginBottom: 2 }}>{e}</p>)}
+            </div>
+          )}
+          <button onClick={onClose} className="btn btn-blue" style={{ width: '100%' }}>Done</button>
+        </div>
+      )}
+
+      {error && <p style={{ fontSize: 11, color: 'var(--red)', marginTop: 10 }}>{error}</p>}
+    </Modal>
+  );
+}
+
+function AddModal({ onClose, onDone, showToast }) {
+  const [form, setForm] = useState({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', priceTarget: '', stopLoss: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [showPlan, setShowPlan] = useState(false);
+
+  async function submit() {
+    if (!form.ticker || !form.shares) { setError('Ticker and shares are required'); return; }
+    const shares = parseFloat(form.shares);
+    const avgCost = form.avgCost ? parseFloat(form.avgCost) : 0;
+    if (isNaN(shares) || shares <= 0) { setError('Shares must be a positive number'); return; }
+    if (form.avgCost && (isNaN(avgCost) || avgCost < 0)) { setError('Average cost must be a valid number'); return; }
+    setSaving(true); setError('');
+    try {
+      const body = { ticker: form.ticker, companyName: form.companyName, shares, avgCost, purchasedAt: form.purchasedAt };
+      if (form.entryThesis) body.entryThesis = form.entryThesis;
+      if (form.priceTarget) body.priceTarget = parseFloat(form.priceTarget);
+      if (form.stopLoss) body.stopLoss = parseFloat(form.stopLoss);
+      await api.portfolio.addPosition(body);
+      showToast(`${form.ticker.toUpperCase()} added to portfolio`, 'success');
+      setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', priceTarget: '', stopLoss: '' });
+      setShowPlan(false);
+      onDone();
+      onClose();
+    } catch (e) { setError(e.error || 'Failed to add position'); setSaving(false); }
+  }
+
+  return (
+    <Modal title="Add Position" onClose={onClose}>
+      <FormField label="Ticker"><input className="input" placeholder="AAPL" value={form.ticker} onChange={e => setForm(f => ({ ...f, ticker: e.target.value.toUpperCase() }))} /></FormField>
+      <FormField label="Company Name (optional)"><input className="input" placeholder="Apple Inc." value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></FormField>
+      <FormField label="Number of Shares"><input className="input" type="number" placeholder="10" value={form.shares} onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} /></FormField>
+      <FormField label="Average Cost (optional)"><input className="input" type="number" placeholder="150.00" value={form.avgCost} onChange={e => setForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
+      <FormField label="Date Purchased (optional)"><input className="input" type="date" value={form.purchasedAt} max={`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`} onChange={e => setForm(f => ({ ...f, purchasedAt: e.target.value }))} /></FormField>
+      <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
+        If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
+      </p>
+
+      {!showPlan ? (
+        <button onClick={() => setShowPlan(true)} style={{ fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: 8, letterSpacing: '0.3px' }}>
+          + ADD TRADE PLAN (target, stop, thesis)
+        </button>
+      ) : (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4, marginBottom: 8 }}>
+          <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 8 }}>TRADE PLAN</p>
+          <FormField label="Why did you enter? (thesis)"><input className="input" placeholder="Robotaxi catalyst, AI growth..." value={form.entryThesis} onChange={e => setForm(f => ({ ...f, entryThesis: e.target.value }))} /></FormField>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <FormField label="Price Target $"><input className="input" type="number" placeholder="200.00" value={form.priceTarget} onChange={e => setForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
+            <FormField label="Stop Loss $"><input className="input" type="number" placeholder="120.00" value={form.stopLoss} onChange={e => setForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
+          </div>
+        </div>
+      )}
+
+      {error && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</p>}
+      <button onClick={submit} disabled={saving} className="btn btn-green btn-full">{saving ? 'Adding...' : 'Add Position'}</button>
+    </Modal>
+  );
+}
+
+/**
+ * Compact status pill that calls out plan urgency at a glance.
+ * Replaces the previous static "PLAN" label so the user sees WHY they should
+ * care — not just "this position has a plan" but "your stop just broke."
+ *
+ * Priority order (highest urgency wins):
+ *   STOP BROKEN  → price has fallen below stop_loss
+ *   TARGET HIT   → price has risen past price_target
+ *   NEAR STOP    → within 10% above stop_loss
+ *   NEAR TARGET  → within 10% below price_target
+ *   PLAN         → plan exists but no level is in range
+ */
+function PlanStatusBadge({ pos }) {
+  const hasTarget = pos.price_target && pos.price_target > 0;
+  const hasStop = pos.stop_loss && pos.stop_loss > 0;
+  const current = pos.currentPrice;
+  if (!hasTarget && !hasStop && !pos.entry_thesis) return null;
+  if (!current) return <Pill text="PLAN" color="var(--blue)" />;
+
+  if (hasStop && current < pos.stop_loss) {
+    return <Pill text="STOP BROKEN" color="var(--red)" pulse />;
+  }
+  if (hasTarget && current >= pos.price_target) {
+    return <Pill text="TARGET HIT" color="var(--green)" pulse />;
+  }
+  if (hasStop) {
+    const stopDist = ((current - pos.stop_loss) / current) * 100;
+    if (stopDist >= 0 && stopDist <= 10) {
+      return <Pill text={`STOP ${stopDist.toFixed(1)}%`} color="var(--amber)" />;
+    }
+  }
+  if (hasTarget) {
+    const targetDist = ((pos.price_target - current) / current) * 100;
+    if (targetDist >= 0 && targetDist <= 10) {
+      return <Pill text={`TGT ${targetDist.toFixed(1)}%`} color="var(--green)" />;
+    }
+  }
+  return <Pill text="PLAN" color="var(--blue)" />;
+}
+
+function Pill({ text, color, pulse }) {
+  return (
+    <span style={{
+      fontSize: 8,
+      fontWeight: 700,
+      letterSpacing: '0.3px',
+      color,
+      marginLeft: 5,
+      padding: '1px 5px',
+      borderRadius: 3,
+      background: `${color}1a`,
+      border: `1px solid ${color}33`,
+      verticalAlign: 'middle',
+      display: 'inline-block',
+      animation: pulse ? 'planPulse 1.6s ease-in-out infinite' : 'none',
+    }}>
+      <style>{`@keyframes planPulse { 0%,100%{opacity:1} 50%{opacity:0.55} }`}</style>
+      {text}
+    </span>
+  );
+}
+
+function TradePlanBar({ pos }) {
+  const hasTarget = pos.price_target && pos.price_target > 0;
+  const hasStop = pos.stop_loss && pos.stop_loss > 0;
+  if (!hasTarget && !hasStop) return null;
+
+  const current = pos.currentPrice;
+  const target = pos.price_target || current * 1.2;
+  const stop = pos.stop_loss || current * 0.8;
+  const range = target - stop;
+  if (range <= 0) return null;
+
+  const currentPct = Math.max(0, Math.min(100, ((current - stop) / range) * 100));
+  const targetDist = hasTarget ? ((target - current) / current * 100).toFixed(1) : null;
+  const stopDist = hasStop ? ((stop - current) / current * 100).toFixed(1) : null;
+
+  return (
+    <div style={{ marginTop: 8, marginBottom: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, marginBottom: 3 }}>
+        {hasStop && <span style={{ color: 'var(--red)' }}>Stop ${fmt(stop)} ({stopDist}%)</span>}
+        <span style={{ flex: 1 }} />
+        {hasTarget && <span style={{ color: 'var(--green)' }}>Target ${fmt(target)} (+{targetDist}%)</span>}
+      </div>
+      <div style={{ height: 4, borderRadius: 2, background: 'var(--raised)', position: 'relative', overflow: 'visible' }}>
+        {hasStop && <div style={{ position: 'absolute', left: 0, top: -1, width: 2, height: 6, background: 'var(--red)', borderRadius: 1 }} />}
+        {hasTarget && <div style={{ position: 'absolute', right: 0, top: -1, width: 2, height: 6, background: 'var(--green)', borderRadius: 1 }} />}
+        <div style={{ position: 'absolute', left: `${currentPct}%`, top: -2, width: 6, height: 8, background: 'var(--blue)', borderRadius: 2, transform: 'translateX(-3px)' }} />
+        <div style={{ height: '100%', width: `${currentPct}%`, background: currentPct > 50 ? 'var(--green)' : 'var(--red)', borderRadius: 2, opacity: 0.3 }} />
+      </div>
+    </div>
+  );
+}
+
+function EarningsBadge({ earnings }) {
+  // ⚠️ Earnings feature disabled (2026-04-15) — free-tier data sources
+  // (Finnhub, FMP) are unreliable/paywalled for forward earnings dates.
+  // Backend now short-circuits earnings fetches too. Re-enable by removing
+  // this early return once we have a paid source.
+  return null;
+  // eslint-disable-next-line no-unreachable
+  if (!earnings?.upcoming || !earnings?.date?.trim?.()) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(earnings.date)) return null;
+  const todayStr = getETDateStr();
+  const todayMs = Date.parse(todayStr + 'T00:00:00Z');
+  const earningsMs = Date.parse(earnings.date + 'T00:00:00Z');
+  if (!Number.isFinite(earningsMs)) return null;
+  const daysAway = Math.round((earningsMs - todayMs) / 86400000);
+  if (daysAway < 0 || daysAway > 30) return null;
+  const label = daysAway === 0 ? 'TODAY' : daysAway === 1 ? 'TOMORROW' : `${daysAway}d`;
+  const timeLabel = earnings.time === 'bmo' ? 'pre' : earnings.time === 'amc' ? 'post' : '';
+  const urgentColor = daysAway <= 3 ? 'var(--amber)' : 'var(--faint)';
+  return (
+    <span style={{ fontSize: 8, color: urgentColor, marginLeft: 5, verticalAlign: 'middle', letterSpacing: '0.3px' }}>
+      ER {label}{timeLabel ? ` ${timeLabel}` : ''}
+    </span>
+  );
+}
+
+function StockDetails({ ticker }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    cachedFetch(`stock_details_${ticker}`, () => api.portfolio.stockDetails(ticker), 5 * 60000)
+      .then(d => setData(d)).catch(() => {}).finally(() => setLoading(false));
+  }, [ticker]);
+  if (loading) return <div style={{ padding: '8px 0', textAlign: 'center' }}><Spinner size={12} /></div>;
+  if (!data?.financials && !data?.analyst) return <p style={{ fontSize: 10, color: 'var(--faint)', padding: '4px 0' }}>No data available</p>;
+  const f = data.financials;
+  const a = data.analyst;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {f && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {f.pe != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>P/E <b style={{ color: 'var(--text)' }}>{f.pe?.toFixed(1)}</b></span>}
+          {f.marketCap && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>MCap <b style={{ color: 'var(--text)' }}>${f.marketCap >= 1e12 ? (f.marketCap / 1e12).toFixed(1) + 'T' : f.marketCap >= 1e9 ? (f.marketCap / 1e9).toFixed(0) + 'B' : (f.marketCap / 1e6).toFixed(0) + 'M'}</b></span>}
+          {f.eps != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>EPS <b style={{ color: 'var(--text)' }}>${f.eps?.toFixed(2)}</b></span>}
+          {f.beta != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>Beta <b style={{ color: 'var(--text)' }}>{f.beta?.toFixed(2)}</b></span>}
+          {f.dividendYield > 0 && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>Div <b style={{ color: 'var(--text)' }}>{f.dividendYield}%</b></span>}
+          {f.yearHigh && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>52w <b style={{ color: 'var(--red)' }}>${fmt(f.yearLow)}</b>-<b style={{ color: 'var(--green)' }}>${fmt(f.yearHigh)}</b></span>}
+        </div>
+      )}
+      {a && a.totalAnalysts > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9, color: 'var(--faint)' }}>
+          <span style={{ fontWeight: 700, color: a.consensus === 'Buy' ? 'var(--green)' : a.consensus === 'Sell' ? 'var(--red)' : 'var(--amber)' }}>
+            {a.consensus?.toUpperCase()}
+          </span>
+          <span>{a.buy}B/{a.hold}H/{a.sell}S</span>
+          {a.targetPrice && <span>Target <b style={{ color: 'var(--text)' }}>${fmt(a.targetPrice)}</b></span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Alerts panel rendered inside a PositionCard. Lists existing alerts for
+ * the ticker, lets the user create a quick "above" / "below" / "% change"
+ * alert, and supports deleting or re-arming triggered ones.
+ */
+function AlertsPanel({ ticker, currentPrice, onBack, showToast }) {
+  const [alerts, setAlerts] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState('');
+  const [form, setForm] = useState({ direction: 'above', threshold: '', note: '' });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const { alerts: all } = await api.alerts.list();
+      setAlerts((all || []).filter(a => a.ticker === ticker));
+    } catch (e) {
+      setErr(e.error || 'Failed to load alerts');
+    }
+    setLoading(false);
+  }, [ticker]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function create() {
+    const threshold = parseFloat(form.threshold);
+    if (!isFinite(threshold)) { setErr('Invalid threshold'); return; }
+    setCreating(true); setErr('');
+    try {
+      await api.alerts.create({
+        ticker,
+        direction: form.direction,
+        threshold,
+        note: form.note.trim() || undefined,
+      });
+      setForm({ direction: 'above', threshold: '', note: '' });
+      showToast?.(`Alert set for ${ticker}`, 'success');
+      load();
+    } catch (e) {
+      setErr(e.error || 'Failed to create alert');
+    }
+    setCreating(false);
+  }
+
+  async function remove(id) {
+    try {
+      await api.alerts.remove(id);
+      load();
+    } catch (e) { setErr(e.error || 'Failed to delete'); }
+  }
+
+  async function reset(id) {
+    try {
+      await api.alerts.update(id, { reset: true });
+      load();
+    } catch (e) { setErr(e.error || 'Failed to reset'); }
+  }
+
+  const placeholder = form.direction === 'percent_change'
+    ? '+5 or -5 (%)'
+    : currentPrice ? String(currentPrice) : '0.00';
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', marginBottom: 8 }}>{ticker} ALERTS</p>
+
+      {loading ? (
+        <p style={{ fontSize: 11, color: 'var(--muted)' }}>Loading...</p>
+      ) : (
+        <>
+          {(alerts?.length ?? 0) === 0 ? (
+            <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10 }}>No alerts yet for this ticker.</p>
+          ) : (
+            <div style={{ marginBottom: 10 }}>
+              {alerts.map(a => (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', background: 'var(--raised)', borderRadius: 5, marginBottom: 4, fontSize: 10 }}>
+                  <span style={{ flex: 1, color: 'var(--muted)' }}>
+                    {a.triggered ? (
+                      <span style={{ color: 'var(--amber)', fontWeight: 700 }}>TRIGGERED · </span>
+                    ) : null}
+                    {a.direction === 'above' ? `${ticker} ≥ $${parseFloat(a.threshold).toFixed(2)}`
+                      : a.direction === 'below' ? `${ticker} ≤ $${parseFloat(a.threshold).toFixed(2)}`
+                      : `${ticker} day change ${parseFloat(a.threshold) >= 0 ? '+' : ''}${parseFloat(a.threshold).toFixed(1)}%`}
+                    {a.note && <span style={{ color: 'var(--faint)', fontStyle: 'italic' }}> · {a.note}</span>}
+                  </span>
+                  {a.triggered && (
+                    <button onClick={() => reset(a.id)} className="btn btn-muted" style={{ fontSize: 8, padding: '3px 6px' }}>RESET</button>
+                  )}
+                  <button onClick={() => remove(a.id)} className="btn btn-muted" style={{ fontSize: 8, padding: '3px 6px' }}>DELETE</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ background: 'var(--raised)', borderRadius: 5, padding: '8px 9px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+              {['above', 'below', 'percent_change'].map(d => (
+                <button
+                  key={d}
+                  onClick={() => setForm(f => ({ ...f, direction: d }))}
+                  className={`btn ${form.direction === d ? 'btn-blue' : 'btn-muted'}`}
+                  style={{ flex: 1, fontSize: 9, padding: '5px 0' }}
+                >
+                  {d === 'above' ? 'ABOVE' : d === 'below' ? 'BELOW' : '% MOVE'}
+                </button>
+              ))}
+            </div>
+            <input
+              className="input"
+              type="number"
+              value={form.threshold}
+              onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))}
+              placeholder={placeholder}
+              style={{ fontSize: 12, marginBottom: 6, width: '100%' }}
+            />
+            <input
+              className="input"
+              value={form.note}
+              onChange={e => setForm(f => ({ ...f, note: e.target.value.slice(0, 200) }))}
+              placeholder="Optional note (e.g. 'take profits here')"
+              style={{ fontSize: 11, marginBottom: 6, width: '100%' }}
+            />
+            <button onClick={create} disabled={creating} className="btn btn-blue btn-full" style={{ fontSize: 10 }}>
+              {creating ? 'CREATING...' : 'SET ALERT'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
+      <button onClick={onBack} className="btn btn-muted btn-full" style={{ fontSize: 9 }}>BACK</button>
+    </div>
+  );
+}
+
+/**
+ * PositionList — wraps the position cards with attention-based sorting,
+ * a collapsible calm group, and a one-time plan-coverage nudge. Designed
+ * to scale from 1 to 100+ positions without becoming a wall of rows.
+ */
+function PositionList({ positions, totalValue, onRefresh, showToast }) {
+  const [calmExpanded, setCalmExpanded] = useState(false);
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+
+  // Annotate each position with status + score, then split into needs-attention
+  // vs calm. Status is computed once per render — pure JS, fine at any scale.
+  const annotated = positions.map(pos => ({ pos, status: computePositionStatus(pos, totalValue) }));
+  const needsAttention = annotated
+    .filter(a => a.status.status !== 'calm')
+    .sort((a, b) => b.status.score - a.status.score);
+  const calm = annotated.filter(a => a.status.status === 'calm');
+
+  // Plan coverage — count positions WITHOUT a thesis/target/stop. Show one
+  // consolidated nudge above the list when half or more of the book is
+  // unplanned (only really matters at 4+ positions). No per-row nag.
+  const unplanned = positions.filter(p => !p.entry_thesis && !p.price_target && !p.stop_loss);
+  const showPlanNudge = !nudgeDismissed && positions.length >= 4 && unplanned.length >= positions.length / 2;
+
+  // Auto-expand calm group when there are few of them — collapse only matters
+  // when there's a real wall to hide.
+  const collapseCalm = calm.length >= 5 && !calmExpanded;
+
+  return (
+    <div style={{ padding: '8px 16px 8px' }}>
+      {/* Plan-coverage nudge — one consolidated message, dismissible */}
+      {showPlanNudge && (
+        <div style={{
+          background: 'rgba(59,130,246,0.06)',
+          border: '1px solid rgba(59,130,246,0.2)',
+          borderRadius: 6,
+          padding: '8px 12px',
+          marginBottom: 8,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+        }}>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: 10, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 2 }}>
+              {unplanned.length} of {positions.length} positions don't have a plan
+            </p>
+            <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.4, margin: 0 }}>
+              Set a target and stop on each — Outpost will hold you to them. Tap any position to add a plan.
+            </p>
+          </div>
+          <button
+            onClick={() => setNudgeDismissed(true)}
+            aria-label="Dismiss"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--faint)', fontSize: 14, padding: '0 4px',
+              fontFamily: 'inherit',
+            }}
+          >×</button>
+        </div>
+      )}
+
+      {/* Needs-attention positions — always visible, sorted by score */}
+      {needsAttention.map(({ pos, status }) => (
+        <PositionCard
+          key={pos.id}
+          pos={pos}
+          totalValue={totalValue}
+          onRefresh={onRefresh}
+          showToast={showToast}
+          status={status}
+        />
+      ))}
+
+      {/* Calm group — collapsed behind a divider once there are 5+. The
+          divider tells the user there are positions below; the click expands. */}
+      {collapseCalm && (
+        <button
+          onClick={() => setCalmExpanded(true)}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%',
+            background: 'var(--raised)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: '10px 12px',
+            margin: '4px 0',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          <span style={{ fontSize: 10, color: 'var(--faint)', letterSpacing: '0.5px', fontWeight: 600 }}>
+            CALM — {calm.length} POSITIONS
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--faint)' }}>SHOW ▾</span>
+        </button>
+      )}
+
+      {!collapseCalm && calm.map(({ pos, status }) => (
+        <PositionCard
+          key={pos.id}
+          pos={pos}
+          totalValue={totalValue}
+          onRefresh={onRefresh}
+          showToast={showToast}
+          status={status}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
+  // Modes:
+  //   'collapsed' — compact card showing price + today + P&L
+  //   'expanded'  — opened card showing details + news + GET AI READ button
+  //   'edit'      — edit form (shares, avgCost, thesis, target, stop, notes)
+  //   'close'     — close-position confirmation with exit reflection
+  const [mode, setMode] = useState('collapsed');
+
+  // AI read state — fetched lazily when the user taps "GET AI READ"
+  const [aiRead, setAiRead] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiCached, setAiCached] = useState(false);
+
+  // Free news headlines for the expanded view (no AI summary, no credits)
+  const [news, setNews] = useState(null); // null = not yet fetched, [] = none, [...] = articles
+  const [newsLoading, setNewsLoading] = useState(false);
+
+  const [editForm, setEditForm] = useState({
+    shares: String(pos.shares),
+    avgCost: String(pos.avg_cost ?? ''),
+    entryThesis: pos.entry_thesis || '',
+    priceTarget: pos.price_target ? String(pos.price_target) : '',
+    stopLoss: pos.stop_loss ? String(pos.stop_loss) : '',
+    tradeNotes: pos.trade_notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [sellPrice, setSellPrice] = useState('');
+  const [exitReflection, setExitReflection] = useState('');
+  const [exitOutcome, setExitOutcome] = useState(null);
+  const [err, setErr] = useState('');
+  const [journalSave, setJournalSave] = useState(null);
+
+  const hasPlan = pos.entry_thesis || pos.price_target || pos.stop_loss;
+  const pnlPct = pos.avg_cost > 0 && pos.currentPrice
+    ? ((pos.currentPrice - pos.avg_cost) / pos.avg_cost) * 100
+    : 0;
+  const inDrawdown = pnlPct <= -20;
+
+  // Fetch headlines lazily the first time the card expands. Free (no credits).
+  async function loadNewsIfNeeded() {
+    if (news !== null || newsLoading) return;
+    setNewsLoading(true);
+    try {
+      const d = await api.portfolio.stockDetails(pos.ticker);
+      setNews((d?.news || []).slice(0, 3));
+    } catch { setNews([]); }
+    setNewsLoading(false);
+  }
+
+  function expand() {
+    setMode('expanded');
+    loadNewsIfNeeded();
+  }
+
+  // The deliberate AI call. Cached server-side per (user, ticker, day) so
+  // tapping again later that day doesn't re-charge credits.
+  async function getAIRead() {
+    setAiLoading(true); setErr('');
+    try {
+      const d = await api.ai.analysis(pos.ticker, false, false);
+      setAiRead(d.analysis);
+      setAiCached(!!d.cached);
+    } catch (e) {
+      setErr(e.error || 'Read unavailable');
+    }
+    setAiLoading(false);
+  }
+  async function getDeepRead() {
+    setAiLoading(true); setErr('');
+    try {
+      const d = await api.ai.analysis(pos.ticker, true, false);
+      setAiRead(d.analysis);
+      setAiCached(!!d.cached);
+    } catch (e) {
+      setErr(e.error || 'Deep read unavailable');
+    }
+    setAiLoading(false);
+  }
+
+  async function saveEdit() {
+    const shares = parseFloat(editForm.shares);
+    const avgCost = parseFloat(editForm.avgCost);
+    if (isNaN(shares) || shares <= 0) { setErr('Shares must be a positive number'); return; }
+    if (editForm.avgCost && (isNaN(avgCost) || avgCost < 0)) { setErr('Average cost must be a valid number'); return; }
+    setSaving(true); setErr('');
+    try {
+      const body = {
+        shares,
+        avgCost: isNaN(avgCost) ? 0 : avgCost,
+        entryThesis: editForm.entryThesis || '',
+        priceTarget: editForm.priceTarget ? parseFloat(editForm.priceTarget) : null,
+        stopLoss: editForm.stopLoss ? parseFloat(editForm.stopLoss) : null,
+        tradeNotes: editForm.tradeNotes || '',
+      };
+      await api.portfolio.editPosition(pos.id, body);
+      setMode('collapsed'); onRefresh();
+      showToast(`${pos.ticker} updated`, 'success');
+    } catch (e) { setErr(e.error || 'Failed to save'); }
+    setSaving(false);
+  }
+
+  async function remove() {
+    setRemoving(true); setErr('');
+    try {
+      const body = {};
+      if (sellPrice) body.sellPrice = parseFloat(sellPrice);
+      if (exitReflection.trim()) body.exitReflection = exitReflection.trim();
+      if (exitOutcome) body.exitOutcome = exitOutcome;
+      await api.portfolio.removePosition(pos.id, body);
+      onRefresh();
+      showToast(`${pos.ticker} closed and saved to history`, 'success');
+    } catch {
+      setErr('Failed to remove');
+      setRemoving(false);
+    }
+  }
+
+  // Border accent — drawdown amber wins, otherwise green/red by today's P&L
+  // Accent comes from the position's attention status when set (badges + sort
+  // know about this); fallback to the legacy drawdown/pnl color when not.
+  const accentColor = status?.badgeColor ?? (inDrawdown ? 'var(--amber)' : colorFor(pos.pnl));
+  const concentrationHigh = (status?.concentration ?? 0) >= 25;
+
+  return (
+    <>
+      <div style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderLeft: `2px solid ${accentColor}`,
+        borderRadius: 8,
+        marginBottom: 8,
+        overflow: 'hidden',
+      }}>
+        {/* Slim collapsed header — ticker, today's price + change, P&L. Tap to expand. */}
+        <div style={{ padding: '11px 13px', cursor: 'pointer' }} onClick={() => mode === 'collapsed' ? expand() : setMode('collapsed')}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{pos.ticker}</span>
+              {/* Attention badge — only shown for non-calm statuses. Color
+                  matches the row accent so the user can scan the list and
+                  immediately see what needs them. */}
+              {status?.badgeLabel && (
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                  background: `${status.badgeColor === 'var(--red)' ? 'rgba(239,68,68,0.15)'
+                    : status.badgeColor === 'var(--green)' ? 'rgba(34,197,94,0.15)'
+                    : 'rgba(245,158,11,0.15)'}`,
+                  color: status.badgeColor,
+                  border: `1px solid ${status.badgeColor === 'var(--red)' ? 'rgba(239,68,68,0.3)'
+                    : status.badgeColor === 'var(--green)' ? 'rgba(34,197,94,0.3)'
+                    : 'rgba(245,158,11,0.3)'}`,
+                  letterSpacing: '0.4px',
+                }}>
+                  {status.badgeLabel}
+                </span>
+              )}
+              {/* Concentration warning chip — fires when a single position is
+                  ≥25% of the book. Advisor-style nudge, not an alert. */}
+              {concentrationHigh && (
+                <span
+                  title={`${status.concentration.toFixed(0)}% of your portfolio — heavy concentration`}
+                  style={{
+                    fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                    background: 'rgba(168,85,247,0.12)',
+                    color: '#a78bfa',
+                    border: '1px solid rgba(168,85,247,0.3)',
+                    letterSpacing: '0.4px',
+                  }}
+                >
+                  {status.concentration.toFixed(0)}% OF BOOK
+                </span>
+              )}
+              <EarningsBadge earnings={pos.earnings} />
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: pos.priceStale ? 'var(--faint)' : 'var(--text)', letterSpacing: '-0.2px' }}>
+                ${fmt(pos.currentPrice)}
+              </span>
+              {pos.priceStale && <span style={{ fontSize: 8, color: 'var(--amber)', marginLeft: 4 }}>NO PRICE</span>}
+              <span style={{ fontSize: 11, fontWeight: 700, color: colorFor(pos.todayChangePercent), marginLeft: 6, letterSpacing: '-0.1px' }}>
+                {pos.todayChangePercent >= 0 ? '+' : ''}{fmt(pos.todayChangePercent)}%
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11 }}>
+            <span style={{ color: colorFor(pos.pnl), fontWeight: 700 }}>
+              {pos.pnl >= 0 ? '+' : ''}${fmt(pos.pnl)}
+              <span style={{ color: 'var(--faint)', fontWeight: 400, marginLeft: 4 }}>({pos.pnlPercent >= 0 ? '+' : ''}{fmt(pos.pnlPercent)}%)</span>
+            </span>
+            <span style={{ color: 'var(--faint)', fontSize: 13 }}>{mode === 'collapsed' ? '›' : '⌃'}</span>
+          </div>
+        </div>
+
+        {/* Expanded — position details + free news + lazy AI read button */}
+        {mode === 'expanded' && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
+            {/* Today's driver — first line a user reads when they open a
+                position. Uses the top news headline when present, falls back
+                to a calm framing line when news is empty. Works in concert
+                with the lazy news fetch (loadNewsIfNeeded ran on expand). */}
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 3, fontWeight: 600 }}>TODAY'S DRIVER</p>
+              {newsLoading ? (
+                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, fontStyle: 'italic' }}>Checking news…</p>
+              ) : news?.length > 0 ? (
+                <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{news[0].title || news[0].headline}</p>
+              ) : Math.abs(pos.todayChangePercent ?? 0) >= 1 ? (
+                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
+                  No company-specific headlines — moving with the broader tape.
+                </p>
+              ) : (
+                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
+                  Quiet day. No news, no major move.
+                </p>
+              )}
+            </div>
+
+            {/* Trade plan — visible above data when set. When NOT set, an
+                inline nudge invites the user to add one (the consolidated
+                top-of-list nudge handles the broad case; this catches users
+                who already dismissed it). */}
+            {hasPlan ? (
+              <div style={{ background: 'var(--raised)', borderRadius: 5, padding: '7px 10px', marginBottom: 10, borderLeft: '2px solid var(--blue)' }}>
+                <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>YOUR PLAN</p>
+                {pos.entry_thesis && <p style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3 }}>{pos.entry_thesis}</p>}
+                <div style={{ display: 'flex', gap: 12, fontSize: 9 }}>
+                  {pos.price_target && (
+                    <span>
+                      <span style={{ color: 'var(--faint)' }}>Target </span>
+                      <span style={{ color: 'var(--green)', fontWeight: 700 }}>${fmt(pos.price_target)}</span>
+                      {pos.currentPrice && pos.price_target > pos.currentPrice && (
+                        <span style={{ color: 'var(--faint)', marginLeft: 3 }}>
+                          ({(((pos.price_target - pos.currentPrice) / pos.currentPrice) * 100).toFixed(1)}% away)
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {pos.stop_loss && (
+                    <span>
+                      <span style={{ color: 'var(--faint)' }}>Stop </span>
+                      <span style={{ color: 'var(--red)', fontWeight: 700 }}>${fmt(pos.stop_loss)}</span>
+                      {pos.currentPrice && pos.stop_loss < pos.currentPrice && (
+                        <span style={{ color: 'var(--faint)', marginLeft: 3 }}>
+                          ({(((pos.currentPrice - pos.stop_loss) / pos.currentPrice) * 100).toFixed(1)}% above)
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setMode('edit')}
+                style={{
+                  width: '100%',
+                  background: 'rgba(59,130,246,0.04)',
+                  border: '1px dashed rgba(59,130,246,0.3)',
+                  borderRadius: 5,
+                  padding: '8px 10px',
+                  marginBottom: 10,
+                  color: 'var(--blue)',
+                  fontSize: 10,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  textAlign: 'left',
+                }}
+              >
+                + Add a plan — Outpost will hold you to your target and stop.
+              </button>
+            )}
+
+            {/* Position details — moved below the plan since they're context,
+                not the lead. Small / faint so they don't compete for attention. */}
+            <div style={{ display: 'flex', gap: 14, fontSize: 10, color: 'var(--faint)', marginBottom: 10 }}>
+              <span>{pos.shares} shares</span>
+              <span>avg ${fmt(pos.avg_cost)}</span>
+              {totalValue > 0 && pos.currentValue > 0 && (
+                <span>{fmt((pos.currentValue / totalValue) * 100, 1)}% of portfolio</span>
+              )}
+            </div>
+
+
+            {/* AI read — opt-in, charges credits ONLY on fresh fetch.
+                Cached server-side per (user, ticker, day) so subsequent taps
+                that day are free. */}
+            {!aiRead ? (
+              <div style={{ marginBottom: 10 }}>
+                <button
+                  onClick={getAIRead}
+                  disabled={aiLoading}
+                  className="btn btn-blue btn-full"
+                  style={{ fontSize: 11, padding: '9px 0' }}
+                >
+                  {aiLoading ? 'Reading the tape…' : 'Get AI read'}
+                </button>
+                <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 5, lineHeight: 1.4 }}>
+                  Should you worry about today's move? Calm during noise, sharp when something's broken.
+                </p>
+              </div>
+            ) : (
+              <div style={{ background: 'var(--raised)', borderRadius: 6, padding: '10px 12px', marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.8px' }}>
+                    AI READ {aiCached && <span style={{ color: 'var(--faint)', fontWeight: 400, marginLeft: 4 }}>· cached</span>}
+                  </span>
+                  <BookmarkButton onClick={() => setJournalSave({ content: `${pos.ticker} — AI read\n\n${aiRead}` })} />
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.65, marginBottom: 8 }}>{renderPlainText(aiRead)}</p>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={getDeepRead} disabled={aiLoading} className="btn btn-purple" style={{ flex: 1, fontSize: 10, padding: '6px 0' }}>
+                    {aiLoading ? '...' : 'GO DEEPER'}
+                  </button>
+                </div>
+                <FeedbackButtons feature="analysis" response={aiRead} />
+              </div>
+            )}
+
+            {/* Free news — fetched once when card expands */}
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 700, letterSpacing: '0.6px', marginBottom: 5 }}>NEWS</p>
+              {newsLoading && <p style={{ fontSize: 10, color: 'var(--faint)' }}>Loading headlines…</p>}
+              {news !== null && news.length === 0 && (
+                <p style={{ fontSize: 10, color: 'var(--faint)', fontStyle: 'italic' }}>No recent company-specific headlines.</p>
+              )}
+              {news !== null && news.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {news.map((a, i) => (
+                    <a
+                      key={i}
+                      href={a.articleUrl || a.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 10, color: 'var(--muted)', textDecoration: 'none', lineHeight: 1.45, padding: '2px 0' }}
+                    >
+                      <span style={{ color: 'var(--faint)', marginRight: 4 }}>•</span>{a.title}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
+
+            {/* Action row — Edit secondary, Close destructive on the right */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setMode('edit')} className="btn btn-muted" style={{ flex: 1, fontSize: 10, padding: '7px 0' }}>EDIT</button>
+              <button
+                onClick={() => { setSellPrice(pos.currentPrice ? String(pos.currentPrice) : ''); setMode('close'); }}
+                className="btn btn-red"
+                style={{ flex: 1, fontSize: 10, padding: '7px 0' }}
+              >CLOSE</button>
+            </div>
+          </div>
+        )}
+
+        {/* Close-trade form */}
+        {mode === 'close' && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', marginBottom: 8 }}>CLOSE {pos.ticker} POSITION</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 10, color: 'var(--faint)', whiteSpace: 'nowrap' }}>Sell price $</span>
+              <input className="input" type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} style={{ flex: 1, fontSize: 12 }} placeholder={String(pos.currentPrice ?? '')} />
+            </div>
+
+            {/* Close-time reflection — feeds the agent's learning loop */}
+            <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '0.5px', marginBottom: 6, fontWeight: 700 }}>WHAT HAPPENED? (optional)</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
+              {[
+                { id: 'win_thesis_right', label: 'Win — thesis played out' },
+                { id: 'win_thesis_wrong', label: 'Win — but thesis was wrong' },
+                { id: 'loss_thesis_right', label: 'Loss — thesis was right' },
+                { id: 'loss_thesis_wrong', label: 'Loss — thesis was wrong' },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => setExitOutcome(o => o === opt.id ? null : opt.id)}
+                  className={`btn ${exitOutcome === opt.id ? 'btn-blue' : 'btn-muted'}`}
+                  style={{ fontSize: 9, padding: '6px 4px', textAlign: 'left' }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="input"
+              placeholder="One line on what you learned — optional but the agent will remember it next time."
+              value={exitReflection}
+              onChange={e => setExitReflection(e.target.value.slice(0, 500))}
+              rows={2}
+              style={{ width: '100%', fontSize: 11, resize: 'vertical', marginBottom: 10, fontFamily: 'inherit' }}
+            />
+
+            {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setMode('expanded')} className="btn btn-muted" style={{ flex: 1 }}>CANCEL</button>
+              <button onClick={remove} disabled={removing} className="btn btn-red" style={{ flex: 1 }}>{removing ? '...' : 'CONFIRM CLOSE'}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Edit form */}
+        {mode === 'edit' && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
+            <FormField label="Shares"><input className="input" type="number" value={editForm.shares} onChange={e => setEditForm(f => ({ ...f, shares: e.target.value }))} /></FormField>
+            <FormField label="Avg Cost"><input className="input" type="number" value={editForm.avgCost} onChange={e => setEditForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4, marginBottom: 4 }}>
+              <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 6 }}>TRADE PLAN (OPTIONAL)</p>
+              <FormField label="Entry Thesis"><input className="input" placeholder="Why did you enter this trade?" value={editForm.entryThesis} onChange={e => setEditForm(f => ({ ...f, entryThesis: e.target.value }))} /></FormField>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <FormField label="Price Target $"><input className="input" type="number" placeholder="0.00" value={editForm.priceTarget} onChange={e => setEditForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
+                <FormField label="Stop Loss $"><input className="input" type="number" placeholder="0.00" value={editForm.stopLoss} onChange={e => setEditForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
+              </div>
+              <FormField label="Notes"><input className="input" placeholder="Any additional notes..." value={editForm.tradeNotes} onChange={e => setEditForm(f => ({ ...f, tradeNotes: e.target.value }))} /></FormField>
+            </div>
+
+            {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
+            <div style={{ display: 'flex', gap: 7 }}>
+              <button onClick={() => setMode('expanded')} className="btn btn-muted" style={{ flex: 1 }}>CANCEL</button>
+              <button onClick={saveEdit} disabled={saving} className="btn btn-blue" style={{ flex: 1 }}>{saving ? 'SAVING...' : 'SAVE'}</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <SaveToJournalSheet
+        open={journalSave !== null}
+        onClose={() => setJournalSave(null)}
+        initialContent={journalSave?.content || ''}
+        showToast={showToast}
+      />
+    </>
+  );
+}
+
+function PortfolioSubTab({ marketOpen, showToast }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [modal, setModal] = useState(null); // 'add' | 'import' | 'menu' | 'closed' | null
+  const [showGrowth, setShowGrowth] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const d = await api.portfolio.value(); setData(d); } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const positions = data?.positions ?? [];
+
+  // Drawdown alerts — surface positions that are -20%+ from cost basis.
+  // Retail's actual sell trigger. Only band-fires when there's a real one.
+  const drawdowns = positions
+    .filter(p => p.avg_cost > 0 && p.currentPrice && ((p.currentPrice - p.avg_cost) / p.avg_cost) * 100 <= -20)
+    .map(p => ({
+      ticker: p.ticker,
+      pct: ((p.currentPrice - p.avg_cost) / p.avg_cost) * 100,
+    }));
+
+  if (loading) return <div style={{ padding: 16 }}><SkeletonCard /><SkeletonCard /></div>;
+
+  return (
+    <div>
+      {positions.length === 0 ? (
+        <EmptyState
+          title="No positions yet"
+          subtitle="Add your first stock to start tracking your portfolio. Just need a ticker (e.g. AAPL), number of shares, and the date you bought."
+          action={<button onClick={() => setModal('add')} className="btn btn-green">Add Your First Position</button>}
+          tips={[
+            { title: 'What you need', body: 'Ticker symbol (AAPL, TSLA, etc.), how many shares you own, and the date you bought. Average cost is optional but helps track your P&L.' },
+            { title: 'AI-powered insights', body: 'Once added, tap any position to get an AI read on whether today\'s move actually matters — calm during noise, sharp when something is genuinely broken.' },
+          ]}
+        />
+      ) : (
+        <>
+          {/* Synthesis — advisor opening read on the whole book. Hides itself
+              if there are no positions or the AI call failed. Refreshes when
+              the position list changes (refreshKey = positions.length). */}
+          <SynthesisCard refreshKey={positions.length} />
+
+          {/* 3-stat hero — Today / Total P&L / Value get equal weight */}
+          <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>TODAY</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.todayChange), letterSpacing: '-0.4px' }}>{data?.todayChange >= 0 ? '+' : ''}${fmt(Math.abs(data?.todayChange))}</p>
+                <p style={{ fontSize: 10, color: colorFor(data?.todayChange) }}>
+                  {data?.totalValue > 0 ? `${data.todayChange >= 0 ? '+' : ''}${fmt((data.todayChange / (data.totalValue - data.todayChange)) * 100, 2)}%` : '—'}
+                </p>
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>TOTAL P&L</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.totalPnl), letterSpacing: '-0.4px' }}>{data?.totalPnl >= 0 ? '+' : ''}${fmt(Math.abs(data?.totalPnl))}</p>
+                <p style={{ fontSize: 10, color: colorFor(data?.totalPnl) }}>
+                  {data?.totalCost > 0 ? `${data.totalPnl >= 0 ? '+' : ''}${fmt((data.totalPnl / data.totalCost) * 100, 1)}%` : '—'}
+                </p>
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>VALUE</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px' }}>${fmtCompact(data?.totalValue)}</p>
+                <p style={{ fontSize: 10, color: 'var(--faint)' }}>{positions.length} position{positions.length === 1 ? '' : 's'}</p>
+              </div>
+            </div>
+            {data?.staleCount > 0 && (
+              <p style={{ fontSize: 9, color: 'var(--amber)', marginTop: 6 }}>
+                {data.staleCount} position{data.staleCount > 1 ? 's' : ''} without live pricing
+              </p>
+            )}
+          </div>
+
+          {/* Drawdown band — only fires when something is actually -20%+ */}
+          {drawdowns.length > 0 && (
+            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--muted)', flexWrap: 'wrap' }}>
+                <span style={{ color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>DRAWDOWN</span>
+                {drawdowns.slice(0, 3).map((d, i) => (
+                  <span key={d.ticker} style={{ display: 'inline-flex', gap: 4 }}>
+                    <b style={{ color: 'var(--amber)', fontWeight: 700 }}>{d.ticker}</b>
+                    <span style={{ color: 'var(--faint)' }}>down {Math.abs(d.pct).toFixed(0)}% from cost</span>
+                    {i < Math.min(drawdowns.length, 3) - 1 && <span style={{ color: 'var(--faint)' }}>·</span>}
+                  </span>
+                ))}
+                {drawdowns.length > 3 && <span style={{ color: 'var(--faint)' }}>· +{drawdowns.length - 3} more</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Compact action bar — + ADD primary, refresh + menu as icons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
+            <button onClick={() => setModal('add')} className="btn btn-green">+ ADD</button>
+            <span style={{ flex: 1, fontSize: 9, color: 'var(--faint)' }}>
+              {data?.lastUpdated && `Updated ${new Date(data.lastUpdated).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`}
+            </span>
+            <button onClick={load} className="btn btn-muted" style={{ padding: '6px 8px', fontSize: 11 }} aria-label="Refresh">↻</button>
+            <button onClick={() => setModal('menu')} className="btn btn-muted" style={{ padding: '6px 8px', fontSize: 11 }} aria-label="More">⋯</button>
+          </div>
+
+          {/* Position list — sorted by attention, with calm positions collapsed
+              behind a divider once there are 5+ of them. Plan-coverage nudge
+              shown when many positions lack a target/stop/thesis. */}
+          <PositionList
+            positions={positions}
+            totalValue={data?.totalValue ?? 0}
+            onRefresh={load}
+            showToast={showToast}
+          />
+
+
+          {/* Inline growth chart — collapsible, only if we have snapshots */}
+          <GrowthChartInline showGrowth={showGrowth} setShowGrowth={setShowGrowth} />
+        </>
+      )}
+      {modal === 'add' && <AddModal onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
+      {modal === 'import' && <ImportModal onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
+      {modal === 'menu' && (
+        <PortfolioMenuDrawer
+          onClose={() => setModal(null)}
+          onImport={() => setModal('import')}
+          onClosedTrades={() => setModal('closed')}
+        />
+      )}
+      {modal === 'closed' && <ClosedTradesDrawer onClose={() => setModal(null)} showToast={showToast} />}
+    </div>
+  );
+}
+
+function NewsSubTab({ showToast }) {
+  const [positions, setPositions] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [articles, setArticles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [journalSave, setJournalSave] = useState(null);
+
+  useEffect(() => {
+    api.portfolio.value().then(d => {
+      setPositions(d.positions ?? []);
+      if (d.positions?.length) setSelected(d.positions[0].ticker);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setLoading(true); setErr(''); setArticles([]);
+    api.ai.news(selected)
+      .then(d => setArticles(d.articles ?? []))
+      .catch(e => setErr(e.error || 'News unavailable'))
+      .finally(() => setLoading(false));
+  }, [selected]);
+
+  if (!positions.length) return <EmptyState title="No positions" subtitle="Add positions to see AI-filtered news for your holdings" />;
+
+  return (
+    <div style={{ padding: '10px 16px 24px' }}>
+      <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
+        {positions.map(p => (
+          <button key={p.ticker} onClick={() => setSelected(p.ticker)} className={`btn ${selected === p.ticker ? 'btn-blue' : 'btn-muted'}`}>{p.ticker}</button>
+        ))}
+      </div>
+      {loading && <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner /></div>}
+      {err && <p style={{ fontSize: 12, color: 'var(--red)' }}>{err}</p>}
+      {!loading && !err && articles.length === 0 && <EmptyState title="No news" subtitle="No high-impact news found for this ticker" />}
+      {articles.map((a, i) => (
+        <div key={i} style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 13px', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>{a.source?.toUpperCase()}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <p style={{ fontSize: 9, color: 'var(--faint)' }}>{a.publishedUtc ? new Date(a.publishedUtc).toLocaleDateString() : ''}</p>
+              <BookmarkButton
+                onClick={() => setJournalSave({
+                  content: `${selected} — ${a.title}${a.aiSummary ? `\n\n${a.aiSummary}` : ''}${a.articleUrl ? `\n\n${a.articleUrl}` : ''}`,
+                })}
+              />
+            </div>
+          </div>
+          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 5, lineHeight: 1.5 }}>{a.title}</p>
+          {a.aiSummary && <p style={{ fontSize: 11, color: 'var(--blue)', lineHeight: 1.6, marginBottom: 6 }}>{renderPlainText(a.aiSummary)}</p>}
+          <a href={a.articleUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: 'var(--blue)', textDecoration: 'none', letterSpacing: '0.5px' }}>READ MORE →</a>
+        </div>
+      ))}
+
+      <SaveToJournalSheet
+        open={journalSave !== null}
+        onClose={() => setJournalSave(null)}
+        initialContent={journalSave?.content || ''}
+        showToast={showToast}
+      />
+    </div>
+  );
+}
+
+function HistorySubTab({ showToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.portfolio.closedTrades()
+      .then(d => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><Spinner /></div>;
+  if (!data?.trades?.length) return (
+    <EmptyState title="No closed trades" subtitle="When you close a position, it'll appear here with your P&L"
+      tips={[{ title: 'Build your track record', body: 'Every trade you close is recorded with entry price, exit price, P&L, hold time, and your original thesis. The Journal Coach uses this data to spot patterns in your trading.' }]} />
+  );
+
+  const { trades, stats } = data;
+
+  return (
+    <div style={{ padding: '0 0 24px' }}>
+      {/* Stats bar */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', margin: '0 16px' }}>
+        {[
+          { label: 'TRADES', value: stats.totalTrades, color: 'var(--text)' },
+          { label: 'WIN RATE', value: `${stats.winRate}%`, color: stats.winRate >= 50 ? 'var(--green)' : 'var(--red)' },
+          { label: 'TOTAL P&L', value: `${stats.totalPnl >= 0 ? '+' : ''}$${fmt(stats.totalPnl)}`, color: colorFor(stats.totalPnl) },
+          { label: 'AVG HOLD', value: `${stats.avgHoldDays}d`, color: 'var(--muted)' },
+        ].map((s, i) => (
+          <div key={s.label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: i < 3 ? '1px solid var(--border)' : 'none' }}>
+            <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 3 }}>{s.label}</p>
+            <p style={{ fontSize: 14, fontWeight: 700, color: s.color, letterSpacing: '-0.3px' }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Performance Attribution — where the user's edge actually lives */}
+      <PerformanceAttributionCard showToast={showToast} />
+
+      {/* Plan Adherence — patterns from comparing stated plan vs actual exits */}
+      <PlanAdherenceCard showToast={showToast} />
+
+      {/* Trade cards */}
+      <div style={{ padding: '12px 16px 0' }}>
+      {trades.map(t => {
+        const isWin = t.pnl > 0;
+        return (
+          <div key={t.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `2px solid ${isWin ? 'var(--green)' : 'var(--red)'}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <TickerIcon ticker={t.ticker} size={28} />
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{t.ticker}</p>
+                  <p style={{ fontSize: 9, color: 'var(--faint)' }}>{t.shares} shares · held {t.hold_days}d</p>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ fontSize: 12, fontWeight: 700, color: colorFor(t.pnl) }}>{t.pnl >= 0 ? '+' : ''}${fmt(t.pnl)}</p>
+                <p style={{ fontSize: 10, color: colorFor(t.pnl_percent) }}>{t.pnl_percent >= 0 ? '+' : ''}{fmt(t.pnl_percent)}%</p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12, fontSize: 9, color: 'var(--faint)', marginBottom: t.entry_thesis ? 5 : 0 }}>
+              <span>In: ${fmt(t.avg_cost)}</span>
+              <span>Out: ${fmt(t.sell_price)}</span>
+              <span>{new Date(t.closed_at).toLocaleDateString()}</span>
+            </div>
+            {t.entry_thesis && <p style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic', marginTop: 3 }}>"{t.entry_thesis}"</p>}
+          </div>
+        );
+      })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Inline growth chart — collapsed by default. Only renders the toggle if the
+ * user has 7+ portfolio snapshots, since a chart of 2 dots doesn't say much.
+ * Replaces the standalone P&L sub-tab in the retail-focus redesign.
+ */
+function GrowthChartInline({ showGrowth, setShowGrowth }) {
+  const [snapshots, setSnapshots] = useState([]);
+  const [spyBenchmark, setSpyBenchmark] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api.portfolio.snapshots()
+      .then(d => {
+        setSnapshots(d.snapshots ?? []);
+        setSpyBenchmark(d.spyBenchmark ?? []);
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  if (!loaded) return null;
+  // Hide entirely until there's enough history for the chart to be meaningful.
+  if (snapshots.length < 7) return null;
+
+  const chartData = snapshots.map((s, i) => {
+    const spy = spyBenchmark[i];
+    return {
+      date: s.date,
+      value: parseFloat(s.total_value ?? 0),
+      spy: spy ? parseFloat(spy.value ?? 0) : null,
+    };
+  });
+
+  return (
+    <div style={{ padding: '4px 16px 16px', borderTop: '1px solid var(--border)' }}>
+      <button
+        onClick={() => setShowGrowth(g => !g)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 0', background: 'none', border: 'none',
+          color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 11, letterSpacing: '0.5px',
+        }}
+      >
+        <span>{showGrowth ? '▲' : '▼'} GROWTH ({snapshots.length} days)</span>
+        <span style={{ fontSize: 9, color: 'var(--faint)' }}>tap to {showGrowth ? 'hide' : 'show'}</span>
+      </button>
+      {showGrowth && (
+        <div style={{ marginTop: 6, padding: '8px 0', height: 200 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 9, fill: 'var(--faint)' }} tickFormatter={fmtCompact} />
+              <Tooltip
+                contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11 }}
+                labelStyle={{ color: 'var(--muted)' }}
+                formatter={(v) => '$' + fmt(v)}
+              />
+              <Line type="monotone" dataKey="value" stroke="var(--blue)" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Action-menu drawer (the ⋯ button). Houses things that don't deserve a
+ * top-level button in the redesign — closed trades, CSV import, etc.
+ */
+function PortfolioMenuDrawer({ onClose, onImport, onClosedTrades }) {
+  return (
+    <Modal title="Portfolio actions" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button
+          onClick={() => { onClose(); onClosedTrades(); }}
+          className="btn btn-muted"
+          style={{ padding: '12px 14px', textAlign: 'left', fontSize: 12 }}
+        >
+          View closed trades
+          <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 3, fontWeight: 400 }}>Past positions you've sold, with P&L and your reflections.</p>
+        </button>
+        <button
+          onClick={() => { onClose(); onImport(); }}
+          className="btn btn-muted"
+          style={{ padding: '12px 14px', textAlign: 'left', fontSize: 12 }}
+        >
+          Import from CSV
+          <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 3, fontWeight: 400 }}>Bulk-add from Webull, Robinhood, or any positions export.</p>
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Closed-trades drawer — used to live in the History sub-tab. Now reachable
+ * via the ⋯ menu. Renders the same data without the wrapper sub-tab chrome.
+ */
+function ClosedTradesDrawer({ onClose, showToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.portfolio.closedTrades()
+      .then(d => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Modal title="Closed trades" onClose={onClose}>
+      <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><Spinner /></div>
+        ) : !data?.trades?.length ? (
+          <p style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: '16px 0' }}>
+            No closed trades yet. When you close a position, it appears here with P&L and any reflection you wrote.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {data.trades.map(t => (
+              <div key={t.id} style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <p style={{ fontSize: 12, fontWeight: 700 }}>{t.ticker}</p>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: colorFor(t.pnl) }}>{t.pnl >= 0 ? '+' : ''}${fmt(t.pnl)} ({t.pnl_percent >= 0 ? '+' : ''}{fmt(t.pnl_percent, 1)}%)</p>
+                </div>
+                <p style={{ fontSize: 10, color: 'var(--faint)' }}>
+                  {t.shares} sh · in ${fmt(t.avg_cost)} → out ${fmt(t.sell_price)} · held {t.hold_days}d
+                </p>
+                {t.entry_thesis && <p style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, fontStyle: 'italic' }}>"{t.entry_thesis}"</p>}
+                {t.exit_reflection && <p style={{ fontSize: 10, color: 'var(--blue)', marginTop: 4 }}>{t.exit_reflection}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function PnLSubTab() {
+  const [snapshots, setSnapshots] = useState([]);
+  const [spyBenchmark, setSpyBenchmark] = useState([]);
+  const [showSpy, setShowSpy] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [snapping, setSnapping] = useState(false);
+  const [snapMsg, setSnapMsg] = useState('');
+
+  useEffect(() => { api.portfolio.snapshots().then(d => { setSnapshots(d.snapshots ?? []); setSpyBenchmark(d.spyBenchmark ?? []); setLoading(false); }).catch(() => setLoading(false)); }, []);
+
+  async function takeSnapshot() {
+    setSnapping(true); setSnapMsg('');
+    try {
+      const d = await api.portfolio.takeSnapshot();
+      if (d.alreadyExists) { setSnapMsg('Already snapshotted today'); }
+      else { setSnapMsg(`Snapshot saved — $${(d.totalValue ?? 0).toLocaleString()}`); }
+      const fresh = await api.portfolio.snapshots();
+      setSnapshots(fresh.snapshots ?? []);
+    } catch (e) { setSnapMsg(e.error || 'Snapshot failed'); }
+    setSnapping(false);
+  }
+
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><Spinner /></div>;
+  if (!snapshots.length) return (
+    <div>
+      <EmptyState title="Track Your Growth" subtitle="See how your portfolio value changes over time with a daily P&L chart"
+        action={<button onClick={takeSnapshot} disabled={snapping} className="btn btn-blue">{snapping ? 'Saving...' : 'Take First Snapshot'}</button>}
+        tips={[
+          { title: 'What is this?', body: 'This chart tracks your total portfolio value day by day. Going up means you are making money. Going down means you are losing. Simple as that.' },
+          { title: 'How it works', body: 'We save your portfolio value once a day at 4:30 PM ET. You can also tap the button above anytime. After a few days you will see your performance plotted as a line chart.' },
+        ]} />
+      {snapMsg && <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--green)', padding: '8px 16px' }}>{snapMsg}</p>}
+    </div>
+  );
+
+  // Calculate P&L from first snapshot to latest
+  const firstVal = snapshots[0]?.total_value ?? 0;
+  const latestVal = snapshots[snapshots.length - 1]?.total_value ?? 0;
+  const totalChange = latestVal - firstVal;
+  const totalChangePct = firstVal > 0 ? ((totalChange / firstVal) * 100) : 0;
+  const isUp = totalChange >= 0;
+  const lineColor = isUp ? 'var(--green)' : 'var(--red)';
+
+  return (
+    <div style={{ padding: '14px 16px' }}>
+      {/* Big number hero — Robinhood style */}
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 4 }}>PORTFOLIO VALUE</p>
+        <p style={{ fontSize: 30, fontWeight: 700, color: 'var(--text)', letterSpacing: '-1px', marginBottom: 4 }}>
+          ${latestVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        </p>
+        <p style={{ fontSize: 13, fontWeight: 600, color: lineColor }}>
+          {isUp ? '+' : ''}${totalChange.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({isUp ? '+' : ''}{totalChangePct.toFixed(2)}%)
+          <span style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 400, marginLeft: 6 }}>all time</span>
+        </p>
+      </div>
+
+      {/* Chart — line color matches gain/loss like Robinhood */}
+      {(() => {
+        // Merge SPY benchmark into snapshot data
+        const spyMap = {};
+        spyBenchmark.forEach(s => { spyMap[s.date] = s.spy_value; });
+        const chartData = snapshots.map(s => ({ ...s, spy_value: spyMap[s.date] ?? null }));
+        const hasSpy = spyBenchmark.length > 0;
+
+        // Calculate SPY performance for comparison
+        let spyChange = null, spyChangePct = null;
+        if (hasSpy && spyBenchmark.length >= 2) {
+          const spyFirst = spyBenchmark[0].spy_value;
+          const spyLast = spyBenchmark[spyBenchmark.length - 1].spy_value;
+          spyChange = spyLast - spyFirst;
+          spyChangePct = spyFirst > 0 ? ((spyChange / spyFirst) * 100) : 0;
+        }
+
+        return (
+          <div style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 14px 10px' }}>
+            <div style={{ height: 180 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} tickLine={false} axisLine={false} tickFormatter={d => { const parts = d.split('-'); return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`; }} />
+                  <YAxis hide domain={['dataMin - 100', 'dataMax + 100']} />
+                  <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11, fontFamily: 'inherit', padding: '8px 12px' }} formatter={(v, name) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name === 'spy_value' ? 'SPY' : 'Portfolio']} labelFormatter={d => { const parts = d.split('-'); return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}`; }} />
+                  <Line type="monotone" dataKey="total_value" stroke={lineColor} dot={chartData.length < 3 ? { r: 4, fill: lineColor } : false} strokeWidth={2.5} name="Portfolio" />
+                  {hasSpy && showSpy && <Line type="monotone" dataKey="spy_value" stroke="var(--faint)" dot={false} strokeWidth={1.5} strokeDasharray="4 3" name="SPY" />}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <p style={{ fontSize: 9, color: 'var(--faint)' }}>{snapshots.length} snapshot{snapshots.length !== 1 ? 's' : ''}</p>
+                {hasSpy && (
+                  <button onClick={() => setShowSpy(s => !s)} style={{ fontSize: 8, color: showSpy ? 'var(--blue)' : 'var(--faint)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    {showSpy ? 'SPY ON' : 'SPY OFF'}
+                  </button>
+                )}
+                {hasSpy && showSpy && spyChangePct != null && (
+                  <span style={{ fontSize: 8, color: 'var(--faint)' }}>
+                    SPY: <span style={{ color: spyChangePct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{spyChangePct >= 0 ? '+' : ''}{spyChangePct.toFixed(1)}%</span>
+                    {' '}vs You: <span style={{ color: totalChangePct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{totalChangePct >= 0 ? '+' : ''}{totalChangePct.toFixed(1)}%</span>
+                  </span>
+                )}
+              </div>
+              <button onClick={takeSnapshot} disabled={snapping} style={{ fontSize: 9, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.3px' }}>
+                {snapping ? 'SAVING...' : '+ SNAPSHOT'}
+              </button>
+            </div>
+            {snapMsg && <p style={{ fontSize: 10, color: 'var(--green)', marginTop: 6, textAlign: 'center' }}>{snapMsg}</p>}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+export default function PortfolioTab({ marketOpen, showToast }) {
+  // Single scrollable view — sub-tabs removed in the retail-focus redesign.
+  // Closed trades live behind the action menu (⋯ → "View closed trades").
+  // The growth chart inlines on this same view once 7+ snapshots exist.
+  // History/News/P&L sub-component code stays in this file for now (might
+  // be revived as drawers); they're just no longer rendered by default.
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="scrollable" style={{ flex: 1 }}>
+        <PortfolioSubTab marketOpen={marketOpen} showToast={showToast} />
+      </div>
+    </div>
+  );
+}

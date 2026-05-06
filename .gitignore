@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.vercel
+
+# Secrets — never commit
+.env
+.env.local
+.env.save
+
+# Office / business docs (keep out of repo)
+*.docx
+*.xlsx
+.~lock.*
+
+# Vite stale build artifacts
+vite.config.js.timestamp-*.mjs
+
+# Test eval output
+tests/eval_results/
+
+# Stray dirs from earlier scaffold
+{src/
+out post new/

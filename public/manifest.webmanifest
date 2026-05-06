@@ -1,0 +1,20 @@
+{
+  "name": "Outpost",
+  "short_name": "Outpost",
+  "description": "Your AI trading partner — knows your portfolio, watches the market, holds you accountable.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08080c",
+  "theme_color": "#08080c",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

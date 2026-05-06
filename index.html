@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#08080c" />
+    <meta name="application-name" content="Outpost" />
+
+    <!-- PWA manifest — makes the app installable on Android/Chromium/desktop -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- iOS / Safari standalone mode (Add to Home Screen) -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Outpost" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <title>Outpost — Trade like you know something</title>
+    <style>
+      body { background: #08080c; margin: 0; }
+      #root { height: 100vh; height: 100dvh; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

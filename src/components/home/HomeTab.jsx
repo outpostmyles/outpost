@@ -1,0 +1,492 @@
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../../lib/api.js';
+import { cachedFetch, clearCachePrefix } from '../../lib/cache.js';
+import { useAuth } from '../../hooks/useAuth.jsx';
+import { fmt, colorFor, greeting } from '../../utils/market.js';
+import { renderPlainText } from '../../utils/renderText.js';
+import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
+import ActivationChecklist from './ActivationChecklist.jsx';
+import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
+import TodayCard from './TodayCard.jsx';
+// Removed cards superseded by TODAY (kept files for now, no longer imported here):
+//   - BargainRadarCard / SectorRadarCard / ConcentrationAlertCard / ProactiveDigestCard
+// All five surfaces those represented are now ranked into TODAY's 5-pick feed.
+// Bargain Radar moves to a dedicated drawer under the Social tab.
+import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
+
+function SectorRadarCard({ refreshKey }) {
+  const [radar, setRadar] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    cachedFetch('home_radar', () => api.ai.sectorRadar(), 15 * 60000)
+      .then(d => { if (!cancelled) setRadar(d); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  if (loading) return (
+    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 8 }}>SECTOR RADAR</p>
+      <div style={{ background: 'var(--raised)', borderRadius: 8, padding: 16, textAlign: 'center' }}>
+        <p style={{ fontSize: 10, color: 'var(--faint)' }}>Scanning sectors...</p>
+      </div>
+    </div>
+  );
+
+  if (!radar || (!radar.heating?.length && !radar.cooling?.length)) return null;
+
+  const signalColor = (signal) => {
+    if (signal === 'strong') return 'var(--green)';
+    if (signal === 'early') return 'var(--amber)';
+    if (signal === 'risk') return 'var(--red)';
+    if (signal === 'warning') return 'var(--amber)';
+    return 'var(--faint)';
+  };
+
+  const signalLabel = (signal) => {
+    if (signal === 'strong') return 'STRONG';
+    if (signal === 'early') return 'EARLY';
+    if (signal === 'risk') return 'RISK';
+    if (signal === 'warning') return 'CAUTION';
+    return signal?.toUpperCase() ?? '';
+  };
+
+  return (
+    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="var(--amber)"/></svg>
+          <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', fontWeight: 700 }}>SECTOR RADAR</p>
+          {radar.generatedAt && <span style={{ fontSize: 8, color: 'var(--faint)', fontWeight: 400, letterSpacing: 0 }}>{new Date(radar.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
+        </div>
+        <button onClick={() => setExpanded(e => !e)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, fontFamily: 'inherit' }}>
+          {expanded ? '▲' : '▼'}
+        </button>
+      </div>
+
+      {/* Compact view — always visible */}
+      <div style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+        {/* Heating up */}
+        {(radar.heating ?? []).slice(0, expanded ? 5 : 2).map((s, i, arr) => (
+          <div key={s.ticker} style={{ display: 'flex', alignItems: 'center', padding: '9px 13px', gap: 10, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: signalColor(s.signal), flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{s.ticker}</span>
+                <span style={{ fontSize: 9, color: 'var(--faint)' }}>{s.name}</span>
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: expanded ? 'normal' : 'nowrap' }}>{s.thesis}</p>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <span style={{ fontSize: 8, fontWeight: 700, color: signalColor(s.signal), letterSpacing: '0.5px', padding: '2px 5px', background: `${signalColor(s.signal)}15`, borderRadius: 3 }}>{signalLabel(s.signal)}</span>
+              {s.relativeStrength != null && (
+                <p style={{ fontSize: 9, color: 'var(--green)', marginTop: 3, fontWeight: 600 }}>{s.relativeStrength != null && !isNaN(s.relativeStrength) ? `${s.relativeStrength >= 0 ? '+' : ''}${s.relativeStrength.toFixed(1)}` : '—'}% vs SPY</p>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Cooling down */}
+        {(radar.cooling ?? []).slice(0, expanded ? 5 : 1).map((s, i) => (
+          <div key={s.ticker} style={{ display: 'flex', alignItems: 'center', padding: '9px 13px', gap: 10, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: signalColor(s.signal), flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{s.ticker}</span>
+                <span style={{ fontSize: 9, color: 'var(--faint)' }}>{s.name}</span>
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: expanded ? 'normal' : 'nowrap' }}>{s.thesis}</p>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <span style={{ fontSize: 8, fontWeight: 700, color: signalColor(s.signal), letterSpacing: '0.5px', padding: '2px 5px', background: `${signalColor(s.signal)}15`, borderRadius: 3 }}>{signalLabel(s.signal)}</span>
+              {s.relativeStrength != null && (
+                <p style={{ fontSize: 9, color: 'var(--red)', marginTop: 3, fontWeight: 600 }}>{s.relativeStrength != null && !isNaN(s.relativeStrength) ? `${s.relativeStrength >= 0 ? '+' : ''}${s.relativeStrength.toFixed(1)}` : '—'}% vs SPY</p>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Theme Watch — emerging theme alert */}
+        {radar.themeWatch && (
+          <div style={{ padding: '9px 13px', background: 'rgba(245,158,11,0.04)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+              <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--amber)', letterSpacing: '0.8px' }}>THEME WATCH</span>
+              {radar.themeWatch.ticker && <span style={{ fontSize: 9, color: 'var(--faint)' }}>{radar.themeWatch.ticker}</span>}
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
+              <b style={{ color: 'var(--text)' }}>{radar.themeWatch.name}:</b> {radar.themeWatch.thesis}
+            </p>
+          </div>
+        )}
+      </div>
+      <DisclaimerBadge />
+    </div>
+  );
+}
+
+export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTabSwitch, showToast }) {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState({});
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [briefExpanded, setBriefExpanded] = useState(true);
+  const [briefGenerating, setBriefGenerating] = useState(false);
+  const [journalSave, setJournalSave] = useState(null); // { content, source, sectionName } or null
+
+  const firstName = user?.display_name?.split(' ')[0] ?? 'Trader';
+
+  const isPaid = (user?.plan ?? 'free') !== 'free';
+
+  const fetchAll = useCallback(async (force = false) => {
+    setLoading(true);
+    // Portfolio cache is 30s to match the price-pool tick — anything longer makes
+    // the card visibly stale during market hours. Sentiment is folded in here so
+    // its failures surface in the same error banner as the other fetches.
+    const [summary, movers, portfolio, brief, sentimentRes] = await Promise.allSettled([
+      cachedFetch('home_summary', () => api.ai.summary(force ? { force: true } : undefined), 5 * 60000),
+      cachedFetch('home_movers', () => api.market.movers(), 3 * 60000),
+      cachedFetch('home_portfolio', () => api.portfolio.value(), 30000),
+      isPaid ? cachedFetch('home_brief', () => api.ai.brief(force ? { force: true } : undefined), 10 * 60000) : Promise.resolve(null),
+      cachedFetch('home_sentiment', () => api.market.sentiment(), 5 * 60000),
+    ]);
+    if (sentimentRes.status === 'fulfilled' && onSentimentLoad) onSentimentLoad(sentimentRes.value);
+    const errors = [];
+    if (summary.status === 'rejected') errors.push('summary');
+    if (movers.status === 'rejected') errors.push('movers');
+    if (portfolio.status === 'rejected') errors.push('portfolio');
+    // Don't surface brief errors for free users — it's intentionally paid-only
+    if (brief.status === 'rejected' && isPaid) errors.push('brief');
+    if (sentimentRes.status === 'rejected') errors.push('sentiment');
+    setData({
+      summary: summary.status === 'fulfilled' ? summary.value : null,
+      movers: movers.status === 'fulfilled' ? movers.value : null,
+      portfolio: portfolio.status === 'fulfilled' ? portfolio.value : null,
+      brief: brief.status === 'fulfilled' ? brief.value : null,
+      errors,
+    });
+    setLastUpdated(new Date());
+    setLoading(false);
+  }, [isPaid]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const forceRefresh = useCallback(() => {
+    clearCachePrefix('home_');
+    fetchAll(true);
+  }, [fetchAll]);
+
+  const generateBriefNow = useCallback(async () => {
+    setBriefGenerating(true);
+    try {
+      clearCachePrefix('home_brief');
+      const fresh = await api.ai.brief({ force: true });
+      setData(d => ({ ...d, brief: fresh }));
+      if (showToast) showToast('Brief generated', 'success');
+    } catch (err) {
+      const msg = err?.error || err?.message || `Brief unavailable (${err?.status ?? 'network'})`;
+      if (showToast) showToast(msg, 'error');
+      console.error('[HomeTab] Brief generation failed:', err);
+    } finally {
+      setBriefGenerating(false);
+    }
+  }, [showToast]);
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  return (
+    <div className="scrollable" style={{ flex: 1 }}>
+      {/* Header */}
+      <div style={{ padding: '13px 16px 10px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 2 }}>TERMINAL</p>
+            <p style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>{greeting()}, {firstName}</p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>{today}</p>
+            {lastUpdated && <p style={{ fontSize: 8, color: 'var(--faint)', marginTop: 2 }}>{lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</p>}
+            <button onClick={forceRefresh} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blue)', fontSize: 9, fontFamily: 'inherit', letterSpacing: '0.5px', marginTop: 2 }}>REFRESH</button>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: '16px' }}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      ) : (
+        <div style={{ paddingBottom: 24 }}>
+
+          {/* Error banner for partial failures */}
+          {data.errors?.length > 0 && (
+            <div style={{ padding: '8px 16px', background: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
+              <p style={{ fontSize: 10, color: 'var(--red)', letterSpacing: '0.3px' }}>
+                Some data couldn't load ({data.errors.join(', ')}). <button onClick={fetchAll} style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 10, fontWeight: 700 }}>Retry</button>
+              </p>
+            </div>
+          )}
+
+          {/* TODAY — Outpost's 5 ranked picks, always at the top of Home.
+              Each row deep-links to its origin (portfolio, watchlist, etc.). */}
+          <TodayCard
+            onTabSwitch={onTabSwitch}
+            onItemTap={(item) => {
+              if (item?.link?.tab) onTabSwitch(item.link.tab);
+            }}
+          />
+
+          {/* Activation checklist — only for users still onboarding (≤2 positions).
+              Once they have 3+ positions they're activated; the checklist hides. */}
+          {(data.portfolio?.positions?.length ?? 0) < 3 && (
+            <ActivationChecklist
+              portfolio={data.portfolio}
+              userId={user?.id}
+              plan={user?.plan}
+              onTabSwitch={onTabSwitch}
+              showToast={showToast}
+            />
+          )}
+
+          {/* Pre-market brief — upgrade hint for free users */}
+          {!isPaid && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ background: 'var(--raised)', borderLeft: '2px solid var(--faint)', borderRadius: '0 8px 8px 0', padding: '11px 13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--faint)"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  <span style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 700, letterSpacing: '1px' }}>AI BRIEF · PAID</span>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55 }}>
+                  Personal pre-market briefs are part of the paid plan. Paid plans are coming soon.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Pre-market brief — empty state with Generate Now button */}
+          {isPaid && !data.brief?.brief && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ background: 'var(--raised)', borderLeft: '2px solid var(--blue)', borderRadius: '0 8px 8px 0', padding: '11px 13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--blue)"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  <span style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px' }}>AI BRIEF</span>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 10 }}>
+                  Your personal pre-market brief runs automatically at 7:30am ET weekdays. Generate one now for today's market context and position-specific notes.
+                </p>
+                <button
+                  onClick={generateBriefNow}
+                  disabled={briefGenerating}
+                  style={{
+                    background: briefGenerating ? 'var(--raised)' : 'var(--blue)',
+                    color: briefGenerating ? 'var(--faint)' : 'white',
+                    border: briefGenerating ? '1px solid var(--border)' : 'none',
+                    borderRadius: 6,
+                    padding: '8px 14px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '0.8px',
+                    fontFamily: 'inherit',
+                    cursor: briefGenerating ? 'default' : 'pointer',
+                  }}
+                >
+                  {briefGenerating ? 'GENERATING…' : 'GENERATE BRIEF'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Pre-market brief */}
+          {data.brief?.brief && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ background: 'var(--raised)', borderLeft: '2px solid var(--blue)', borderRadius: '0 8px 8px 0', padding: '11px 13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--blue)"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <span style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px' }}>AI BRIEF</span>
+                    {data.brief.generated_at && (
+                      <span style={{ fontSize: 8, color: 'var(--faint)', fontWeight: 400, letterSpacing: 0 }}>
+                        {new Date(data.brief.generated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <button
+                      onClick={generateBriefNow}
+                      disabled={briefGenerating}
+                      title="Regenerate (8 credits)"
+                      aria-label="Regenerate brief"
+                      style={{
+                        background: 'none', border: 'none',
+                        cursor: briefGenerating ? 'default' : 'pointer',
+                        color: briefGenerating ? 'var(--faint)' : 'var(--muted)',
+                        padding: '2px 6px', fontFamily: 'inherit',
+                        opacity: briefGenerating ? 0.5 : 1,
+                      }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: briefGenerating ? 'spin 1s linear infinite' : 'none' }}>
+                        <polyline points="23 4 23 10 17 10"/>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                      </svg>
+                      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+                    </button>
+                    <BookmarkButton onClick={() => setJournalSave({ content: data.brief.brief, source: 'ai_brief' })} />
+                    <button onClick={() => setBriefExpanded(e => !e)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, fontFamily: 'inherit' }}>
+                      {briefExpanded ? '▲' : '▼'}
+                    </button>
+                  </div>
+                </div>
+                {briefExpanded && (
+                  <>
+                    <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>{renderPlainText(data.brief.brief)}</p>
+                    <DisclaimerBadge />
+                    <FeedbackButtons feature="brief" response={data.brief.brief} />
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Portfolio value */}
+          <div style={{ padding: '13px 16px 11px', borderBottom: '1px solid var(--border)' }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 4 }}>PORTFOLIO VALUE</p>
+            {data.portfolio?.totalValue > 0 ? (
+              <>
+                <p style={{ fontSize: 28, fontWeight: 700, fontFamily: 'JetBrains Mono', color: 'var(--text)', letterSpacing: '-1px', marginBottom: 5 }}>
+                  ${fmt(data.portfolio.totalValue)}
+                </p>
+                <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
+                  <span style={{ color: 'var(--faint)' }}>P&L <span style={{ color: colorFor(data.portfolio.totalPnl), fontWeight: 700 }}>{data.portfolio.totalPnl >= 0 ? '+' : ''}${fmt(data.portfolio.totalPnl)}</span></span>
+                  <span style={{ color: 'var(--faint)' }}>{data.portfolio.marketOpen === false ? 'AT CLOSE' : 'TODAY'} <span style={{ color: colorFor(data.portfolio.todayChange), fontWeight: 700 }}>{data.portfolio.todayChange >= 0 ? '+' : ''}${fmt(data.portfolio.todayChange)}</span></span>
+                </div>
+                {/* Position pills */}
+                {data.portfolio.positions?.length > 0 && (
+                  <div style={{ display: 'flex', gap: 7, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
+                    {data.portfolio.positions.map(p => (
+                      <div key={p.ticker} onClick={() => onTabSwitch('portfolio')} style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', flexShrink: 0, cursor: 'pointer' }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{p.ticker}</p>
+                        <p style={{ fontSize: 10, color: colorFor(p.todayChangePercent), fontWeight: 700, marginTop: 1 }}>
+                          {p.todayChangePercent >= 0 ? '+' : ''}{fmt(p.todayChangePercent)}%
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div>
+                <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Add positions to track your portfolio value</p>
+                <button onClick={() => onTabSwitch('portfolio')} className="btn btn-blue">ADD POSITION</button>
+              </div>
+            )}
+          </div>
+
+          {/* Portfolio Recap — why the portfolio moved today (passive card, auto-hides when empty) */}
+          <PortfolioExplainerCard refreshKey={lastUpdated} showToast={showToast} />
+
+          {/* Market metrics */}
+          {sentiment && (
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+              {[
+                {
+                  label: sentiment.vix?.estimated ? 'VIX (EST)' : 'VIX',
+                  value: sentiment.vix?.value?.toFixed(1) ?? '—',
+                  sub: sentiment.vix?.label,
+                  color: sentiment.vix?.value >= 25 ? 'var(--red)' : sentiment.vix?.value >= 20 ? 'var(--amber)' : 'var(--green)',
+                },
+                {
+                  label: 'FEAR & GREED',
+                  value: sentiment.fearGreed?.value ?? '—',
+                  sub: sentiment.fearGreed?.label?.toUpperCase(),
+                  color: (sentiment.fearGreed?.value ?? 50) < 30 ? 'var(--red)' : (sentiment.fearGreed?.value ?? 50) > 70 ? 'var(--green)' : 'var(--amber)',
+                  warn: sentiment.fearGreed?.source === 'crypto_fallback',
+                },
+                {
+                  label: 'SPY RSI',
+                  value: sentiment.rsi?.SPY?.value?.toFixed(1) ?? '—',
+                  sub: sentiment.rsi?.SPY?.label?.toUpperCase(),
+                  color: 'var(--muted)',
+                },
+              ].map((m, i) => (
+                <div key={m.label} style={{ flex: 1, padding: '10px 12px', borderRight: i < 2 ? '1px solid var(--border)' : 'none' }}>
+                  <p style={{ fontSize: 8, color: 'var(--faint)', marginBottom: 3, letterSpacing: '0.8px' }}>
+                    {m.label}{m.warn && <span style={{ color: 'var(--amber)', marginLeft: 3 }}>*</span>}
+                  </p>
+                  <p style={{ fontSize: 18, fontWeight: 700, color: m.color, letterSpacing: '-0.5px' }}>{m.value}</p>
+                  {m.sub && <p style={{ fontSize: 8, color: m.color, marginTop: 2, letterSpacing: '0.5px' }}>{m.sub}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* AI Market Summary */}
+          {data.summary?.summary_text && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px' }}>AI MARKET SUMMARY</p>
+                <BookmarkButton onClick={() => setJournalSave({ content: data.summary.summary_text, source: 'ai_brief' })} />
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.7, marginBottom: 6 }}>{renderPlainText(data.summary.summary_text)}</p>
+              <DisclaimerBadge />
+              <FeedbackButtons feature="summary" response={data.summary.summary_text} />
+            </div>
+          )}
+
+          {/* Top Movers */}
+          {(data.movers?.gainers?.length > 0 || data.movers?.losers?.length > 0) && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px' }}>{data.movers?.live === false ? 'LAST SESSION' : 'TOP MOVERS'}</p>
+                {data.movers?.live === false && <span style={{ fontSize: 8, color: 'var(--faint)', opacity: 0.6 }}>MARKET CLOSED</span>}
+              </div>
+              <div style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                {[...(data.movers.gainers ?? []).map(m => ({ ...m, pos: true })), ...(data.movers.losers ?? []).map(m => ({ ...m, pos: false }))].slice(0, 5).map((m, i, arr) => (
+                  <div key={m.ticker} style={{ display: 'flex', alignItems: 'center', padding: '9px 13px', gap: 10, borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                    <TickerIcon ticker={m.ticker} size={32} />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{m.ticker}</p>
+                      <p style={{ fontSize: 10, color: 'var(--faint)' }}>${fmt(m.price)}</p>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: m.pos ? 'var(--green)' : 'var(--red)', letterSpacing: '-0.2px' }}>
+                      {m.pos ? '+' : ''}{fmt(m.changePercent)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Ask your agent — opportunity scan CTA */}
+          <div style={{ padding: '12px 16px' }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 10 }}>ASK YOUR AGENT</p>
+            <div style={{ background: 'var(--raised)', border: '1px solid rgba(59,130,246,0.18)', borderRadius: 8, padding: '13px 14px' }}>
+              <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 10 }}>
+                Ask your Agent to scan for opportunities based on current market conditions, social sentiment, and your portfolio.
+              </p>
+              <button onClick={() => onTabSwitch('agent')} className="btn btn-blue btn-full">
+                OPEN AGENT
+              </button>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Save to Journal sheet — opens when user bookmarks the brief or summary */}
+      <SaveToJournalSheet
+        open={journalSave !== null}
+        onClose={() => setJournalSave(null)}
+        initialContent={journalSave?.content || ''}
+        source={journalSave?.source || 'manual'}
+        preferredSectionName="AI Insights"
+        showToast={showToast}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,257 @@
+import '../config.js';
+import { backgroundScan } from '../functions/social.js';
+import { runBargainScan } from '../functions/bargainRadar.js';
+import { generateAllExplainers } from '../functions/portfolioExplainer.js';
+import { generateAllDigests } from '../services/proactiveDigest.js';
+import { sendAllDailyDigestEmails, sendAllWeeklySummaryEmails } from '../services/notifications.js';
+import { supabase } from '../db.js';
+import { getETTime, todayStr, isWeekday } from '../utils/marketHours.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { config } from '../config.js';
+import { buildBriefContext } from '../utils/promptEngine.js';
+import { getPrices, initPricePool } from '../services/pricePool.js';
+import { resetDailyCounters } from '../services/analytics.js';
+import { alertMonitorTick } from '../services/alertMonitor.js';
+import { runFounderDigest } from '../services/founderDigest.js';
+
+const anthropic = new Anthropic({ apiKey: config.anthropicKey });
+const PLAIN_TEXT_RULE = 'CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes.';
+
+// Run social scan every 30 min
+const CATEGORIES = ['all', 'stocks', 'pennystocks', 'etfs', 'crypto'];
+CATEGORIES.forEach((cat, i) => {
+  setTimeout(() => {
+    backgroundScan(cat);
+    setInterval(() => backgroundScan(cat), 30 * 60 * 1000);
+  }, i * 12000);
+});
+
+/**
+ * Concurrency limiter — runs async functions with max N concurrent.
+ * Prevents Claude API burst at 7:30am with 500+ users.
+ */
+async function withConcurrency(items, fn, maxConcurrent = 5) {
+  const results = [];
+  const executing = new Set();
+
+  for (const item of items) {
+    const p = fn(item).then(r => {
+      executing.delete(p);
+      return r;
+    });
+    executing.add(p);
+    results.push(p);
+
+    if (executing.size >= maxConcurrent) {
+      await Promise.race(executing);
+    }
+  }
+
+  return Promise.allSettled(results);
+}
+
+async function generateBriefForUser(user) {
+  const today = todayStr();
+  const cacheKey = `brief_${user.id}_${today}`;
+  const { data: existing } = await supabase.from('ai_cache').select('id').eq('cache_key', cacheKey).maybeSingle();
+  if (existing) return false;
+
+  const ctx = await buildBriefContext(user.id, user);
+  if (ctx.positionCount === 0) return false;
+
+  // Brief structure (drilled into the prompt):
+  //   Sentence 1: today's market read in plain English, framed for the trader's STYLE.
+  //   Sentence 2: one specific observation about THEIR positions — uses trade-plan
+  //               distance / active alerts / premarket movers when present.
+  //   Sentence 3: ONE concrete thing to do or watch today (never "be careful").
+  // Switching from Sonnet→Haiku saves ~94% per call; the tighter spec more than
+  // compensates for the model swap. Trade plan + ticker news inputs come from
+  // buildBriefContext so the brief is no longer blind to the user's stated intent.
+  const system = `You are a personal trading coach writing today's pre-market brief for ONE specific trader.
+
+OUTPUT (3 sentences, in this exact order, no headers, no labels, no numbering):
+1) ONE sentence reading today's market through the lens of THIS trader's style — name the regime + what it means for them. Don't recite numbers in isolation; explain what they imply.
+2) ONE sentence about THEIR portfolio — if there's an ACTIVE ALERT (near target/stop), lead with that ticker and the level. If a position is a big premarket mover, lead with the ticker and reference the news. Otherwise call out one position that matters today.
+3) ONE concrete action or thing to watch — never "be careful" alone. Examples: "watch SPY 470 — a break invalidates the day-trade thesis" or "if NVDA gaps to your $920 target, decide now whether you trim half".
+
+ABSOLUTE RULES:
+- Reference specific tickers, prices, and percentages — never "your positions" or "some tickers".
+- Never restate the trader's P&L. They can see it.
+- Don't open with "Good morning" — the UI provides framing.
+- Do not invent news. If headlines aren't in the input, don't speculate on catalysts.
+- If a position shows "hold duration unknown", do NOT reference how long it's been held, do NOT use phrases like "long-term holder" or "recent buy", and do NOT infer tax status. Treat the hold period as data we don't have.
+${PLAIN_TEXT_RULE}`;
+
+  const userMsg = [
+    `Trader: ${ctx.name} | Style: ${ctx.tradingStyle} | Risk: ${ctx.riskTolerance}`,
+    `Market: regime ${ctx.regime}, VIX ${ctx.vix} (${ctx.vixLabel}), F&G ${ctx.fearGreed} (${ctx.fearGreedLabel}), SPY RSI ${ctx.spyRsi}`,
+    `Positions: ${ctx.positions}`,
+    ctx.tradePlansStr || '',
+    ctx.activeAlertsStr || '',
+    ctx.tickerNewsStr || '',
+    '',
+    'Write the brief now.',
+  ].filter(Boolean).join('\n');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 220,
+      system,
+      messages: [{ role: 'user', content: userMsg }],
+    }, { signal: controller.signal });
+
+    const brief = msg.content[0].text;
+    const now = new Date().toISOString();
+    await supabase.from('ai_cache').insert({ cache_key: cacheKey, result: brief, created_at: now });
+
+    // Credits: 8 (down from 15) — Haiku is much cheaper, but the brief is still
+    // a daily premium feature, so keep it priced as a real touchpoint, not free.
+    await supabase.from('user_profiles').update({
+      credits_remaining: Math.max(0, user.credits_remaining - 8),
+      credits_used_this_month: (user.credits_used_this_month ?? 0) + 8,
+    }).eq('id', user.id);
+
+    return true;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateBriefs() {
+  if (!isWeekday()) return;
+  console.log('[Jobs] Generating pre-market briefs...');
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: users } = await supabase.from('user_profiles').select('*').neq('plan', 'free').gt('last_login', sevenDaysAgo);
+  if (!users?.length) return;
+
+  const results = await withConcurrency(users, async (user) => {
+    try {
+      return await generateBriefForUser(user);
+    } catch (err) {
+      console.error(`[Jobs] Brief failed for ${user.id}:`, err.message);
+      return false;
+    }
+  }, 5);
+
+  const count = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
+  console.log(`[Jobs] Generated ${count} briefs for ${users.length} eligible users`);
+}
+
+async function takeSnapshots() {
+  if (!isWeekday()) return;
+  console.log('[Jobs] Taking portfolio snapshots...');
+  const today = todayStr();
+  const { data: users } = await supabase.from('user_profiles').select('id').limit(1000);
+  let count = 0;
+  for (const user of users ?? []) {
+    try {
+      const { data: existing } = await supabase.from('portfolio_snapshots').select('id').eq('user_id', user.id).eq('date', today).maybeSingle();
+      if (existing) continue;
+
+      // Fetch positions with shares and avg_cost — compute value from LIVE prices
+      const { data: positions } = await supabase.from('positions').select('ticker,shares,avg_cost').eq('user_id', user.id);
+      if (!positions?.length) continue;
+
+      const tickers = positions.map(p => p.ticker);
+      const priceMap = getPrices(tickers);
+
+      let totalValue = 0;
+      let totalCost = 0;
+      for (const p of positions) {
+        const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+        totalValue += livePrice * (p.shares ?? 0);
+        totalCost += (p.avg_cost ?? 0) * (p.shares ?? 0);
+      }
+      const totalPnl = totalValue - totalCost;
+
+      // Only snapshot if we got meaningful data (at least one live price)
+      if (totalValue <= 0) continue;
+
+      await supabase.from('portfolio_snapshots').insert({ user_id: user.id, total_value: parseFloat(totalValue.toFixed(2)), total_pnl: parseFloat(totalPnl.toFixed(2)), date: today });
+      count++;
+    } catch (err) { console.error('[Jobs] Snapshot failed for user', user.id, ':', err.message); }
+  }
+  console.log(`[Jobs] Snapshotted ${count} portfolios`);
+}
+
+async function resetCredits() {
+  const today = new Date().getDate();
+  const { data: users } = await supabase.from('user_profiles').select('id,plan,billing_date').eq('billing_date', today);
+  const CREDITS = { free: 50, starter: 500, pro: 2500, elite: 10000 };
+  for (const user of users ?? []) {
+    await supabase.from('user_profiles').update({ credits_remaining: CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
+  }
+  if (users?.length) console.log(`[Jobs] Reset credits for ${users.length} users`);
+}
+
+function scheduleAt(hour, min, fn, label) {
+  const now = getETTime();
+  const target = new Date(now);
+  target.setHours(hour, min, 0, 0);
+  let delay = target.getTime() - now.getTime();
+  if (delay < 0) delay += 24 * 60 * 60 * 1000;
+  setTimeout(() => {
+    fn();
+    setInterval(fn, 24 * 60 * 60 * 1000);
+  }, delay);
+  console.log(`[Jobs] Scheduled ${label} in ${Math.round(delay / 60000)}m`);
+}
+
+scheduleAt(7, 0, async () => {
+  if (!isWeekday()) return;
+  try { await generateAllDigests(); } catch (err) { console.error('[Jobs] Proactive digest failed:', err.message); }
+}, 'Proactive digests');
+scheduleAt(7, 30, generateBriefs, 'Pre-market briefs');
+// Email the digest 15 min after generation completes (gives the cron room to finish even at scale)
+scheduleAt(7, 45, async () => {
+  if (!isWeekday()) return;
+  try { await sendAllDailyDigestEmails(); } catch (err) { console.error('[Jobs] Daily digest email failed:', err.message); }
+}, 'Daily digest emails');
+// Weekly summary fires daily at 6pm but skips non-Sundays (cleaner than a custom weekly scheduler)
+scheduleAt(18, 0, async () => {
+  if (getETTime().getDay() !== 0) return;
+  try { await sendAllWeeklySummaryEmails(); } catch (err) { console.error('[Jobs] Weekly summary failed:', err.message); }
+}, 'Weekly summary emails');
+// Founder digest fires daily at 9am but skips non-Mondays — gives Myles a Monday-morning read
+scheduleAt(9, 0, async () => {
+  if (getETTime().getDay() !== 1) return;
+  try { await runFounderDigest(); } catch (err) { console.error('[Jobs] Founder digest failed:', err.message); }
+}, 'Founder digest');
+scheduleAt(16, 30, takeSnapshots, 'Portfolio snapshots');
+scheduleAt(16, 45, async () => {
+  if (!isWeekday()) return;
+  try { await generateAllExplainers(); } catch (err) { console.error('[Jobs] Portfolio explainers failed:', err.message); }
+}, 'Portfolio explainers');
+scheduleAt(17, 0, async () => {
+  if (!isWeekday()) return;
+  try { await runBargainScan(); } catch (err) { console.error('[Jobs] Bargain scan failed:', err.message); }
+}, 'Bargain Radar scan');
+scheduleAt(0, 1, resetCredits, 'Credit resets');
+scheduleAt(0, 0, resetDailyCounters, 'Analytics daily reset');
+resetCredits();
+
+// ─── Price alert monitor ────────────────────────────────────────────────
+// Runs every 5 minutes. The alertMonitorTick() function internally skips
+// outside market hours so we don't hit the DB for nothing overnight. The
+// price pool must already be initialized so the monitor has fresh prices
+// to compare against — start it here since the jobs process runs
+// independently of the web server.
+(async () => {
+  try {
+    await initPricePool();
+    console.log('[Jobs] Price pool initialized for alert monitor');
+    setInterval(async () => {
+      try { await alertMonitorTick(); } catch (err) { console.error('[Jobs] Alert monitor tick failed:', err.message); }
+    }, 5 * 60 * 1000);
+    // Also run once ~30s after boot so alerts that should already be triggered don't wait 5 full minutes
+    setTimeout(() => alertMonitorTick().catch(() => {}), 30 * 1000);
+    console.log('[Jobs] Scheduled alert monitor every 5 minutes (market hours only)');
+  } catch (err) {
+    console.error('[Jobs] Alert monitor init failed:', err.message);
+  }
+})();
+
+console.log('[Jobs] Background jobs running');
