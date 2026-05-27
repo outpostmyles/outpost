@@ -323,6 +323,23 @@ function WatchlistCard({ item, onRemove, onEdit, showToast }) {
   const [notes, setNotes] = useState(item.notes || '');
   const [alertPrice, setAlertPrice] = useState(item.alert_price || '');
   const [saving, setSaving] = useState(false);
+  // Phase 3 — single most-recent history event for this watched ticker.
+  // Quieter than the position-card history (one line, not a list) since the
+  // watchlist surface is denser and the user is browsing, not deciding.
+  const [recentMemory, setRecentMemory] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.portfolio.history(item.ticker, 3)
+      .then(d => {
+        if (cancelled) return;
+        // Prefer agent chats + journal notes about it. Skip position events
+        // (if they actually own/owned it, that already shows on Portfolio).
+        const e = (d.events || []).find(x => x.source === 'agent' || x.source === 'journal');
+        setRecentMemory(e || null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [item.ticker]);
 
   async function handleRemove() {
     if (!confirm) { setConfirm(true); setTimeout(() => setConfirm(false), 3000); return; }
@@ -390,6 +407,23 @@ function WatchlistCard({ item, onRemove, onEdit, showToast }) {
               {alertNear && ` — ${alertDistPct.toFixed(1)}% AWAY`}
             </p>
           )}
+        </div>
+      )}
+
+      {/* Phase 3: most-recent take from the user's own writing (agent chat
+          or journal note about this ticker). Quiet — one line, italicized
+          to mark it as the user's voice, not Outpost's. Hides when none. */}
+      {!editing && recentMemory && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.4px', fontWeight: 700, marginBottom: 3 }}>
+            {recentMemory.source === 'agent' ? 'YOUR LAST TAKE' : 'YOUR NOTE'}
+            <span style={{ color: 'var(--faint)', fontWeight: 400, marginLeft: 4 }}>
+              · {new Date(recentMemory.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+          </p>
+          <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.45, fontStyle: 'italic' }}>
+            "{(recentMemory.quote || recentMemory.excerpt || '').slice(0, 120)}{(recentMemory.quote || recentMemory.excerpt || '').length > 120 ? '…' : ''}"
+          </p>
         </div>
       )}
 

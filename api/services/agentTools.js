@@ -10,6 +10,7 @@ import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { getTaxInsights } from './taxInsights.js';
 import { supabase } from '../db.js';
 import { getPrice } from './pricePool.js';
+import { recallHistory } from './historyAggregator.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -267,6 +268,20 @@ export const AGENT_TOOLS = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'recall_history',
+    description: 'Retrieve the user\'s OWN past writing and thinking — across past conversations with you, their position theses (active + closed), their journal notes, and their saved reflections. Use this PROACTIVELY any time the user mentions a ticker, asks "what did I think about X", references a past decision, or asks for your opinion on a position they hold or have held. The result includes the user\'s VERBATIM writing in the `context` field — quote it back to them with attribution ("You wrote three months ago: ...") rather than paraphrasing. This is how you make the user feel remembered. Distinct from get_closed_trade_reflection (which only sees closed trades): recall_history spans active positions, journal notes, and prior conversations too.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ticker: { type: 'string', description: 'Optional. Filter to a specific ticker — also picks up free-text mentions in past conversations and journal notes.' },
+        topic: { type: 'string', description: 'Optional. Free-text substring search across all stored writing (e.g. "AI spending", "earnings", "tax loss").' },
+        date_from: { type: 'string', description: 'Optional. ISO date to start from (e.g. 2026-01-01).' },
+        date_to: { type: 'string', description: 'Optional. ISO date to end at.' },
+        limit: { type: 'number', description: 'Max entries to return. Default 10, hard cap 30.' },
+      },
+    },
+  },
 ];
 
 /**
@@ -293,6 +308,21 @@ export async function executeTool(toolName, toolInput, context = {}) {
       case 'get_tax_insights': return context.userId ? await getTaxInsights(context.userId) : { error: 'User context not available' };
       case 'pre_trade_check': return context.userId ? await preTradeCheck({ ...toolInput, userId: context.userId }) : { error: 'User context not available' };
       case 'get_closed_trade_reflection': return context.userId ? await getClosedTradeReflection({ ...toolInput, userId: context.userId }) : { error: 'User context not available' };
+      case 'recall_history': {
+        if (!context.userId) return { error: 'User context not available' };
+        const entries = await recallHistory({
+          userId: context.userId,
+          ticker: toolInput.ticker || undefined,
+          topic: toolInput.topic || undefined,
+          dateFrom: toolInput.date_from || undefined,
+          dateTo: toolInput.date_to || undefined,
+          limit: Math.min(toolInput.limit ?? 10, 30),
+        });
+        if (entries.length === 0) {
+          return { entries: [], note: 'No prior history found for the given filters. The user has no past writing on this — treat them as starting fresh.' };
+        }
+        return { entries };
+      }
       default: return { error: `Unknown tool: ${toolName}` };
     }
   } catch (err) {

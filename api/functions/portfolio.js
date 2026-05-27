@@ -8,6 +8,7 @@ import { getPrices, isPoolMarketOpen, requestRefresh } from '../services/pricePo
 import { trackFeature, trackTradePlan } from '../services/analytics.js';
 import { getSnapshot, getPrevClose } from '../utils/polygon.js';
 import { todayStr } from '../utils/marketHours.js';
+import { getUserHistory } from '../services/historyAggregator.js';
 import { getFinancials, getAnalystRating } from '../services/fmp.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock } from '../services/agentTools.js';
@@ -53,6 +54,30 @@ async function validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 3 — TICKER HISTORY (powers "Your history with this" on position cards
+// and Watchlist items)
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/portfolio/history/:ticker — compact history feed for a single
+// ticker. Tighter limit than the Timeline endpoint since this surfaces inline
+// in a card. Returns the same event shape as the Timeline.
+router.get('/history/:ticker', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const ticker = sanitizeTicker(req.params.ticker);
+    if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 6), 20);
+    const events = await getUserHistory({
+      userId: req.user.id,
+      ticker,
+      limit,
+    });
+    res.json({ ticker, events, count: events.length });
+  } catch (err) {
+    console.error('[Portfolio] /history/:ticker failed:', err.message);
+    res.status(500).json({ error: 'History unavailable' });
+  }
+});
 
 router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
   try {

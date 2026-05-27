@@ -104,6 +104,7 @@ export const api = {
     planAdherence: () => get('/api/portfolio/plan-adherence'),
     performanceAttribution: () => get('/api/portfolio/performance-attribution'),
     synthesis: (force = false) => get(`/api/portfolio/synthesis${force ? '?force=true' : ''}`),
+    history: (ticker, limit) => get(`/api/portfolio/history/${ticker}${limit ? `?limit=${limit}` : ''}`),
   },
   alerts: {
     list: () => get('/api/alerts'),
@@ -209,6 +210,17 @@ export const api = {
     updateNote: (id, body) => patch(`/api/journal/notes/${id}`, body),
     appendNote: (id, content) => post(`/api/journal/notes/${id}/append`, { content }),
     deleteNote: (id) => del(`/api/journal/notes/${id}`),
+    timeline: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.ticker) q.set('ticker', params.ticker);
+      if (params.topic) q.set('topic', params.topic);
+      if (params.dateFrom) q.set('date_from', params.dateFrom);
+      if (params.dateTo) q.set('date_to', params.dateTo);
+      if (params.sources) q.set('sources', Array.isArray(params.sources) ? params.sources.join(',') : params.sources);
+      if (params.limit) q.set('limit', String(params.limit));
+      const qs = q.toString();
+      return get(`/api/journal/timeline${qs ? '?' + qs : ''}`);
+    },
   },
   admin: {
     check: () => get('/api/admin/check'),

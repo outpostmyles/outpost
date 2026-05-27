@@ -7,8 +7,51 @@ import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sanitizeString } from '../middleware/validate.js';
+import { getUserHistory } from '../services/historyAggregator.js';
 
 const router = express.Router();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 3 — LONGITUDINAL MEMORY
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/journal/timeline — the user's investing story.
+// Unifies events from agent conversations, position opens/closes, theses,
+// and journal notes into a single chronological feed. Powers the Timeline
+// view on the Journal tab.
+//
+// Query params (all optional):
+//   ticker     — filter to a single ticker
+//   topic      — free-text substring across title/excerpt/quote
+//   date_from  — ISO date (yyyy-mm-dd or full ISO timestamp)
+//   date_to    — ISO date
+//   sources    — comma-separated list of: agent, position_open, position_close,
+//                thesis, journal. Default = all.
+//   limit      — max entries (default 30, hard cap 100)
+router.get('/timeline', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const ticker = req.query.ticker ? String(req.query.ticker).toUpperCase().slice(0, 6) : undefined;
+    const topic = req.query.topic ? String(req.query.topic).slice(0, 200) : undefined;
+    const dateFrom = req.query.date_from ? String(req.query.date_from).slice(0, 30) : undefined;
+    const dateTo = req.query.date_to ? String(req.query.date_to).slice(0, 30) : undefined;
+    const sourcesParam = req.query.sources ? String(req.query.sources) : undefined;
+    const allowedSources = ['agent', 'position_open', 'position_close', 'thesis', 'journal'];
+    const sources = sourcesParam
+      ? sourcesParam.split(',').map(s => s.trim()).filter(s => allowedSources.includes(s))
+      : allowedSources;
+    const limitRaw = req.query.limit ? parseInt(req.query.limit, 10) : 30;
+    const limit = Math.min(Math.max(1, isNaN(limitRaw) ? 30 : limitRaw), 100);
+
+    const events = await getUserHistory({
+      userId: req.user.id,
+      ticker, topic, dateFrom, dateTo, sources, limit,
+    });
+
+    res.json({ events, count: events.length });
+  } catch (err) {
+    console.error('[Journal] /timeline failed:', err.message);
+    res.status(500).json({ error: 'Timeline unavailable' });
+  }
+});
 
 const MAX_TITLE = 80;
 const MAX_CONTENT = 50000;           // Notes can grow large — they're documents

@@ -1350,6 +1350,96 @@ function ThesisSection({ pos, onEdit }) {
   );
 }
 
+/**
+ * HistorySection — Phase 3 contextual memory surfacing.
+ * Quiet block on the expanded position card showing: first-bought date +
+ * thesis snippet, past closed positions in the same ticker (with outcome),
+ * recent agent chats about it. Hides entirely if no history exists.
+ */
+function HistorySection({ ticker, currentPositionId }) {
+  const [events, setEvents] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.portfolio.history(ticker, 8)
+      .then(d => { if (!cancelled) setEvents(d.events || []); })
+      .catch(() => { if (!cancelled) setEvents([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [ticker]);
+
+  if (loading) return null;
+  // Filter out the current position's own "opened" + "thesis" events — the
+  // user is already looking at this position, no need to echo it back.
+  // Keep prior closed positions in the same ticker, agent chats, and notes.
+  const filtered = (events || []).filter(e =>
+    !(e.id === `open:${currentPositionId}` || e.id === `thesis:${currentPositionId}`)
+  );
+  if (filtered.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 5, fontWeight: 700 }}>
+        YOUR HISTORY WITH {ticker}
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {filtered.slice(0, 4).map(e => <HistoryRow key={e.id} ev={e} />)}
+      </div>
+    </div>
+  );
+}
+
+function HistoryRow({ ev }) {
+  const d = new Date(ev.date);
+  const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+  const label = ({
+    agent: 'You asked',
+    position_open: 'Opened',
+    position_close: 'Closed',
+    thesis: 'Wrote thesis',
+    journal: 'Note',
+  })[ev.source] || ev.source;
+  const accent = ({
+    agent: '#a78bfa',
+    position_open: 'var(--green)',
+    position_close: ev.outcome === 'win' ? 'var(--green)' : ev.outcome === 'loss' ? 'var(--red)' : 'var(--amber)',
+    thesis: 'var(--blue)',
+    journal: 'var(--muted)',
+  })[ev.source] || 'var(--faint)';
+
+  return (
+    <div style={{
+      background: 'var(--raised)',
+      borderLeft: `2px solid ${accent}`,
+      borderRadius: 4,
+      padding: '6px 9px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: ev.quote ? 3 : 0 }}>
+        <span style={{ fontSize: 9, color: accent, fontWeight: 700, letterSpacing: '0.4px' }}>
+          {label.toUpperCase()}
+          {ev.source === 'position_close' && ev.pnl != null && (
+            <span style={{ marginLeft: 5, color: ev.pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {ev.pnl >= 0 ? '+' : ''}${Math.abs(ev.pnl).toFixed(0)}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--faint)' }}>{dateLabel}</span>
+      </div>
+      {ev.quote && (
+        <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.45, fontStyle: 'italic' }}>
+          "{ev.quote.length > 130 ? ev.quote.slice(0, 130) + '…' : ev.quote}"
+        </p>
+      )}
+      {!ev.quote && ev.excerpt && (
+        <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.45 }}>
+          {ev.excerpt.length > 130 ? ev.excerpt.slice(0, 130) + '…' : ev.excerpt}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   // Modes:
   //   'collapsed' — compact card showing price + today + P&L
@@ -1594,6 +1684,11 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               pos={pos}
               onEdit={() => setMode('edit')}
             />
+
+            {/* Phase 3: YOUR HISTORY — surfaces past chats, prior closed
+                positions in the same ticker, and journal notes referencing
+                this stock. Hides entirely when there's no history. */}
+            <HistorySection ticker={pos.ticker} currentPositionId={pos.id} />
 
             {/* Price levels (target/stop) — only rendered when at least one
                 level is set. Thesis is shown above in its own ThesisSection so
