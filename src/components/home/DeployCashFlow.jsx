@@ -277,6 +277,15 @@ function RecommendationsView({ recs, amount, onPick, onShowAlternatives, onOpenA
           None of these feel right? → Talk it out with the agent
         </button>
       </div>
+
+      {/* Disclaimer — required on every AI-generated recommendation surface.
+          Always visible, never collapsed, matches the disclaimer on Today/Brief. */}
+      <p style={{
+        fontSize: 9, color: 'var(--faint)', textAlign: 'center',
+        marginTop: 14, lineHeight: 1.5, fontStyle: 'italic',
+      }}>
+        Not financial advice. For educational purposes only. Trading involves substantial risk of loss.
+      </p>
     </>
   );
 }

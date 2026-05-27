@@ -902,9 +902,14 @@ async function buildDeployCashContext(userId, user) {
   const recentChats = (recentChatsRes.data ?? []).filter(m => (m.content || '').trim().split(/\s+/).length >= 25);
 
   // Live prices for ALL tickers the model might recommend: portfolio + watchlist
-  // + common defensive ETFs. Without this the model invents prices for
-  // non-portfolio tickers, which is the single biggest correctness risk here.
-  const COMMON_DEFENSIVE_ETFS = ['VOO', 'VTI', 'QQQ', 'SCHD', 'BND', 'VEA', 'SPY'];
+  // + common defensive ETFs + cash-equivalents (for "this year" horizon) +
+  // dividend stalwarts (for "preserve" goal). Without these the model invents
+  // prices, which is the single biggest correctness risk here.
+  const COMMON_DEFENSIVE_ETFS = [
+    'VOO', 'VTI', 'QQQ', 'SCHD', 'BND', 'VEA', 'SPY',
+    'SGOV', 'BIL', 'SHV', 'VBIL', // cash-equivalents for this_year horizon
+    'KO', 'JNJ', 'PG', 'VZ',       // dividend stalwarts for preserve goal
+  ];
   const allTickers = Array.from(new Set([
     ...positions.map(p => p.ticker),
     ...watchlist.map(w => w.ticker),
@@ -976,9 +981,18 @@ router.post('/deploy-cash', requireAuth, rateLimit(10), async (req, res) => {
     // Aggressive growth users can override.
     const projectedPortfolio = ctxData.totalValue + amount;
     const isAggressive = goal === 'grow_aggressively';
+    // Per-allocation cap — how much of THE NEW CASH any single option may use.
+    // Aggressive 10% (was 15%, but 15% allowed compound concentration that
+    // pushed single names to ~25% of the post-trade portfolio when the user
+    // was already heavy in that ticker).
     const concentrationCapDollars = isAggressive
-      ? Math.min(amount, projectedPortfolio * 0.15)  // looser cap for aggressive — 15%
+      ? Math.min(amount, projectedPortfolio * 0.10)
       : Math.min(amount, projectedPortfolio * (DEPLOY_CASH_CONCENTRATION_CAP_PCT / 100));
+    // Resulting-concentration ceiling — applied to ADD TO EXISTING options.
+    // After the trade, no single position should exceed this fraction of the
+    // post-trade portfolio. This is the rule that prevents compound concentration
+    // (adding to a position that's already huge → it becomes catastrophically huge).
+    const maxResultingConcentrationPct = isAggressive ? 20 : 15;
 
     // Build the structured-data block for the prompt. We summarize hard so
     // Sonnet stays focused on the strategic picks rather than re-deriving math.
@@ -1040,11 +1054,53 @@ THE THREE SHAPES — typically one of each, in this order when possible:
 
 If amount or context makes any shape silly (e.g. they have no positions yet → skip option 1), pick the next most useful angle.
 
+═════════════════════════════════════════════════════════════════════════════
+HARD RULES BASED ON HORIZON + GOAL — these override the shapes above when they conflict. The whole product loses trust if it tells someone with sub-1-year money to buy speculative stocks.
+═════════════════════════════════════════════════════════════════════════════
+
+HORIZON: "this_year" (sub-1-year money) — ABSOLUTE OVERRIDE:
+- DO NOT recommend individual stocks, growth ETFs, or anything market-correlated. Period.
+- Recommend ONLY cash equivalents: money market funds (SGOV, BIL), short-term Treasury ETFs (SHV, VBIL), or high-yield savings (mention "your bank's HYSA or a money market fund").
+- If the user ALSO selected "grow_aggressively" alongside "this_year", the FIRST option must lead with: "Quick honest read: aggressive + 12-month horizon don't combine. Stocks can drop 30% in a year. For money you actually need this year, the right move is short-term Treasuries or a high-yield savings account." Then provide cash-equivalent options anyway.
+- All three options should be cash-equivalent variants, not stocks. Defensive ETFs like VOO are NOT appropriate — they can drop 20% in a year.
+
+HORIZON: "1to5" (1–5 years) — partial caution:
+- AVOID speculative micro-caps, single-stock concentration above 8% of book, and meme-y names.
+- Prefer broad index ETFs (VOO, VTI) + at most one quality large-cap individual name.
+- If the user selected "grow_aggressively" with this horizon, soften — still equity-heavy but no speculative single-stock picks.
+
+HORIZON: "5plus" or "never" or "unsure":
+- Full flexibility per the goal. Default to "5plus"-style if unsure.
+
+GOAL: "preserve" — ABSOLUTE OVERRIDE:
+- NEVER recommend speculative stocks, growth picks, or sector bets, regardless of horizon.
+- Recommend ONLY income/fixed-income: BND, SCHD (dividend), money market, T-bills, or stable dividend large-caps (KO, JNJ, PG, VZ).
+- If the user has speculative holdings already (their portfolio is full of small-caps / momentum names) and selected "preserve", call this out gently in option 1: "Worth noting — your existing portfolio doesn't really match a 'preserve' goal. Want help thinking that through?" Then provide preservation-appropriate options for the NEW cash.
+
+GOAL: "grow_aggressively":
+- Individual stocks OK, sector concentration OK, but COMPOUND CONCENTRATION RULE above still applies.
+- DON'T let "aggressive" mean "throw caution to the wind." It means "willing to take more equity risk and concentration than default", not "no rules."
+
+GOAL: "build_steadily":
+- Mix of broad index + selective individual names with strong fundamentals.
+- Diversification matters. Less single-stock concentration than aggressive.
+
+GOAL: "open" or unspecified:
+- Read the user's portfolio. If they're already concentrated in growth, lean defensive. If they're already balanced, lean opportunistic.
+
+CONFLICT FLAGGING — when filters genuinely contradict (aggressive+this_year, preserve+aggressive holdings, etc.), call it out in the FIRST option's reasoning. Friend voice, not lecture. "Honest read — what you said and what you have don't quite match. Here's how I'd handle it."
+
 ACCOUNT-SIZE AWARENESS — this is non-negotiable:
 - For a $4,000 portfolio, $200 is a meaningful position. Say so plainly.
 - For a $40,000 portfolio, $200 is a starter. Say so plainly.
-- NO single new-idea allocation may exceed $${concentrationCapDollars.toFixed(0)} (the 5% concentration cap${isAggressive ? ' — relaxed to 15% because they chose aggressive growth' : ''}). If even the full amount busts the cap, recommend a partial allocation and explain why.
-- For "ADD TO A POSITION", the cap applies to the INCREMENTAL add, not the total resulting position size.
+- NO single new-idea allocation may exceed $${concentrationCapDollars.toFixed(0)} (the ${isAggressive ? '10%' : '5%'} per-allocation cap${isAggressive ? ' — slightly relaxed because they chose aggressive growth' : ''}). If even the full amount busts the cap, recommend a partial allocation and explain why.
+- COMPOUND CONCENTRATION RULE — when the option is ADD TO AN EXISTING POSITION:
+    Step 1: Look at the position's CURRENT % of book (already given in the PORTFOLIO section).
+    Step 2: If current % is ALREADY at or above ${maxResultingConcentrationPct}%, DO NOT RECOMMEND ADDING TO THIS POSITION. Pick a different ticker entirely (different shape, defensive, or different add-to candidate). "Sizing it down" to 1 share does NOT fix this — you cannot reduce concentration by adding to the position. Skip the ticker.
+    Step 3: If current % is below ${maxResultingConcentrationPct}%, compute resulting % after the trade: (current_value + proposed_add) / (portfolio_total + new_cash). If resulting % would exceed ${maxResultingConcentrationPct}%, size the add down so resulting % stays under ${maxResultingConcentrationPct}%.
+    A single stock holding ${maxResultingConcentrationPct}%+ of the user's account is a single point of failure even for aggressive investors. This rule is non-negotiable. If you can't find an add-to candidate that respects this, prefer a new position or a defensive option instead.
+- Each option should be sized to deploy ~the FULL amount (within the cap), not a tiny fraction. The user picks ONE option to deploy the whole $${amount.toFixed(0)} — don't size an option at $80 when they have $1,000 to deploy. If the cap forces a smaller allocation, the option's action_summary must explicitly say "this only uses $X of your $Y — the rest stays in cash."
+- CASH-EQUIVALENT EXCEPTION — for recommendations into cash-equivalent vehicles (SGOV, BIL, SHV, VBIL, money market funds, HYSA), the concentration cap does NOT apply. Cash equivalents have no concentration risk. Size these options to deploy the FULL amount, not just the cap. Same for short-term Treasury bond ETFs (under 1-year duration). This only applies to those specific instruments — not to BND, SCHD, or other equity/duration products.
 
 AFFORDABILITY — also non-negotiable:
 - The total cost of any recommendation (estimated_cost) MUST be ≤ the user's available amount of $${amount.toFixed(2)}. They literally only have that much cash. Never recommend a $416 share buy when they have $50.
@@ -1109,7 +1165,8 @@ ${candidatePrices}
 RECENT SUBSTANTIVE CONVERSATIONS (last 30 days, user messages):
 ${recentChatLines}
 
-Concentration cap for any single new-idea allocation: $${concentrationCapDollars.toFixed(0)} (${isAggressive ? '15%' : '5%'} of projected portfolio).
+Concentration cap for any single new-idea allocation: $${concentrationCapDollars.toFixed(0)} (${isAggressive ? '10%' : '5%'} of projected portfolio).
+Maximum resulting concentration for any single position after the trade: ${maxResultingConcentrationPct}% (applies to ADD TO EXISTING options — do the math per position).
 
 Generate the JSON now.`;
 
@@ -1140,17 +1197,86 @@ Generate the JSON now.`;
       return res.status(502).json({ error: 'No recommendations returned — credits refunded.' });
     }
 
-    // Enforce the concentration cap defensively (model may slip) — clamp
-    // estimated_cost downward, recompute shares from current price when available.
+    // Enforce caps defensively (model may slip) — three layers of clamping:
+    //   1. Cash equivalents bypass concentration cap entirely (no concentration risk)
+    //   2. Standard per-allocation cap (10% aggressive / 5% default)
+    //   3. RESULTING-concentration cap for ADD TO EXISTING — clamp the add so
+    //      the post-trade position doesn't exceed 20% (aggressive) / 15% (default).
+    //      This is the rule the model kept violating in real testing.
+    //   4. Sub-deployment note — if final estimated_cost is < 70% of the amount
+    //      and not a cash equivalent, append an explicit "uses only $X of your $Y"
+    //      line to action_summary so the user knows the rest sits in cash.
+    const CASH_EQUIVALENT_TICKERS = new Set(['SGOV', 'BIL', 'SHV', 'VBIL']);
+    const positionByTicker = new Map(ctxData.positions.map(p => [p.ticker, p]));
+    const resultingCapFraction = maxResultingConcentrationPct / 100;
+
     for (const opt of options) {
-      const livePrice = opt.ticker && ctxData.priceMap[opt.ticker]?.price;
-      if (typeof opt.estimated_cost === 'number' && opt.estimated_cost > concentrationCapDollars) {
-        opt.estimated_cost = parseFloat(concentrationCapDollars.toFixed(2));
-        if (livePrice && livePrice > 0) {
+      const ticker = (opt.ticker || '').toUpperCase();
+      const isCashEquivalent = ticker && CASH_EQUIVALENT_TICKERS.has(ticker);
+      const livePrice = ticker && ctxData.priceMap[ticker]?.price;
+
+      if (isCashEquivalent) {
+        // Cash equivalents: cap is the full amount only.
+        if (typeof opt.estimated_cost === 'number' && opt.estimated_cost > amount) {
+          opt.estimated_cost = parseFloat(amount.toFixed(2));
+        }
+        if (livePrice && livePrice > 0 && opt.estimated_cost) {
           opt.estimated_shares = Math.max(1, Math.floor(opt.estimated_cost / livePrice));
         }
+        continue;
+      }
+
+      // Standard per-allocation cap.
+      if (typeof opt.estimated_cost === 'number' && opt.estimated_cost > concentrationCapDollars) {
+        opt.estimated_cost = parseFloat(concentrationCapDollars.toFixed(2));
+      }
+
+      // Resulting-concentration cap (only applies when adding to an existing
+      // position the user already holds — model may identify these as "add to
+      // <ticker>"). We use the structured ticker field, not the title, so we
+      // catch this even when the model phrases the title creatively.
+      const existing = positionByTicker.get(ticker);
+      if (existing && typeof opt.estimated_cost === 'number') {
+        const currentValue = existing.currentValue ?? 0;
+        const projectedTotal = ctxData.totalValue + amount;
+        // Max dollar add that keeps the resulting position under the resulting-concentration cap
+        const maxAddForResultingCap = (resultingCapFraction * projectedTotal) - currentValue;
+        if (maxAddForResultingCap <= 0) {
+          // Position is already past the cap — recommendation should not have been generated.
+          // Mark it so the UI can drop it, but don't hard-fail (model may surface alternative shapes).
+          opt.estimated_cost = 0;
+          opt.estimated_shares = 0;
+          opt._suppressed_reason = `${ticker} already exceeds ${maxResultingConcentrationPct}% of portfolio — cannot add more.`;
+        } else if (opt.estimated_cost > maxAddForResultingCap) {
+          opt.estimated_cost = parseFloat(maxAddForResultingCap.toFixed(2));
+        }
+      }
+
+      // Recompute shares from the (possibly clamped) cost.
+      if (livePrice && livePrice > 0 && opt.estimated_cost) {
+        opt.estimated_shares = Math.max(1, Math.floor(opt.estimated_cost / livePrice));
+      }
+
+      // Sub-deployment note — flag obvious under-deploys.
+      // ~70% threshold lets cap-bound clamps through without false-flagging, but
+      // catches the "$27 of $1000" failure mode.
+      if (typeof opt.estimated_cost === 'number'
+          && opt.estimated_cost > 0
+          && opt.estimated_cost < amount * 0.7
+          && typeof opt.action_summary === 'string'
+          && !/uses only \$|stays in cash/i.test(opt.action_summary)) {
+        const remaining = amount - opt.estimated_cost;
+        opt.action_summary = `${opt.action_summary} (Uses only $${opt.estimated_cost.toFixed(0)} of your $${amount.toFixed(0)} — the remaining $${remaining.toFixed(0)} stays in cash.)`;
       }
     }
+
+    // Drop any options that got fully suppressed by the resulting-cap check.
+    const filteredOptions = options.filter(o => !o._suppressed_reason || o.estimated_cost > 0);
+    if (filteredOptions.length < options.length) {
+      console.warn('[deploy-cash] dropped over-concentration options:', options.filter(o => o._suppressed_reason).map(o => o._suppressed_reason).join(', '));
+    }
+    options.length = 0;
+    options.push(...filteredOptions);
 
     const marketNote = typeof parsed.market_context_note === 'string'
       ? parsed.market_context_note.slice(0, 240)
