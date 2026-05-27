@@ -301,7 +301,7 @@ router.post('/reset-password', rateLimit(5), async (req, res) => {
   }
 });
 
-router.post('/change-password', requireAuth, async (req, res) => {
+router.post('/change-password', requireAuth, rateLimit(5), async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password required' });

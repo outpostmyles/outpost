@@ -27,28 +27,26 @@ const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
 
 const PLAN_LIMITS = { free: 0, starter: 1000, pro: 5000, elite: 15000 };
 
+// Atomic credit deduction via the deduct_credits PL/pgSQL function (migration
+// 005). The previous JS implementation did a read-then-write which let two
+// concurrent requests both pass the balance check and both deduct — allowing
+// negative balances and lost deductions. The RPC executes the check + update
+// in a single statement under PG's row lock.
 async function deductCredits(userId, amount) {
-  const { data: user } = await supabase.from('user_profiles').select('credits_remaining,credits_used_this_month').eq('id', userId).maybeSingle();
-  if (!user) throw new Error('User not found');
-  if (user.credits_remaining < amount) {
+  const { data: newBalance, error } = await supabase.rpc('deduct_credits', { p_user_id: userId, p_amount: amount });
+  if (error) throw new Error(error.message || 'deduct_credits failed');
+  if (newBalance === -1 || newBalance === null) {
     trackCreditLimit(userId);
     throw new Error('insufficient_credits');
   }
-  const newBalance = Math.max(0, user.credits_remaining - amount);
-  await supabase.from('user_profiles').update({
-    credits_remaining: newBalance,
-    credits_used_this_month: (user.credits_used_this_month ?? 0) + amount,
-  }).eq('id', userId);
   return newBalance;
 }
 
 async function refundCredits(userId, amount) {
-  const { data: user } = await supabase.from('user_profiles').select('credits_remaining,credits_used_this_month').eq('id', userId).maybeSingle();
-  if (!user) return;
-  await supabase.from('user_profiles').update({
-    credits_remaining: user.credits_remaining + amount,
-    credits_used_this_month: Math.max(0, (user.credits_used_this_month ?? 0) - amount),
-  }).eq('id', userId);
+  // refund_credits RPC. Non-blocking — if the refund fails we log but don't
+  // throw, because the calling code is already in an error path.
+  const { error } = await supabase.rpc('refund_credits', { p_user_id: userId, p_amount: amount });
+  if (error) console.error('[refundCredits] RPC failed:', error.message);
 }
 
 async function getCache(key) {
@@ -861,8 +859,20 @@ ${statsBlock}`,
       throw aiErr;
     }
 
-    const clean = text.replace(/```json|```/g, '').trim();
-    const coaching = JSON.parse(clean);
+    // Robust parse — Claude can return prose-before-JSON, markdown fences,
+    // or refusal text. Extract the first JSON object, parse with try/catch,
+    // refund credits on failure (the user paid 20 for nothing).
+    let coaching;
+    try {
+      const clean = text.replace(/```json|```/g, '').trim();
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('no JSON object in response');
+      coaching = JSON.parse(match[0]);
+    } catch (parseErr) {
+      console.error('[journal-coach] JSON parse failed:', parseErr.message, 'raw:', text.slice(0, 200));
+      await refundCredits(req.user.id, 20);
+      return res.status(502).json({ error: 'Journal coach output unreadable — credits refunded. Please try again.' });
+    }
     await setCache(cacheKey, JSON.stringify(coaching));
 
     trackFeature('journal_coach', req.user.id);

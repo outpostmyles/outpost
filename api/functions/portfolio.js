@@ -141,9 +141,15 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
       // Show today's change ALWAYS if we have data — even after hours
       // This shows the last trading session's change, which is what users expect
       const todayChangePercent = live?.changePercent ?? 0;
-      // Calculate dollar change from PREVIOUS value (not current) for accuracy
-      // If stock is up 5% to $105, the change is $5 (5% of $100), not $5.25 (5% of $105)
-      const prevValue = todayChangePercent !== 0 ? currentValue / (1 + todayChangePercent / 100) : currentValue;
+      // Calculate dollar change from PREVIOUS value (not current) for accuracy.
+      // If stock is up 5% to $105, the change is $5 (5% of $100), not $5.25 (5% of $105).
+      // Guard against changePercent === -100 (denominator → 0) which would
+      // produce Infinity and propagate through totals. Also guard against
+      // any non-finite value upstream.
+      const denom = 1 + (todayChangePercent / 100);
+      const prevValue = (todayChangePercent !== 0 && denom > 0 && Number.isFinite(denom))
+        ? currentValue / denom
+        : currentValue;
       const todayChange = currentValue - prevValue;
 
       totalValue += currentValue;
@@ -548,10 +554,12 @@ Output ONLY the JSON array, no other text.`;
       const shares = parseFloat(entry.shares);
       const avgCost = entry.avgCost ? parseFloat(entry.avgCost) : 0;
 
-      // Validate ticker and shares
-      if (!ticker || shares <= 0) {
-        continue;
-      }
+      // Validate ticker and shares. Number.isFinite catches Infinity AND NaN
+      // (both of which slip past `shares <= 0` because NaN comparisons are
+      // always false and Infinity > 0). Also cap at a sane upper bound so
+      // a hallucinated "1e30 shares" doesn't poison the confirmation UI.
+      if (!ticker || !Number.isFinite(shares) || shares <= 0 || shares > 1_000_000) continue;
+      if (!Number.isFinite(avgCost) || avgCost < 0 || avgCost > 1_000_000) continue;
 
       sanitized.push({
         ticker,

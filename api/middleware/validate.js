@@ -65,8 +65,13 @@ export function isValidEmail(email) {
 // Minimum bar: ≥ 8 chars AND contains both a letter and a digit. Blocks
 // "password", "12345678" and similar common weak patterns. The frontend
 // strength meter shows users where they are; this is the floor.
+//
+// Maximum bar: 128 chars. bcrypt has an internal 72-byte cap (anything
+// beyond is silently truncated), and accepting unbounded input lets an
+// attacker waste server CPU hashing arbitrary-length strings — a cheap
+// DoS vector. 128 is plenty for any real passphrase.
 export function isStrongEnoughPassword(password) {
   if (!password || typeof password !== 'string') return false;
-  if (password.length < 8) return false;
+  if (password.length < 8 || password.length > 128) return false;
   return /[a-zA-Z]/.test(password) && /[0-9]/.test(password);
 }

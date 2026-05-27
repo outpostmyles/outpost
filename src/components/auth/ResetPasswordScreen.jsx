@@ -12,11 +12,22 @@ export default function ResetPasswordScreen({ token, onDone }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-    if (password !== confirm) { setError("Passwords don't match"); return; }
-    if (password.length < 8) { setError('Password must be 8+ characters with a letter and a number'); return; }
+    // Trim before any check — autofill leaves trailing spaces and the next
+    // login would fail silently against a hash that doesn't include them.
+    const pwd = (password || '').trim();
+    const conf = (confirm || '').trim();
+    if (pwd !== conf) { setError("Passwords don't match"); return; }
+    // Mirror backend isStrongEnoughPassword: 8+ chars, at least one letter
+    // and one digit. The old client-side check was length-only, which caused
+    // the displayed message to lie when backend rejected a length-OK but
+    // weak password (e.g. "aaaaaaaa").
+    if (pwd.length < 8 || !/[a-zA-Z]/.test(pwd) || !/[0-9]/.test(pwd)) {
+      setError('Password must be 8+ characters with a letter and a number');
+      return;
+    }
     setLoading(true);
     try {
-      await api.auth.resetPassword({ token, password });
+      await api.auth.resetPassword({ token, password: pwd });
       setDone(true);
     } catch (err) {
       setError(err.error || 'Reset link is invalid or has expired');

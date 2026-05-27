@@ -29,6 +29,13 @@ import { generateInsights, getAnalyticsSummary } from './services/analytics.js';
 
 const app = express();
 
+// Behind Railway/Vercel/Cloudflare etc, the real client IP is in X-Forwarded-For.
+// Without this, req.ip returns the load balancer's IP — making per-IP rate
+// limits useless (all traffic appears to come from one bucket) and trivially
+// bypassable by spoofing XFF without Express's trust filter. Trust the first
+// hop only (Railway's edge proxy).
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: [
     'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175',

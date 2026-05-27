@@ -43,8 +43,15 @@ export default function AuthScreen() {
     if (mode === 'signup' && !ageConfirm) { setError('You must confirm you are 18 or older'); return; }
     setLoading(true);
     try {
+      // Trim password — autofill / paste often introduces a trailing space
+      // that locks the user out on next login because the server-side hash
+      // was computed against the trimmed value (or vice versa, depending on
+      // which side trims first). Pin it down here.
+      const pwd = (password || '').trim();
       const fn = mode === 'signin' ? api.auth.login : api.auth.signup;
-      const body = mode === 'signup' ? { email, password, displayName } : { email, password };
+      const body = mode === 'signup'
+        ? { email: (email || '').trim(), password: pwd, displayName: (displayName || '').trim() }
+        : { email: (email || '').trim(), password: pwd };
       const data = await fn(body);
       if (data.token && data.user) login(data.token, data.user);
       else setError('Something went wrong — please try again');

@@ -15,13 +15,27 @@ import { recallHistory } from './historyAggregator.js';
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
 
+const POLY_FETCH_TIMEOUT_MS = 15000;
+
 async function polyFetch(path, ttlMs = 60000, cacheKey = null) {
   if (cacheKey) {
     const cached = memGet(`tool_${cacheKey}`);
     if (cached) return cached;
   }
   const url = `${BASE}${path}${path.includes('?') ? '&' : '?'}apiKey=${KEY}`;
-  const res = await fetch(url);
+  // Native fetch without abort = hangs forever on a stalled connection.
+  // 15s ceiling — Polygon should respond in <500ms; anything beyond is dead.
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), POLY_FETCH_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(url, { signal: ctrl.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Polygon timeout after ${POLY_FETCH_TIMEOUT_MS}ms`);
+    throw err;
+  } finally {
+    clearTimeout(tm);
+  }
   if (!res.ok) throw new Error(`Polygon ${res.status}`);
   let data;
   try {
@@ -285,10 +299,40 @@ export const AGENT_TOOLS = [
 ];
 
 /**
+ * Sanitize a ticker before tool execution. Claude can hallucinate inputs —
+ * e.g. multi-word strings, lowercase, special characters, 100-char "tickers".
+ * Returns null if the input can't be coerced to a valid ticker; tool returns
+ * an error instead of constructing a malformed URL.
+ */
+function sanitizeToolTicker(t) {
+  if (!t || typeof t !== 'string') return null;
+  const clean = t.toUpperCase().trim().replace(/[^A-Z.]/g, '');
+  if (!clean || clean.length > 6 || clean.length < 1) return null; // allow up to 6 for tickers like BRK.B
+  return clean;
+}
+
+// Tools that take a primary `ticker` field — gated before dispatch.
+const TICKERED_TOOLS = new Set([
+  'lookup_stock', 'get_historical_price', 'get_stock_news', 'get_fundamentals',
+  'get_technicals', 'get_insider_activity', 'get_support_resistance',
+  'get_relative_strength', 'get_closed_trade_reflection',
+]);
+
+/**
  * Execute a tool call and return the result
  */
 export async function executeTool(toolName, toolInput, context = {}) {
   try {
+    // Pre-flight validation on tool inputs Claude provides. Bad inputs slip
+    // through if we trust the model — e.g. ticker="AAAA...x1000". Sanitize
+    // the primary ticker field for tools that take one before any side
+    // effects (URL building, DB query, etc).
+    if (TICKERED_TOOLS.has(toolName) && toolInput?.ticker) {
+      const clean = sanitizeToolTicker(toolInput.ticker);
+      if (!clean) return { error: `Invalid ticker: "${String(toolInput.ticker).slice(0, 20)}"` };
+      toolInput = { ...toolInput, ticker: clean };
+    }
+
     switch (toolName) {
       case 'lookup_stock': return await lookupStock(toolInput);
       case 'get_historical_price': return await getHistoricalPrice(toolInput);
@@ -956,8 +1000,20 @@ async function getInsiderActivity({ ticker }) {
   const KEY_FMP = config.fmpKey;
   if (!KEY_FMP) return { error: 'Insider data service not configured' };
 
+  // 15s timeout on FMP fetch — without this, the call can hang indefinitely
+  // and block the agent's tool round.
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const res = await fetch(`https://financialmodelingprep.com/stable/insider-trading?symbol=${ticker}&limit=20&apikey=${KEY_FMP}`);
+    let res;
+    try {
+      res = await fetch(`https://financialmodelingprep.com/stable/insider-trading?symbol=${ticker}&limit=20&apikey=${KEY_FMP}`, { signal: ctrl.signal });
+    } catch (err) {
+      if (err.name === 'AbortError') return { error: 'Insider data timed out' };
+      throw err;
+    } finally {
+      clearTimeout(tm);
+    }
     if (!res.ok) return { error: `Failed to fetch insider data for ${ticker}` };
     const data = await res.json();
     if (!data?.length) return { ticker, transactions: [], summary: 'No recent insider activity found.' };
@@ -1400,7 +1456,16 @@ function calculatePositionSize({ account_size, risk_pct = 2, entry_price, stop_l
 // ============ RISK / REWARD CALCULATOR ============
 
 function calculateRiskReward({ entry_price, stop_loss, targets }) {
-  if (!entry_price || !stop_loss || !targets?.length) return { error: 'Need entry, stop loss, and at least one target' };
+  // Defensive numeric validation. Claude could supply NaN, Infinity, or
+  // tiny/negative prices and the resulting math produces nonsense (Infinity
+  // ratios, NaN percentages) that confuses the response and the user.
+  if (!Number.isFinite(entry_price) || entry_price <= 0) return { error: 'Entry price must be a positive number' };
+  if (!Number.isFinite(stop_loss) || stop_loss <= 0) return { error: 'Stop loss must be a positive number' };
+  if (entry_price === stop_loss) return { error: 'Entry price and stop loss cannot be equal' };
+  if (!Array.isArray(targets) || targets.length === 0) return { error: 'Need at least one target' };
+  const cleanTargets = targets.filter(t => Number.isFinite(t) && t > 0);
+  if (cleanTargets.length === 0) return { error: 'All targets must be positive numbers' };
+  targets = cleanTargets;
 
   const riskPerShare = Math.abs(entry_price - stop_loss);
   const isLong = entry_price > stop_loss;
