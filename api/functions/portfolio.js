@@ -255,6 +255,7 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
 
     // Trade plan fields (optional) — parse first so validator sees them
     const entryThesis = sanitizeString(req.body.entryThesis || '', 500);
+    const reversalCondition = sanitizeString(req.body.reversalCondition || '', 500);
     const priceTarget = req.body.priceTarget ? sanitizeNumber(req.body.priceTarget, 0, 1000000) : null;
     const stopLoss = req.body.stopLoss ? sanitizeNumber(req.body.stopLoss, 0, 1000000) : null;
     const tradeNotes = sanitizeString(req.body.tradeNotes || '', 1000);
@@ -283,7 +284,12 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       created_at: new Date().toISOString(),
     };
     // Only include trade plan fields if they have values (avoids errors if columns don't exist yet)
-    if (entryThesis) insertData.entry_thesis = entryThesis;
+    if (entryThesis) {
+      insertData.entry_thesis = entryThesis;
+      // Stamp thesis_written_at on first capture so we can show "thesis from N days ago"
+      insertData.thesis_written_at = new Date().toISOString();
+    }
+    if (reversalCondition) insertData.reversal_condition = reversalCondition;
     if (priceTarget) insertData.price_target = priceTarget;
     if (stopLoss) insertData.stop_loss = stopLoss;
     if (tradeNotes) insertData.trade_notes = tradeNotes;
@@ -567,7 +573,23 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
     }
     // Trade plan fields
     if (req.body.entryThesis !== undefined) {
-      updates.entry_thesis = sanitizeString(req.body.entryThesis, 500) || null;
+      const cleaned = sanitizeString(req.body.entryThesis, 500) || null;
+      updates.entry_thesis = cleaned;
+      // Only stamp thesis_written_at when entry_thesis is moving from empty → set.
+      // If the user just edits an existing thesis we keep the original timestamp
+      // so the "thesis from 23 days ago" age stays meaningful.
+      if (cleaned) {
+        const { data: existing } = await supabase.from('positions')
+          .select('entry_thesis,thesis_written_at')
+          .eq('id', req.params.id)
+          .maybeSingle();
+        if (!existing?.entry_thesis && !existing?.thesis_written_at) {
+          updates.thesis_written_at = new Date().toISOString();
+        }
+      }
+    }
+    if (req.body.reversalCondition !== undefined) {
+      updates.reversal_condition = sanitizeString(req.body.reversalCondition, 500) || null;
     }
     if (req.body.priceTarget !== undefined) {
       updates.price_target = req.body.priceTarget ? sanitizeNumber(req.body.priceTarget, 0, 1000000) : null;
@@ -625,13 +647,33 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
         holdDays = Math.max(0, endDay - startDay);
       }
 
-      // Close-time reflection — optional free-text learning note plus a
-      // categorical outcome so the agent can surface actual patterns later.
-      // Valid outcomes correspond to the four thesis/result combinations.
-      const exitReflection = sanitizeString(req.body?.exitReflection, 500) || null;
+      // Phase 2 — structured close-time reflection. Three fields:
+      //   thesis_played_out: 'yes' | 'partially' | 'no' | null
+      //   reflection_what_happened: narrative of what played out
+      //   reflection_lesson: the takeaway for next time
+      // Legacy fields (exit_reflection, exit_outcome) are still written for
+      // backward compat with the agent's get_closed_trade_reflection tool.
+      // exit_reflection is populated with whichever new-narrative is non-empty
+      // so the agent's existing memory keeps working.
+      const reflectionWhatHappened = sanitizeString(req.body?.reflectionWhatHappened, 1000) || null;
+      const reflectionLesson = sanitizeString(req.body?.reflectionLesson, 1000) || null;
+      const VALID_PLAYED_OUT = ['yes', 'partially', 'no'];
+      const rawPlayedOut = typeof req.body?.thesisPlayedOut === 'string' ? req.body.thesisPlayedOut : null;
+      const thesisPlayedOut = VALID_PLAYED_OUT.includes(rawPlayedOut) ? rawPlayedOut : null;
+
+      // Legacy fields — accept if provided (callers from the old UI), otherwise
+      // derive a backward-compat exit_outcome from new fields when possible.
+      let exitReflection = sanitizeString(req.body?.exitReflection, 500) || null;
+      if (!exitReflection) exitReflection = reflectionWhatHappened?.slice(0, 500) || null;
       const rawOutcome = typeof req.body?.exitOutcome === 'string' ? req.body.exitOutcome : null;
       const VALID_OUTCOMES = ['win_thesis_right', 'win_thesis_wrong', 'loss_thesis_right', 'loss_thesis_wrong'];
-      const exitOutcome = VALID_OUTCOMES.includes(rawOutcome) ? rawOutcome : null;
+      let exitOutcome = VALID_OUTCOMES.includes(rawOutcome) ? rawOutcome : null;
+      if (!exitOutcome && thesisPlayedOut && pnl != null) {
+        const win = pnl > 0;
+        if (thesisPlayedOut === 'yes') exitOutcome = win ? 'win_thesis_right' : 'loss_thesis_right';
+        else if (thesisPlayedOut === 'no') exitOutcome = win ? 'win_thesis_wrong' : 'loss_thesis_wrong';
+        // 'partially' doesn't map cleanly to the 4-state legacy enum — leave null.
+      }
 
       await supabase.from('closed_trades').insert({
         user_id: req.user.id,
@@ -648,6 +690,9 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
         trade_notes: pos.trade_notes,
         exit_reflection: exitReflection,
         exit_outcome: exitOutcome,
+        thesis_played_out: thesisPlayedOut,
+        reflection_what_happened: reflectionWhatHappened,
+        reflection_lesson: reflectionLesson,
         // Same rule as hold_days above: only the user-provided purchase date counts.
         // If they never set one, we record null instead of fabricating from row creation.
         opened_at: pos.purchased_at || null,

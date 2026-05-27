@@ -86,6 +86,8 @@ export const api = {
     today: () => get('/api/ai/today'),
     welcome: (body) => post('/api/ai/welcome', body),
     feedback: (body) => post('/api/settings/ai-feedback', body),
+    thesisAssist: (body) => post('/api/ai/thesis-assist', body),
+    exitReflectionAssist: (body) => post('/api/ai/exit-reflection-assist', body),
   },
   portfolio: {
     value: () => get('/api/portfolio/value'),

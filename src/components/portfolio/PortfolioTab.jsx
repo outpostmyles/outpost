@@ -636,62 +636,225 @@ function ImportModal({ onClose, onDone, showToast }) {
   );
 }
 
+/**
+ * ThesisAssistField — textarea + "Help me write this" button.
+ * Used by AddModal + the position card edit form + the close-position flow.
+ * Calls the appropriate AI assist endpoint and fills the textarea with the
+ * draft. User can then edit, accept, or rewrite from scratch.
+ */
+function ThesisAssistField({ label, placeholder, value, onChange, rows = 3, assist }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function handleAssist() {
+    if (!assist) return;
+    setLoading(true); setErr('');
+    try {
+      const draft = await assist(value);
+      if (draft) onChange(draft);
+    } catch (e) {
+      setErr(e.error || 'Assist unavailable — try writing it yourself.');
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {label && (
+        <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 700, letterSpacing: '0.6px', marginBottom: 4 }}>
+          {label}
+        </p>
+      )}
+      <textarea
+        className="input"
+        placeholder={placeholder}
+        value={value}
+        onChange={e => onChange(e.target.value.slice(0, 500))}
+        rows={rows}
+        style={{ width: '100%', fontSize: 11, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+      />
+      {assist && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+          <button
+            type="button"
+            onClick={handleAssist}
+            disabled={loading}
+            style={{
+              fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none',
+              cursor: loading ? 'default' : 'pointer', padding: '4px 0',
+              letterSpacing: '0.3px', fontFamily: 'inherit',
+            }}
+          >
+            {loading ? 'Drafting…' : value ? '✦ Improve this' : '✦ Help me write this'}
+          </button>
+          <span style={{ fontSize: 9, color: 'var(--faint)' }}>{value.length}/500</span>
+        </div>
+      )}
+      {err && <p style={{ fontSize: 10, color: 'var(--red)', marginTop: 4 }}>{err}</p>}
+    </div>
+  );
+}
+
+/**
+ * SkipThesisModal — soft-skip prompt shown when the user tries to save a
+ * position (or close one) without writing a thesis / reflection. Never blocks
+ * — gives them the option to proceed, but makes the choice explicit.
+ */
+function SkipThesisModal({ kind, onWrite, onSkip }) {
+  const isClose = kind === 'reflection';
+  return (
+    <Modal title={isClose ? 'Skip the reflection?' : 'Skip the thesis?'} onClose={onSkip}>
+      <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 16 }}>
+        {isClose
+          ? 'Skipping is fine, but Outpost gets meaningfully more useful when you capture what happened and what you learned. The next time you trade a stock like this one, your past reflections become the most valuable thing in the room.'
+          : 'Skipping is fine, but Outpost gets meaningfully more useful when you capture why you\'re making each decision. Want to take 30 seconds to write it?'}
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={onSkip} className="btn btn-muted" style={{ flex: 1 }}>Skip for now</button>
+        <button onClick={onWrite} className="btn btn-blue" style={{ flex: 1 }}>Write it</button>
+      </div>
+    </Modal>
+  );
+}
+
 function AddModal({ onClose, onDone, showToast }) {
-  const [form, setForm] = useState({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', priceTarget: '', stopLoss: '' });
+  const [form, setForm] = useState({
+    ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '',
+    entryThesis: '', reversalCondition: '',
+    priceTarget: '', stopLoss: '',
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showPlan, setShowPlan] = useState(false);
+  const [skipConfirm, setSkipConfirm] = useState(false);
 
-  async function submit() {
-    if (!form.ticker || !form.shares) { setError('Ticker and shares are required'); return; }
+  function basicsValid() {
+    if (!form.ticker || !form.shares) { setError('Ticker and shares are required'); return false; }
     const shares = parseFloat(form.shares);
     const avgCost = form.avgCost ? parseFloat(form.avgCost) : 0;
-    if (isNaN(shares) || shares <= 0) { setError('Shares must be a positive number'); return; }
-    if (form.avgCost && (isNaN(avgCost) || avgCost < 0)) { setError('Average cost must be a valid number'); return; }
+    if (isNaN(shares) || shares <= 0) { setError('Shares must be a positive number'); return false; }
+    if (form.avgCost && (isNaN(avgCost) || avgCost < 0)) { setError('Average cost must be a valid number'); return false; }
+    setError('');
+    return true;
+  }
+
+  function attemptSave() {
+    if (!basicsValid()) return;
+    // Soft gate — if both thesis fields are empty, prompt before proceeding.
+    if (!form.entryThesis.trim() && !form.reversalCondition.trim()) {
+      setSkipConfirm(true);
+      return;
+    }
+    doSave();
+  }
+
+  async function doSave() {
+    setSkipConfirm(false);
     setSaving(true); setError('');
     try {
+      const shares = parseFloat(form.shares);
+      const avgCost = form.avgCost ? parseFloat(form.avgCost) : 0;
       const body = { ticker: form.ticker, companyName: form.companyName, shares, avgCost, purchasedAt: form.purchasedAt };
-      if (form.entryThesis) body.entryThesis = form.entryThesis;
+      if (form.entryThesis.trim()) body.entryThesis = form.entryThesis.trim();
+      if (form.reversalCondition.trim()) body.reversalCondition = form.reversalCondition.trim();
       if (form.priceTarget) body.priceTarget = parseFloat(form.priceTarget);
       if (form.stopLoss) body.stopLoss = parseFloat(form.stopLoss);
       await api.portfolio.addPosition(body);
       showToast(`${form.ticker.toUpperCase()} added to portfolio`, 'success');
-      setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', priceTarget: '', stopLoss: '' });
+      setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
       onDone();
       onClose();
     } catch (e) { setError(e.error || 'Failed to add position'); setSaving(false); }
   }
 
+  // AI assist helpers — bind ticker context to the assist call.
+  const ticker = form.ticker.toUpperCase().trim();
+  const assistEntry = ticker
+    ? async (currentValue) => {
+        const d = await api.ai.thesisAssist({ ticker, field: 'entry', userNote: currentValue });
+        return d.draft;
+      }
+    : null;
+  const assistReversal = ticker
+    ? async (currentValue) => {
+        const d = await api.ai.thesisAssist({ ticker, field: 'reversal', userNote: currentValue });
+        return d.draft;
+      }
+    : null;
+
   return (
-    <Modal title="Add Position" onClose={onClose}>
-      <FormField label="Ticker"><input className="input" placeholder="AAPL" value={form.ticker} onChange={e => setForm(f => ({ ...f, ticker: e.target.value.toUpperCase() }))} /></FormField>
-      <FormField label="Company Name (optional)"><input className="input" placeholder="Apple Inc." value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></FormField>
-      <FormField label="Number of Shares"><input className="input" type="number" placeholder="10" value={form.shares} onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} /></FormField>
-      <FormField label="Average Cost (optional)"><input className="input" type="number" placeholder="150.00" value={form.avgCost} onChange={e => setForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
-      <FormField label="Date Purchased (optional)"><input className="input" type="date" value={form.purchasedAt} max={`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`} onChange={e => setForm(f => ({ ...f, purchasedAt: e.target.value }))} /></FormField>
-      <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
-        If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
-      </p>
+    <>
+      <Modal title="Add Position" onClose={onClose}>
+        <FormField label="Ticker"><input className="input" placeholder="AAPL" value={form.ticker} onChange={e => setForm(f => ({ ...f, ticker: e.target.value.toUpperCase() }))} /></FormField>
+        <FormField label="Company Name (optional)"><input className="input" placeholder="Apple Inc." value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></FormField>
+        <FormField label="Number of Shares"><input className="input" type="number" placeholder="10" value={form.shares} onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} /></FormField>
+        <FormField label="Average Cost (optional)"><input className="input" type="number" placeholder="150.00" value={form.avgCost} onChange={e => setForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
+        <FormField label="Date Purchased (optional)"><input className="input" type="date" value={form.purchasedAt} max={`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`} onChange={e => setForm(f => ({ ...f, purchasedAt: e.target.value }))} /></FormField>
+        <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: -4, marginBottom: 14, lineHeight: 1.5 }}>
+          If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
+        </p>
 
-      {!showPlan ? (
-        <button onClick={() => setShowPlan(true)} style={{ fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: 8, letterSpacing: '0.3px' }}>
-          + ADD TRADE PLAN (target, stop, thesis)
-        </button>
-      ) : (
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4, marginBottom: 8 }}>
-          <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 8 }}>TRADE PLAN</p>
-          <FormField label="Why did you enter? (thesis)"><input className="input" placeholder="Robotaxi catalyst, AI growth..." value={form.entryThesis} onChange={e => setForm(f => ({ ...f, entryThesis: e.target.value }))} /></FormField>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <FormField label="Price Target $"><input className="input" type="number" placeholder="200.00" value={form.priceTarget} onChange={e => setForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
-            <FormField label="Stop Loss $"><input className="input" type="number" placeholder="120.00" value={form.stopLoss} onChange={e => setForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
-          </div>
+        {/* THESIS — first-class step. Always visible, AI-assisted.
+            Not gated behind a toggle. Captures the reason the user is making
+            this decision so future-them (and the agent) can hold them to it. */}
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginBottom: 4 }}>
+          <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 4 }}>YOUR THESIS</p>
+          <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, lineHeight: 1.5 }}>
+            30 seconds now saves you from second-guessing yourself for months. Outpost will hold you to what you write.
+          </p>
+
+          <ThesisAssistField
+            label="WHY ARE YOU BUYING THIS?"
+            placeholder="What's the story here? Why this stock, why now?"
+            value={form.entryThesis}
+            onChange={v => setForm(f => ({ ...f, entryThesis: v }))}
+            rows={3}
+            assist={assistEntry}
+          />
+
+          <ThesisAssistField
+            label="WHAT WOULD MAKE YOU CHANGE YOUR MIND?"
+            placeholder="What would have to happen for you to sell or cut your losses?"
+            value={form.reversalCondition}
+            onChange={v => setForm(f => ({ ...f, reversalCondition: v }))}
+            rows={3}
+            assist={assistReversal}
+          />
+
+          {!ticker && (
+            <p style={{ fontSize: 9, color: 'var(--faint)', marginTop: -4, marginBottom: 8, fontStyle: 'italic' }}>
+              Enter a ticker above to enable the AI assist on these fields.
+            </p>
+          )}
         </div>
-      )}
 
-      {error && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</p>}
-      <button onClick={submit} disabled={saving} className="btn btn-green btn-full">{saving ? 'Adding...' : 'Add Position'}</button>
-    </Modal>
+        {!showPlan ? (
+          <button onClick={() => setShowPlan(true)} style={{ fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginTop: 4, marginBottom: 8, letterSpacing: '0.3px' }}>
+            + ADD PRICE TARGET / STOP LOSS (optional)
+          </button>
+        ) : (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4, marginBottom: 8 }}>
+            <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 8 }}>PRICE TARGETS (optional)</p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <FormField label="Price Target $"><input className="input" type="number" placeholder="200.00" value={form.priceTarget} onChange={e => setForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
+              <FormField label="Stop Loss $"><input className="input" type="number" placeholder="120.00" value={form.stopLoss} onChange={e => setForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
+            </div>
+          </div>
+        )}
+
+        {error && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</p>}
+        <button onClick={attemptSave} disabled={saving} className="btn btn-green btn-full">{saving ? 'Adding...' : 'Add Position'}</button>
+      </Modal>
+
+      {skipConfirm && (
+        <SkipThesisModal
+          kind="thesis"
+          onWrite={() => setSkipConfirm(false)}
+          onSkip={doSave}
+        />
+      )}
+    </>
   );
 }
 
@@ -1098,6 +1261,95 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
   );
 }
 
+/**
+ * ThesisSection — always-visible block on the expanded position card.
+ * Shows entry thesis + reversal condition + when it was written, with an
+ * Edit link. Legacy positions (no thesis yet) get a quiet "Write one" CTA
+ * so the absence isn't shaming — it's an invitation.
+ */
+function ThesisSection({ pos, onEdit }) {
+  const hasEntry = !!(pos.entry_thesis && pos.entry_thesis.trim());
+  const hasReversal = !!(pos.reversal_condition && pos.reversal_condition.trim());
+  const hasAny = hasEntry || hasReversal;
+
+  // "Written N days ago" — graceful degradation if the timestamp is missing.
+  let ageLabel = null;
+  if (pos.thesis_written_at) {
+    const ms = Date.now() - new Date(pos.thesis_written_at).getTime();
+    const days = Math.floor(ms / 86400000);
+    if (days <= 0) ageLabel = 'today';
+    else if (days === 1) ageLabel = '1 day ago';
+    else if (days < 30) ageLabel = `${days} days ago`;
+    else if (days < 365) ageLabel = `${Math.floor(days / 30)} mo ago`;
+    else ageLabel = `${Math.floor(days / 365)}y ago`;
+  }
+
+  if (!hasAny) {
+    return (
+      <div
+        onClick={onEdit}
+        style={{
+          background: 'rgba(59,130,246,0.04)',
+          border: '1px dashed rgba(59,130,246,0.3)',
+          borderRadius: 5,
+          padding: '9px 11px',
+          marginBottom: 10,
+          cursor: 'pointer',
+        }}
+      >
+        <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.6px', marginBottom: 3 }}>YOUR THESIS</p>
+        <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+          You haven't written a thesis for this one yet. <span style={{ color: 'var(--blue)' }}>Write it →</span>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      background: 'var(--raised)',
+      borderRadius: 5,
+      padding: '8px 11px',
+      marginBottom: 10,
+      borderLeft: '2px solid var(--blue)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+        <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.6px' }}>
+          YOUR THESIS {ageLabel && <span style={{ color: 'var(--faint)', fontWeight: 500, marginLeft: 4 }}>· written {ageLabel}</span>}
+        </p>
+        <button
+          onClick={onEdit}
+          style={{ fontSize: 9, color: 'var(--faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', letterSpacing: '0.3px' }}
+        >
+          EDIT
+        </button>
+      </div>
+      {hasEntry && (
+        <div style={{ marginBottom: hasReversal ? 6 : 0 }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>WHY</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.55 }}>{pos.entry_thesis}</p>
+        </div>
+      )}
+      {hasReversal && (
+        <div>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>WHAT WOULD CHANGE YOUR MIND</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.55 }}>{pos.reversal_condition}</p>
+        </div>
+      )}
+      {!hasEntry && hasReversal && (
+        <p style={{ fontSize: 9, color: 'var(--faint)', fontStyle: 'italic', marginTop: 6 }}>
+          No entry thesis yet — <span style={{ color: 'var(--blue)', cursor: 'pointer' }} onClick={onEdit}>add one</span>.
+        </p>
+      )}
+      {hasEntry && !hasReversal && (
+        <p style={{ fontSize: 9, color: 'var(--faint)', fontStyle: 'italic', marginTop: 6 }}>
+          No reversal condition yet — <span style={{ color: 'var(--blue)', cursor: 'pointer' }} onClick={onEdit}>add one</span>.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   // Modes:
   //   'collapsed' — compact card showing price + today + P&L
@@ -1119,6 +1371,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
     shares: String(pos.shares),
     avgCost: String(pos.avg_cost ?? ''),
     entryThesis: pos.entry_thesis || '',
+    reversalCondition: pos.reversal_condition || '',
     priceTarget: pos.price_target ? String(pos.price_target) : '',
     stopLoss: pos.stop_loss ? String(pos.stop_loss) : '',
     tradeNotes: pos.trade_notes || '',
@@ -1126,8 +1379,13 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [sellPrice, setSellPrice] = useState('');
-  const [exitReflection, setExitReflection] = useState('');
-  const [exitOutcome, setExitOutcome] = useState(null);
+  // Phase 2 close-time reflection — three structured fields.
+  // Legacy fields (exitReflection text + exitOutcome enum) are derived
+  // server-side from these so the agent's existing tools keep working.
+  const [thesisPlayedOut, setThesisPlayedOut] = useState(null); // 'yes' | 'partially' | 'no'
+  const [reflectionWhatHappened, setReflectionWhatHappened] = useState('');
+  const [reflectionLesson, setReflectionLesson] = useState('');
+  const [skipReflectionConfirm, setSkipReflectionConfirm] = useState(false);
   const [err, setErr] = useState('');
   const [journalSave, setJournalSave] = useState(null);
 
@@ -1189,6 +1447,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
         shares,
         avgCost: isNaN(avgCost) ? 0 : avgCost,
         entryThesis: editForm.entryThesis || '',
+        reversalCondition: editForm.reversalCondition || '',
         priceTarget: editForm.priceTarget ? parseFloat(editForm.priceTarget) : null,
         stopLoss: editForm.stopLoss ? parseFloat(editForm.stopLoss) : null,
         tradeNotes: editForm.tradeNotes || '',
@@ -1200,13 +1459,24 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
     setSaving(false);
   }
 
-  async function remove() {
+  function attemptClose() {
+    // Soft gate: if all three reflection fields are empty, prompt before closing.
+    if (!thesisPlayedOut && !reflectionWhatHappened.trim() && !reflectionLesson.trim()) {
+      setSkipReflectionConfirm(true);
+      return;
+    }
+    doRemove();
+  }
+
+  async function doRemove() {
+    setSkipReflectionConfirm(false);
     setRemoving(true); setErr('');
     try {
       const body = {};
       if (sellPrice) body.sellPrice = parseFloat(sellPrice);
-      if (exitReflection.trim()) body.exitReflection = exitReflection.trim();
-      if (exitOutcome) body.exitOutcome = exitOutcome;
+      if (thesisPlayedOut) body.thesisPlayedOut = thesisPlayedOut;
+      if (reflectionWhatHappened.trim()) body.reflectionWhatHappened = reflectionWhatHappened.trim();
+      if (reflectionLesson.trim()) body.reflectionLesson = reflectionLesson.trim();
       await api.portfolio.removePosition(pos.id, body);
       onRefresh();
       showToast(`${pos.ticker} closed and saved to history`, 'success');
@@ -1316,14 +1586,23 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               )}
             </div>
 
-            {/* Trade plan — visible above data when set. When NOT set, an
-                inline nudge invites the user to add one (the consolidated
-                top-of-list nudge handles the broad case; this catches users
-                who already dismissed it). */}
-            {hasPlan ? (
+            {/* YOUR THESIS — always visible, the record of the user's own
+                thinking. Sits above the trade-plan price levels because the
+                story is the lead; the levels are the rails. Quiet styling so
+                it doesn't compete with today's driver/news for attention. */}
+            <ThesisSection
+              pos={pos}
+              onEdit={() => setMode('edit')}
+            />
+
+            {/* Price levels (target/stop) — only rendered when at least one
+                level is set. Thesis is shown above in its own ThesisSection so
+                it isn't duplicated here. The empty-state CTA below only fires
+                when BOTH levels are missing — having a thesis alone shouldn't
+                hide the "add price levels" nudge. */}
+            {(pos.price_target || pos.stop_loss) ? (
               <div style={{ background: 'var(--raised)', borderRadius: 5, padding: '7px 10px', marginBottom: 10, borderLeft: '2px solid var(--blue)' }}>
-                <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>YOUR PLAN</p>
-                {pos.entry_thesis && <p style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3 }}>{pos.entry_thesis}</p>}
+                <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>PRICE LEVELS</p>
                 <div style={{ display: 'flex', gap: 12, fontSize: 9 }}>
                   {pos.price_target && (
                     <span>
@@ -1454,47 +1733,97 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
           </div>
         )}
 
-        {/* Close-trade form */}
+        {/* Close-trade form — Phase 2 structured reflection.
+            Three fields feed the accountability loop:
+              1. thesisPlayedOut (yes/partially/no) — tap selection
+              2. reflectionWhatHappened — narrative, AI-assisted
+              3. reflectionLesson — takeaway, AI-assisted
+            Soft-skip allowed; the SkipThesisModal makes the choice explicit. */}
         {mode === 'close' && (
           <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
             <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', marginBottom: 8 }}>CLOSE {pos.ticker} POSITION</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <span style={{ fontSize: 10, color: 'var(--faint)', whiteSpace: 'nowrap' }}>Sell price $</span>
               <input className="input" type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} style={{ flex: 1, fontSize: 12 }} placeholder={String(pos.currentPrice ?? '')} />
             </div>
 
-            {/* Close-time reflection — feeds the agent's learning loop */}
-            <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '0.5px', marginBottom: 6, fontWeight: 700 }}>WHAT HAPPENED? (optional)</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
+            {/* Question 1 — did the thesis play out? Single tap. */}
+            <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '0.5px', marginBottom: 5, fontWeight: 700 }}>DID YOUR THESIS PLAY OUT?</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 12 }}>
               {[
-                { id: 'win_thesis_right', label: 'Win — thesis played out' },
-                { id: 'win_thesis_wrong', label: 'Win — but thesis was wrong' },
-                { id: 'loss_thesis_right', label: 'Loss — thesis was right' },
-                { id: 'loss_thesis_wrong', label: 'Loss — thesis was wrong' },
+                { id: 'yes', label: 'Yes' },
+                { id: 'partially', label: 'Partially' },
+                { id: 'no', label: 'No' },
               ].map(opt => (
                 <button
                   key={opt.id}
-                  onClick={() => setExitOutcome(o => o === opt.id ? null : opt.id)}
-                  className={`btn ${exitOutcome === opt.id ? 'btn-blue' : 'btn-muted'}`}
-                  style={{ fontSize: 9, padding: '6px 4px', textAlign: 'left' }}
+                  onClick={() => setThesisPlayedOut(o => o === opt.id ? null : opt.id)}
+                  className={`btn ${thesisPlayedOut === opt.id ? 'btn-blue' : 'btn-muted'}`}
+                  style={{ fontSize: 10, padding: '7px 0' }}
                 >
                   {opt.label}
                 </button>
               ))}
             </div>
-            <textarea
-              className="input"
-              placeholder="One line on what you learned — optional but the agent will remember it next time."
-              value={exitReflection}
-              onChange={e => setExitReflection(e.target.value.slice(0, 500))}
-              rows={2}
-              style={{ width: '100%', fontSize: 11, resize: 'vertical', marginBottom: 10, fontFamily: 'inherit' }}
+
+            {/* Question 2 — what happened. AI-assisted. */}
+            <ThesisAssistField
+              label="WHAT HAPPENED?"
+              placeholder="The story of this trade — what played out, what didn't."
+              value={reflectionWhatHappened}
+              onChange={setReflectionWhatHappened}
+              rows={3}
+              assist={async (current) => {
+                const computedPnl = sellPrice && pos.avg_cost
+                  ? (parseFloat(sellPrice) - pos.avg_cost) * pos.shares
+                  : pos.pnl;
+                const computedPnlPct = sellPrice && pos.avg_cost
+                  ? ((parseFloat(sellPrice) - pos.avg_cost) / pos.avg_cost) * 100
+                  : pos.pnlPercent;
+                const d = await api.ai.exitReflectionAssist({
+                  ticker: pos.ticker,
+                  field: 'what_happened',
+                  entryThesis: pos.entry_thesis || '',
+                  reversalCondition: pos.reversal_condition || '',
+                  pnl: computedPnl,
+                  pnlPercent: computedPnlPct,
+                  thesisPlayedOut,
+                });
+                return d.draft;
+              }}
+            />
+
+            {/* Question 3 — the lesson for next time. AI-assisted. */}
+            <ThesisAssistField
+              label="WHAT DID YOU LEARN FOR NEXT TIME?"
+              placeholder="One concrete takeaway you want to remember."
+              value={reflectionLesson}
+              onChange={setReflectionLesson}
+              rows={3}
+              assist={async (current) => {
+                const computedPnl = sellPrice && pos.avg_cost
+                  ? (parseFloat(sellPrice) - pos.avg_cost) * pos.shares
+                  : pos.pnl;
+                const computedPnlPct = sellPrice && pos.avg_cost
+                  ? ((parseFloat(sellPrice) - pos.avg_cost) / pos.avg_cost) * 100
+                  : pos.pnlPercent;
+                const d = await api.ai.exitReflectionAssist({
+                  ticker: pos.ticker,
+                  field: 'lesson',
+                  entryThesis: pos.entry_thesis || '',
+                  reversalCondition: pos.reversal_condition || '',
+                  pnl: computedPnl,
+                  pnlPercent: computedPnlPct,
+                  thesisPlayedOut,
+                });
+                return d.draft;
+              }}
             />
 
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
             <div style={{ display: 'flex', gap: 6 }}>
               <button onClick={() => setMode('expanded')} className="btn btn-muted" style={{ flex: 1 }}>CANCEL</button>
-              <button onClick={remove} disabled={removing} className="btn btn-red" style={{ flex: 1 }}>{removing ? '...' : 'CONFIRM CLOSE'}</button>
+              <button onClick={attemptClose} disabled={removing} className="btn btn-red" style={{ flex: 1 }}>{removing ? '...' : 'CONFIRM CLOSE'}</button>
             </div>
           </div>
         )}
@@ -1506,8 +1835,30 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
             <FormField label="Avg Cost"><input className="input" type="number" value={editForm.avgCost} onChange={e => setEditForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4, marginBottom: 4 }}>
-              <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 6 }}>TRADE PLAN (OPTIONAL)</p>
-              <FormField label="Entry Thesis"><input className="input" placeholder="Why did you enter this trade?" value={editForm.entryThesis} onChange={e => setEditForm(f => ({ ...f, entryThesis: e.target.value }))} /></FormField>
+              <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 6 }}>YOUR THESIS</p>
+              <ThesisAssistField
+                label="WHY ARE YOU HOLDING THIS?"
+                placeholder="What's the story here? Why this stock, why now?"
+                value={editForm.entryThesis}
+                onChange={v => setEditForm(f => ({ ...f, entryThesis: v }))}
+                rows={3}
+                assist={async (current) => {
+                  const d = await api.ai.thesisAssist({ ticker: pos.ticker, field: 'entry', userNote: current });
+                  return d.draft;
+                }}
+              />
+              <ThesisAssistField
+                label="WHAT WOULD MAKE YOU CHANGE YOUR MIND?"
+                placeholder="What would have to happen for you to sell or cut your losses?"
+                value={editForm.reversalCondition}
+                onChange={v => setEditForm(f => ({ ...f, reversalCondition: v }))}
+                rows={3}
+                assist={async (current) => {
+                  const d = await api.ai.thesisAssist({ ticker: pos.ticker, field: 'reversal', userNote: current });
+                  return d.draft;
+                }}
+              />
+              <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginTop: 8, marginBottom: 6 }}>PRICE LEVELS (OPTIONAL)</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <FormField label="Price Target $"><input className="input" type="number" placeholder="0.00" value={editForm.priceTarget} onChange={e => setEditForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
                 <FormField label="Stop Loss $"><input className="input" type="number" placeholder="0.00" value={editForm.stopLoss} onChange={e => setEditForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
@@ -1530,6 +1881,14 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
         initialContent={journalSave?.content || ''}
         showToast={showToast}
       />
+
+      {skipReflectionConfirm && (
+        <SkipThesisModal
+          kind="reflection"
+          onWrite={() => setSkipReflectionConfirm(false)}
+          onSkip={doRemove}
+        />
+      )}
     </>
   );
 }
@@ -1659,9 +2018,11 @@ function PortfolioSubTab({ marketOpen, showToast }) {
           onClose={() => setModal(null)}
           onImport={() => setModal('import')}
           onClosedTrades={() => setModal('closed')}
+          onTheses={() => setModal('theses')}
         />
       )}
       {modal === 'closed' && <ClosedTradesDrawer onClose={() => setModal(null)} showToast={showToast} />}
+      {modal === 'theses' && <ThesesDrawer onClose={() => setModal(null)} showToast={showToast} />}
     </div>
   );
 }
@@ -1877,10 +2238,18 @@ function GrowthChartInline({ showGrowth, setShowGrowth }) {
  * Action-menu drawer (the ⋯ button). Houses things that don't deserve a
  * top-level button in the redesign — closed trades, CSV import, etc.
  */
-function PortfolioMenuDrawer({ onClose, onImport, onClosedTrades }) {
+function PortfolioMenuDrawer({ onClose, onImport, onClosedTrades, onTheses }) {
   return (
     <Modal title="Portfolio actions" onClose={onClose}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button
+          onClick={() => { onClose(); onTheses(); }}
+          className="btn btn-muted"
+          style={{ padding: '12px 14px', textAlign: 'left', fontSize: 12 }}
+        >
+          My theses
+          <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 3, fontWeight: 400 }}>The record of your own thinking — every position, why you bought, how it played out.</p>
+        </button>
         <button
           onClick={() => { onClose(); onClosedTrades(); }}
           className="btn btn-muted"
@@ -1899,6 +2268,267 @@ function PortfolioMenuDrawer({ onClose, onImport, onClosedTrades }) {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * ThesesDrawer — Phase 2 "My Theses" view.
+ * Two sections:
+ *   ACTIVE THESES — every current position with entry + reversal, sortable
+ *   PAST THESES   — every closed position with thesis + reflection + outcome
+ *
+ * Restrained list view, terminal aesthetic, no charts. The content is the
+ * product: the user's record of their own thinking over time.
+ */
+function ThesesDrawer({ onClose }) {
+  const [active, setActive] = useState([]);
+  const [past, setPast] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sortActive, setSortActive] = useState('written'); // 'written' | 'size'
+  const [sortPast, setSortPast] = useState('closed'); // 'closed' | 'pnl'
+
+  useEffect(() => {
+    Promise.all([
+      api.portfolio.value().catch(() => ({ positions: [] })),
+      api.portfolio.closedTrades().catch(() => ({ trades: [] })),
+    ]).then(([pv, ct]) => {
+      setActive(pv?.positions ?? []);
+      setPast(ct?.trades ?? []);
+      setLoading(false);
+    });
+  }, []);
+
+  const sortedActive = [...active].sort((a, b) => {
+    if (sortActive === 'size') return (b.currentValue ?? 0) - (a.currentValue ?? 0);
+    // 'written' — newest first; positions with no timestamp sink to the bottom
+    const ta = a.thesis_written_at ? new Date(a.thesis_written_at).getTime() : 0;
+    const tb = b.thesis_written_at ? new Date(b.thesis_written_at).getTime() : 0;
+    return tb - ta;
+  });
+
+  const sortedPast = [...past].sort((a, b) => {
+    if (sortPast === 'pnl') return (b.pnl ?? 0) - (a.pnl ?? 0);
+    return new Date(b.closed_at ?? 0) - new Date(a.closed_at ?? 0);
+  });
+
+  const activeWithThesis = sortedActive.filter(p => p.entry_thesis || p.reversal_condition);
+  const activeWithoutThesis = sortedActive.filter(p => !p.entry_thesis && !p.reversal_condition);
+
+  return (
+    <Modal title="My theses" onClose={onClose}>
+      <div style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><Spinner /></div>
+        ) : (
+          <>
+            {/* ── ACTIVE ─────────────────────────────────────────── */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 700, letterSpacing: '1px' }}>
+                ACTIVE THESES <span style={{ color: 'var(--muted)', fontWeight: 500, marginLeft: 4 }}>· {activeWithThesis.length}</span>
+              </p>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[
+                  { id: 'written', label: 'NEWEST' },
+                  { id: 'size', label: 'BIGGEST' },
+                ].map(o => (
+                  <button
+                    key={o.id}
+                    onClick={() => setSortActive(o.id)}
+                    style={{
+                      fontSize: 9, padding: '3px 7px', borderRadius: 3,
+                      background: sortActive === o.id ? 'var(--blue)' : 'transparent',
+                      color: sortActive === o.id ? '#fff' : 'var(--faint)',
+                      border: `1px solid ${sortActive === o.id ? 'var(--blue)' : 'var(--border)'}`,
+                      cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.5px',
+                    }}
+                  >{o.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {activeWithThesis.length === 0 && activeWithoutThesis.length === 0 && (
+              <p style={{ fontSize: 11, color: 'var(--muted)', padding: '14px 0', textAlign: 'center' }}>
+                No positions yet. Add one to start your thesis record.
+              </p>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+              {activeWithThesis.map(p => (
+                <ThesisRow key={p.id} kind="active" item={p} />
+              ))}
+              {activeWithoutThesis.length > 0 && (
+                <div style={{ background: 'rgba(245,158,11,0.05)', border: '1px dashed rgba(245,158,11,0.25)', borderRadius: 5, padding: '8px 11px' }}>
+                  <p style={{ fontSize: 10, color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 3 }}>
+                    NO THESIS YET · {activeWithoutThesis.length}
+                  </p>
+                  <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
+                    {activeWithoutThesis.map(p => p.ticker).join(', ')} — open the position card on the Portfolio tab to add one.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* ── PAST ───────────────────────────────────────────── */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <p style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 700, letterSpacing: '1px' }}>
+                PAST THESES <span style={{ color: 'var(--muted)', fontWeight: 500, marginLeft: 4 }}>· {past.length}</span>
+              </p>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[
+                  { id: 'closed', label: 'RECENT' },
+                  { id: 'pnl', label: 'BY P&L' },
+                ].map(o => (
+                  <button
+                    key={o.id}
+                    onClick={() => setSortPast(o.id)}
+                    style={{
+                      fontSize: 9, padding: '3px 7px', borderRadius: 3,
+                      background: sortPast === o.id ? 'var(--blue)' : 'transparent',
+                      color: sortPast === o.id ? '#fff' : 'var(--faint)',
+                      border: `1px solid ${sortPast === o.id ? 'var(--blue)' : 'var(--border)'}`,
+                      cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.5px',
+                    }}
+                  >{o.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {sortedPast.length === 0 ? (
+              <p style={{ fontSize: 11, color: 'var(--muted)', padding: '14px 0', textAlign: 'center' }}>
+                No closed positions yet. They'll show up here with thesis + reflection + outcome.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {sortedPast.map(t => (
+                  <ThesisRow key={t.id} kind="past" item={t} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * ThesisRow — one item in the My Theses list. Different fields show for
+ * active vs past, but the visual rhythm is the same.
+ */
+function ThesisRow({ kind, item }) {
+  const isPast = kind === 'past';
+
+  // Outcome chip for past trades — Win / Loss / Even by P&L.
+  let outcomeChip = null;
+  if (isPast) {
+    const pnl = item.pnl ?? 0;
+    if (pnl > 0) outcomeChip = { label: 'W', color: 'var(--green)' };
+    else if (pnl < 0) outcomeChip = { label: 'L', color: 'var(--red)' };
+    else outcomeChip = { label: '—', color: 'var(--faint)' };
+  }
+
+  // "Played out" mapping — translates the stored enum into a readable label.
+  const playedOutLabel = {
+    yes: { text: 'Thesis played out', color: 'var(--green)' },
+    partially: { text: 'Thesis partially played out', color: 'var(--amber)' },
+    no: { text: 'Thesis did not play out', color: 'var(--red)' },
+  }[item.thesis_played_out];
+
+  // Date strings
+  let dateLabel = null;
+  if (isPast && item.closed_at) {
+    const d = new Date(item.closed_at);
+    dateLabel = `closed ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  } else if (!isPast && item.thesis_written_at) {
+    const d = new Date(item.thesis_written_at);
+    dateLabel = `written ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  }
+
+  return (
+    <div style={{
+      background: 'var(--raised)',
+      border: '1px solid var(--border)',
+      borderRadius: 6,
+      padding: '10px 12px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{item.ticker}</span>
+          {outcomeChip && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+              background: outcomeChip.color === 'var(--green)' ? 'rgba(34,197,94,0.15)'
+                : outcomeChip.color === 'var(--red)' ? 'rgba(239,68,68,0.15)'
+                : 'rgba(255,255,255,0.05)',
+              color: outcomeChip.color, letterSpacing: '0.4px',
+              border: `1px solid ${outcomeChip.color === 'var(--green)' ? 'rgba(34,197,94,0.3)'
+                : outcomeChip.color === 'var(--red)' ? 'rgba(239,68,68,0.3)'
+                : 'var(--border)'}`,
+            }}>{outcomeChip.label}</span>
+          )}
+        </div>
+        {isPast && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: colorFor(item.pnl ?? 0) }}>
+            {(item.pnl ?? 0) >= 0 ? '+' : ''}${fmt(item.pnl ?? 0)}
+            <span style={{ color: 'var(--faint)', fontWeight: 400, marginLeft: 4, fontSize: 10 }}>
+              ({(item.pnl_percent ?? 0) >= 0 ? '+' : ''}{fmt(item.pnl_percent ?? 0, 1)}%)
+            </span>
+          </span>
+        )}
+        {!isPast && (
+          <span style={{ fontSize: 10, color: 'var(--faint)' }}>
+            {item.shares} sh · {item.currentValue ? `$${fmt(item.currentValue)}` : '—'}
+          </span>
+        )}
+      </div>
+
+      {dateLabel && (
+        <p style={{ fontSize: 9, color: 'var(--faint)', marginBottom: 6, letterSpacing: '0.3px' }}>
+          {dateLabel}{isPast && item.hold_days != null && ` · held ${item.hold_days}d`}
+        </p>
+      )}
+
+      {playedOutLabel && (
+        <p style={{ fontSize: 10, color: playedOutLabel.color, fontWeight: 600, marginBottom: 5, letterSpacing: '0.2px' }}>
+          {playedOutLabel.text}
+        </p>
+      )}
+
+      {item.entry_thesis && (
+        <div style={{ marginBottom: 5 }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>WHY</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{item.entry_thesis}</p>
+        </div>
+      )}
+
+      {!isPast && item.reversal_condition && (
+        <div style={{ marginBottom: 2 }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>WHAT WOULD CHANGE YOUR MIND</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{item.reversal_condition}</p>
+        </div>
+      )}
+
+      {isPast && item.reflection_what_happened && (
+        <div style={{ marginTop: 5 }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>WHAT HAPPENED</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{item.reflection_what_happened}</p>
+        </div>
+      )}
+      {isPast && !item.reflection_what_happened && item.exit_reflection && (
+        // Backward-compat — older closed trades only have the legacy single-field exit_reflection
+        <div style={{ marginTop: 5 }}>
+          <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>REFLECTION</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5, fontStyle: 'italic' }}>{item.exit_reflection}</p>
+        </div>
+      )}
+
+      {isPast && item.reflection_lesson && (
+        <div style={{ marginTop: 5 }}>
+          <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 600, letterSpacing: '0.5px', marginBottom: 2 }}>LESSON</p>
+          <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{item.reflection_lesson}</p>
+        </div>
+      )}
+    </div>
   );
 }
 
