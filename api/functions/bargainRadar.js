@@ -269,15 +269,20 @@ Good examples:
 Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("buyable" or "avoid"), and the plain-English thesis.`;
 
   try {
-    const msg = await anthropic.messages.create({
-      model: MODEL_HAIKU,
-      max_tokens: 1500,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: [{
-        role: 'user',
-        content: `Evaluate these oversold large-caps. Which are buyable dips and which are real problems?\n\n${lines}\n\nReturn JSON:\n{\n  "verdicts": [\n    { "ticker": "XYZ", "verdict": "buyable" | "avoid", "thesis": "one sentence" }\n  ]\n}`,
-      }],
-    });
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 30000);
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: MODEL_HAIKU,
+        max_tokens: 1500,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [{
+          role: 'user',
+          content: `Evaluate these oversold large-caps. Which are buyable dips and which are real problems?\n\n${lines}\n\nReturn JSON:\n{\n  "verdicts": [\n    { "ticker": "XYZ", "verdict": "buyable" | "avoid", "thesis": "one sentence" }\n  ]\n}`,
+        }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
     const match = text.match(/\{[\s\S]*\}/);

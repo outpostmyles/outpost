@@ -490,28 +490,33 @@ RULES:
 
 Output ONLY the JSON array, no other text.`;
 
-    // Call Claude Haiku with vision
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: mediaType,
-              data: base64Data,
+    // Call Claude Haiku with vision (45s — vision parsing can be slow)
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 45000);
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2048,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mediaType,
+                data: base64Data,
+              },
             },
-          },
-          {
-            type: 'text',
-            text: PARSE_PROMPT,
-          },
-        ],
-      }],
-    });
+            {
+              type: 'text',
+              text: PARSE_PROMPT,
+            },
+          ],
+        }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
 
     // Parse Claude's response
     const responseText = msg.content[0]?.text || '';

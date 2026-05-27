@@ -158,11 +158,15 @@ VOICE — the thesis fields are user-facing. Write them like a friend, not a fun
 Return ONLY valid JSON, no markdown.`;
 
   try {
-    const msg = await anthropic.messages.create({
-      model: MODEL_HAIKU,
-      max_tokens: 600,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: [{
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 30000);
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: MODEL_HAIKU,
+        max_tokens: 600,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [{
         role: 'user',
         content: `SPY is ${spyChange >= 0 ? '+' : ''}${spyChange.toFixed(2)}% today. Analyze these sector signals and identify where money is rotating:
 
@@ -174,8 +178,9 @@ Return JSON with:
   "cooling": [{ "ticker": "XLE", "name": "Energy", "signal": "warning" or "risk", "thesis": "one sentence why", "relativeStrength": number }],
   "themeWatch": { "name": "theme name", "thesis": "one sentence on an emerging theme to watch", "ticker": "ETF ticker" } or null
 }`,
-      }],
-    });
+        }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
     const match = text.match(/\{[\s\S]*\}/);

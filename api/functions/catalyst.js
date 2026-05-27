@@ -256,12 +256,17 @@ AVOID:
 - Stale catalysts (old news repackaged)
 
 Return ONLY a JSON array of the candidate numbers (1-indexed) in order of expected move magnitude. Example: [3, 1, 7]`;
-    const msg = await anthropic.messages.create({
-      model: MODEL_HAIKU,
-      max_tokens: 300,
-      system: [{ type: 'text', text: scoringSystem, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: `Current market: ${regime} regime, VIX ${vix}.\nPick the top 3 catalysts for the "${dropLabel}" drop from these candidates:\n${candidateStr}` }],
-    });
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 30000);
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: MODEL_HAIKU,
+        max_tokens: 300,
+        system: [{ type: 'text', text: scoringSystem, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: `Current market: ${regime} regime, VIX ${vix}.\nPick the top 3 catalysts for the "${dropLabel}" drop from these candidates:\n${candidateStr}` }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
     const match = text.match(/\[[\d\s,]+\]/);

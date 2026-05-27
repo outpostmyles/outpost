@@ -219,12 +219,17 @@ Return JSON in this exact shape:
 }`;
 
   try {
-    const msg = await anthropic.messages.create({
-      model: MODEL_HAIKU,
-      max_tokens: 800,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: userMsg }],
-    });
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 30000);
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: MODEL_HAIKU,
+        max_tokens: 800,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: userMsg }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
     const match = text.match(/\{[\s\S]*\}/);

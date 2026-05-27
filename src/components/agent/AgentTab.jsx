@@ -221,6 +221,21 @@ export default function AgentTab({ user, showToast }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Phase 4 bridge — DeployCashFlow's "None of these feel right? → Talk it
+  // out with the agent" dispatches an 'agent_prefill' window event with a
+  // pre-composed message. We pre-fill the input so the user can edit and
+  // send instead of retyping. Without this listener, that message is lost.
+  useEffect(() => {
+    function onPrefill(e) {
+      const message = e?.detail?.message;
+      if (typeof message === 'string' && message.trim()) {
+        setInput(message);
+      }
+    }
+    window.addEventListener('agent_prefill', onPrefill);
+    return () => window.removeEventListener('agent_prefill', onPrefill);
+  }, []);
+
   const streamRef = useRef(null);
 
   // Abort stream on unmount to prevent setState on unmounted component

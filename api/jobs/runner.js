@@ -215,7 +215,12 @@ scheduleAt(7, 0, async () => {
   if (!isWeekday()) return;
   try { await generateAllDigests(); } catch (err) { console.error('[Jobs] Proactive digest failed:', err.message); }
 }, 'Proactive digests');
-scheduleAt(7, 30, generateBriefs, 'Pre-market briefs');
+// Wrapped in try/catch so a Supabase blip BEFORE the inner try doesn't
+// take down the jobs runner. Same defensive pattern as the other scheduled
+// jobs in this file.
+scheduleAt(7, 30, async () => {
+  try { await generateBriefs(); } catch (err) { console.error('[Jobs] Pre-market briefs failed:', err.message); }
+}, 'Pre-market briefs');
 // Email the digest 15 min after generation completes (gives the cron room to finish even at scale)
 scheduleAt(7, 45, async () => {
   if (!isWeekday()) return;
@@ -231,7 +236,9 @@ scheduleAt(9, 0, async () => {
   if (getETTime().getDay() !== 1) return;
   try { await runFounderDigest(); } catch (err) { console.error('[Jobs] Founder digest failed:', err.message); }
 }, 'Founder digest');
-scheduleAt(16, 30, takeSnapshots, 'Portfolio snapshots');
+scheduleAt(16, 30, async () => {
+  try { await takeSnapshots(); } catch (err) { console.error('[Jobs] Portfolio snapshots failed:', err.message); }
+}, 'Portfolio snapshots');
 scheduleAt(16, 45, async () => {
   if (!isWeekday()) return;
   try { await generateAllExplainers(); } catch (err) { console.error('[Jobs] Portfolio explainers failed:', err.message); }

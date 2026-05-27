@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch, clearCachePrefix } from '../../lib/cache.js';
+import { DisclaimerBadge } from '../shared/UI.jsx';
 
 /**
  * TODAY — Outpost's top 5 ranked picks. Sits at the top of Home tab and
@@ -143,6 +144,9 @@ export default function TodayCard({ onTabSwitch, onItemTap }) {
           </div>
         );
       })}
+
+      {/* Disclaimer — required on every AI-recommendation surface */}
+      <DisclaimerBadge />
 
       {/* Footer */}
       <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

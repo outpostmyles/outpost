@@ -176,12 +176,17 @@ async function synthesize(metrics) {
   ].join('\n');
 
   try {
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1500,
-      system: SYNTH_SYSTEM,
-      messages: [{ role: 'user', content: userMsg }],
-    });
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 45000); // background job, 45s
+    let msg;
+    try {
+      msg = await anthropic.messages.create({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1500,
+        system: SYNTH_SYSTEM,
+        messages: [{ role: 'user', content: userMsg }],
+      }, { signal: ctrl.signal });
+    } finally { clearTimeout(tm); }
     return msg.content?.[0]?.text?.trim() || '(empty response)';
   } catch (err) {
     console.error('[founderDigest] synthesis failed:', err.message);
