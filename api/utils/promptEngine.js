@@ -37,7 +37,12 @@ export async function buildUserContext(userId, user) {
     const market = getMarketData();
 
     const [positions, watchlist] = await Promise.allSettled([
-      supabase.from('positions').select('ticker,shares,avg_cost,company_name,entry_thesis,price_target,stop_loss,trade_notes,purchased_at,created_at').eq('user_id', userId),
+      // Phase 2 added reversal_condition + thesis_written_at — the agent
+      // needs both visible in its base context, otherwise it has to call
+      // recall_history for data that's already on the row. Also pulling
+      // source (Phase 4) so the agent can mention "you opened this via
+      // Deploy Cash" when relevant.
+      supabase.from('positions').select('ticker,shares,avg_cost,company_name,entry_thesis,reversal_condition,thesis_written_at,price_target,stop_loss,trade_notes,purchased_at,created_at,source').eq('user_id', userId),
       supabase.from('watchlist').select('ticker').eq('user_id', userId).limit(10),
     ]);
 
@@ -258,18 +263,22 @@ export async function buildAgentContext(userId, user) {
     attributionStr = await getAttributionSummaryForAgent(userId);
   } catch {}
 
-  // Build trade plans context — check if positions have plan data
+  // Build trade plans context — check if positions have plan data.
+  // Phase 2: reversal_condition is the user's "what would change my mind"
+  // captured at position open. Phase 4: source tells us if they got here
+  // via Deploy Cash, which is worth referencing naturally.
   const rawPos = base._rawPositions ?? [];
-  const tradePlans = rawPos.filter(p => p.entry_thesis || p.price_target || p.stop_loss);
+  const tradePlans = rawPos.filter(p => p.entry_thesis || p.reversal_condition || p.price_target || p.stop_loss);
   let tradePlansStr = '';
   const activeAlerts = []; // positions near stop or target
   if (tradePlans.length > 0) {
     const priceMap = getPrices(tradePlans.map(p => p.ticker));
-    tradePlansStr = '\nTRADE PLANS (the trader set these — reference them when relevant):\n' +
+    tradePlansStr = '\nTRADE PLANS (the trader set these — reference them when relevant, quote their wording where possible):\n' +
       tradePlans.map(p => {
         const live = priceMap[p.ticker]?.price;
         const parts = [`${p.ticker}:`];
         if (p.entry_thesis) parts.push(`Thesis: "${p.entry_thesis}"`);
+        if (p.reversal_condition) parts.push(`Will change mind if: "${p.reversal_condition}"`);
         if (p.price_target) {
           const targetDist = live ? ((p.price_target - live) / live * 100) : null;
           const targetStr = targetDist != null ? ` (${targetDist.toFixed(1)}% from current)` : '';
