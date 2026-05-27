@@ -12,6 +12,8 @@ import { getPrices } from '../services/pricePool.js';
 import { config } from '../config.js';
 import { trackAICall, trackError } from '../services/monitor.js';
 import { trackFeature, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
+import { dailyAiCeiling } from '../middleware/aiCeiling.js';
+import { getRequestId } from '../middleware/requestId.js';
 import { buildWelcomePrompt, buildWelcomeSystemPrompt, buildFallbackWelcome } from '../services/welcomeMoment.js';
 import { assignVariant } from '../services/promptExperiments.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
@@ -42,11 +44,20 @@ async function deductCredits(userId, amount) {
   return newBalance;
 }
 
-async function refundCredits(userId, amount) {
+async function refundCredits(userId, amount, reason = 'ai_endpoint_error') {
   // refund_credits RPC. Non-blocking — if the refund fails we log but don't
-  // throw, because the calling code is already in an error path.
+  // throw, because the calling code is already in an error path. Emits a
+  // structured "[ai-refund]" line so production logs can be grepped to spot
+  // patterns (one endpoint failing more than others, one user racking up
+  // many refunds, etc). Request ID pulled from AsyncLocalStorage so callers
+  // don't have to thread it through.
+  const rid = getRequestId() ?? 'no-rid';
   const { error } = await supabase.rpc('refund_credits', { p_user_id: userId, p_amount: amount });
-  if (error) console.error('[refundCredits] RPC failed:', error.message);
+  if (error) {
+    console.error(`[ai-refund] req:${rid} user:${userId} amount:${amount} reason:${reason} — RPC FAILED: ${error.message}`);
+  } else {
+    console.log(`[ai-refund] req:${rid} user:${userId} amount:${amount} reason:${reason}`);
+  }
 }
 
 async function getCache(key) {
@@ -117,7 +128,7 @@ async function claudeCall(system, userMsg, maxTokens = 400, opts = {}) {
  *  - Cached 1h per (style/risk/regime) combo so 1000 free signups don't
  *    map to 1000 Claude calls. The triple is intentionally low-cardinality.
  */
-router.post('/welcome', requireAuth, rateLimit(5), async (req, res) => {
+router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req, res) => {
   const style = (req.body?.style || req.user.trading_style || 'swing').toString();
   const risk = (req.body?.risk_tolerance || req.user.risk_tolerance || 'moderate').toString();
   const rawAssets = req.body?.assets;
@@ -176,7 +187,7 @@ router.post('/welcome', requireAuth, rateLimit(5), async (req, res) => {
 });
 
 // Market summary — shared, cached up to 1 hour but invalidated when data changes significantly
-router.get('/summary', requireAuth, rateLimit(10), async (req, res) => {
+router.get('/summary', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {
     const TTL = 60 * 60 * 1000;
     const { data: existing } = await supabase.from('market_summary').select('*').order('generated_at', { ascending: false }).limit(1).maybeSingle();
@@ -257,7 +268,7 @@ Give me the real read — what's the STORY today, where is money flowing, and wh
 });
 
 // Position analysis — per user per ticker per day
-router.post('/analysis', requireAuth, rateLimit(5), async (req, res) => {
+router.post('/analysis', requireAuth, rateLimit(5), dailyAiCeiling(), async (req, res) => {
   try {
     const ticker = sanitizeTicker(req.body.ticker);
     if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
@@ -505,7 +516,7 @@ Answer "should they worry?" — calmly when calm is correct, plainly when it's n
 });
 
 // Opportunity finder — agent calls this
-router.post('/find-opportunity', requireAuth, rateLimit(5), async (req, res) => {
+router.post('/find-opportunity', requireAuth, rateLimit(5), dailyAiCeiling(), async (req, res) => {
   try {
     const plan = req.user.plan ?? 'free';
     if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Opportunity finder requires a paid plan' }); }
@@ -590,7 +601,7 @@ Return JSON array with: ticker, price (null if unknown), changePercent (null if 
 });
 
 // News analysis
-router.post('/news', requireAuth, rateLimit(5), async (req, res) => {
+router.post('/news', requireAuth, rateLimit(5), dailyAiCeiling(), async (req, res) => {
   try {
     const ticker = sanitizeTicker(req.body.ticker);
     if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
@@ -659,7 +670,7 @@ Articles: ${JSON.stringify(rawArticles.slice(0, 10))}`,
 });
 
 // Pre-market brief — on demand or from background job
-router.get('/brief', requireAuth, rateLimit(5), async (req, res) => {
+router.get('/brief', requireAuth, rateLimit(5), dailyAiCeiling(), async (req, res) => {
   try {
     const forceRefresh = req.query.force === 'true';
     const cacheKey = `brief_${req.user.id}_${todayStr()}`;
@@ -739,7 +750,7 @@ ${PLAIN_TEXT_RULE}`;
 });
 
 // Journal coach
-router.get('/journal-coach', requireAuth, rateLimit(3), async (req, res) => {
+router.get('/journal-coach', requireAuth, rateLimit(3), dailyAiCeiling(), async (req, res) => {
   try {
     const plan = req.user.plan ?? 'free';
     if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Journal Coach requires a paid plan' }); }
@@ -953,7 +964,7 @@ async function buildDeployCashContext(userId, user) {
 // Generate 2-3 personalized cash-deployment options for the user, grounded
 // in their portfolio + thesis history + recent thinking. Logs the session
 // so the user choice can later be threaded back to an executed position.
-router.post('/deploy-cash', requireAuth, rateLimit(10), async (req, res) => {
+router.post('/deploy-cash', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {
     const plan = req.user.plan ?? 'free';
     if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Deploy Cash recommendations require a paid plan' }); }
@@ -1337,7 +1348,7 @@ Generate the JSON now.`;
 // POST /api/ai/deploy-cash/counter
 // "Why not this?" — pushes back honestly on a specific option from a prior
 // session. Real counter-arguments, not soft hedges. 2 credits.
-router.post('/deploy-cash/counter', requireAuth, rateLimit(15), async (req, res) => {
+router.post('/deploy-cash/counter', requireAuth, rateLimit(15), dailyAiCeiling(), async (req, res) => {
   try {
     const plan = req.user.plan ?? 'free';
     if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Deploy Cash requires a paid plan' }); }
@@ -1433,7 +1444,7 @@ router.post('/deploy-cash/choice', requireAuth, rateLimit(20), async (req, res) 
 //
 // Body: { ticker, field: 'entry' | 'reversal', userNote? (string, max 300 chars) }
 // Returns: { draft }
-router.post('/thesis-assist', requireAuth, rateLimit(15), async (req, res) => {
+router.post('/thesis-assist', requireAuth, rateLimit(15), dailyAiCeiling(), async (req, res) => {
   try {
     const ticker = sanitizeTicker(req.body.ticker);
     if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
@@ -1511,7 +1522,7 @@ Write the draft now.`;
 //   pnl?, pnlPercent?, holdDays?, thesisPlayedOut? ('yes'|'partially'|'no')
 // }
 // Returns: { draft }
-router.post('/exit-reflection-assist', requireAuth, rateLimit(15), async (req, res) => {
+router.post('/exit-reflection-assist', requireAuth, rateLimit(15), dailyAiCeiling(), async (req, res) => {
   try {
     const ticker = sanitizeTicker(req.body.ticker);
     if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });

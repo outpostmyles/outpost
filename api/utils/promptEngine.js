@@ -4,6 +4,18 @@ import { getPrices } from '../services/pricePool.js';
 import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
+// Wraps user-authored free-text (entry_thesis, reversal_condition, trade_notes)
+// in <user_quoted> tags before interpolating into a system prompt. The
+// AGENT_SYSTEM / brief / analysis system prompts all instruct the model to
+// treat content inside these tags as DATA, not instructions — which defangs
+// "ignore previous instructions" style injections planted in a position note.
+// Strips any nested </user_quoted> close-tag a clever attacker tries to use
+// to break out of the wrapper.
+function safeUserText(text, max = 500) {
+  if (!text) return '';
+  return `<user_quoted>${String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '')}</user_quoted>`;
+}
+
 /**
  * Get sector radar summary from cache for enriching other contexts.
  * Returns a short string summarizing sector rotation.
@@ -277,8 +289,8 @@ export async function buildAgentContext(userId, user) {
       tradePlans.map(p => {
         const live = priceMap[p.ticker]?.price;
         const parts = [`${p.ticker}:`];
-        if (p.entry_thesis) parts.push(`Thesis: "${p.entry_thesis}"`);
-        if (p.reversal_condition) parts.push(`Will change mind if: "${p.reversal_condition}"`);
+        if (p.entry_thesis) parts.push(`Thesis: ${safeUserText(p.entry_thesis)}`);
+        if (p.reversal_condition) parts.push(`Will change mind if: ${safeUserText(p.reversal_condition)}`);
         if (p.price_target) {
           const targetDist = live ? ((p.price_target - live) / live * 100) : null;
           const targetStr = targetDist != null ? ` (${targetDist.toFixed(1)}% from current)` : '';
@@ -301,7 +313,7 @@ export async function buildAgentContext(userId, user) {
             activeAlerts.push(`${p.ticker} has BROKEN BELOW its stop loss ($${p.stop_loss}) — now at $${live.toFixed(2)}`);
           }
         }
-        if (p.trade_notes) parts.push(`Notes: ${p.trade_notes}`);
+        if (p.trade_notes) parts.push(`Notes: ${safeUserText(p.trade_notes, 1000)}`);
         return parts.join(' | ');
       }).join('\n');
   }
@@ -357,7 +369,7 @@ export async function buildBriefContext(userId, user) {
     if (!p.entry_thesis && !p.price_target && !p.stop_loss) continue;
     const live = priceMap[p.ticker]?.price;
     const parts = [`${p.ticker}:`];
-    if (p.entry_thesis) parts.push(`thesis "${p.entry_thesis}"`);
+    if (p.entry_thesis) parts.push(`thesis ${safeUserText(p.entry_thesis)}`);
     if (p.price_target) {
       const dist = live ? ((p.price_target - live) / live * 100) : null;
       parts.push(`target $${p.price_target}${dist != null ? ` (${dist.toFixed(1)}% away)` : ''}`);

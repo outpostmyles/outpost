@@ -20,17 +20,22 @@ async function request(method, path, body, isFormData = false, retries = 1) {
       });
       clearTimeout(timeout);
 
+      // Capture the request ID the backend stamped on this response so we
+      // can include it in any thrown error. When a beta user reports "the
+      // app crashed" we'll have a code that maps to a specific log line.
+      const requestId = res.headers.get('X-Request-Id') || null;
+
       if (res.status === 401) {
         localStorage.removeItem('outpost_token');
         localStorage.removeItem('outpost_user');
         window.dispatchEvent(new Event('auth_expired'));
-        throw { error: 'Session expired — please sign in again', status: 401 };
+        throw { error: 'Session expired — please sign in again', status: 401, requestId };
       }
 
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        const err = { error: data.error || 'Something went wrong', status: res.status, ...data };
+        const err = { error: data.error || 'Something went wrong', status: res.status, requestId, ...data };
         throw err;
       }
 

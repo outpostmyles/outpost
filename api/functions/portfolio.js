@@ -656,95 +656,87 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
 
 router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
   try {
-    // Delete first to prevent double-close race condition
-    // select() returns the deleted row so we can archive it
-    const { data: pos, error: delErr } = await supabase
+    // We need the position's current data (live price, shares, avg_cost,
+    // purchased_at) to compute pnl / hold_days BEFORE we call the atomic
+    // close_position RPC. Read-then-RPC-close is safe against double-close
+    // because the RPC's DELETE...RETURNING is what actually wins the race —
+    // the read here is just to compute derived values, not to gate the delete.
+    const { data: pos, error: readErr } = await supabase
       .from('positions')
-      .delete()
+      .select('*')
       .eq('id', req.params.id)
       .eq('user_id', req.user.id)
-      .select()
       .maybeSingle();
-
-    if (delErr) throw delErr;
+    if (readErr) throw readErr;
     if (!pos) return res.status(404).json({ error: 'Position not found' });
 
-    // Archive to closed trades (non-blocking — position is already deleted)
-    try {
-      const livePrice = getPrices([pos.ticker])?.[pos.ticker]?.price;
-      const rawSell = req.body?.sellPrice ? parseFloat(req.body.sellPrice) : null;
-      const sellPrice = (rawSell && isFinite(rawSell) && rawSell > 0) ? rawSell : (livePrice ?? pos.avg_cost ?? 0);
-      const costBasis = (pos.avg_cost ?? 0) * (pos.shares ?? 0);
-      const proceeds = sellPrice * (pos.shares ?? 0);
-      const pnl = proceeds - costBasis;
-      const pnlPercent = costBasis > 0 ? ((pnl / costBasis) * 100) : 0;
-      // Calendar-day diff anchored on UTC midnight — matches IRS-style day counting.
-      // Use ONLY the user-provided purchased_at. If it's missing we leave hold_days
-      // as null rather than pretending the row's created_at (when added to our DB)
-      // is when the user actually bought. A wrong number is worse than a missing one.
-      const purchaseTime = pos.purchased_at;
-      let holdDays = null;
-      if (purchaseTime) {
-        const startDay = Math.floor(new Date(purchaseTime).getTime() / 86400000);
-        const endDay = Math.floor(Date.now() / 86400000);
-        holdDays = Math.max(0, endDay - startDay);
-      }
-
-      // Phase 2 — structured close-time reflection. Three fields:
-      //   thesis_played_out: 'yes' | 'partially' | 'no' | null
-      //   reflection_what_happened: narrative of what played out
-      //   reflection_lesson: the takeaway for next time
-      // Legacy fields (exit_reflection, exit_outcome) are still written for
-      // backward compat with the agent's get_closed_trade_reflection tool.
-      // exit_reflection is populated with whichever new-narrative is non-empty
-      // so the agent's existing memory keeps working.
-      const reflectionWhatHappened = sanitizeString(req.body?.reflectionWhatHappened, 1000) || null;
-      const reflectionLesson = sanitizeString(req.body?.reflectionLesson, 1000) || null;
-      const VALID_PLAYED_OUT = ['yes', 'partially', 'no'];
-      const rawPlayedOut = typeof req.body?.thesisPlayedOut === 'string' ? req.body.thesisPlayedOut : null;
-      const thesisPlayedOut = VALID_PLAYED_OUT.includes(rawPlayedOut) ? rawPlayedOut : null;
-
-      // Legacy fields — accept if provided (callers from the old UI), otherwise
-      // derive a backward-compat exit_outcome from new fields when possible.
-      let exitReflection = sanitizeString(req.body?.exitReflection, 500) || null;
-      if (!exitReflection) exitReflection = reflectionWhatHappened?.slice(0, 500) || null;
-      const rawOutcome = typeof req.body?.exitOutcome === 'string' ? req.body.exitOutcome : null;
-      const VALID_OUTCOMES = ['win_thesis_right', 'win_thesis_wrong', 'loss_thesis_right', 'loss_thesis_wrong'];
-      let exitOutcome = VALID_OUTCOMES.includes(rawOutcome) ? rawOutcome : null;
-      if (!exitOutcome && thesisPlayedOut && pnl != null) {
-        const win = pnl > 0;
-        if (thesisPlayedOut === 'yes') exitOutcome = win ? 'win_thesis_right' : 'loss_thesis_right';
-        else if (thesisPlayedOut === 'no') exitOutcome = win ? 'win_thesis_wrong' : 'loss_thesis_wrong';
-        // 'partially' doesn't map cleanly to the 4-state legacy enum — leave null.
-      }
-
-      await supabase.from('closed_trades').insert({
-        user_id: req.user.id,
-        ticker: pos.ticker,
-        company_name: pos.company_name,
-        shares: pos.shares,
-        avg_cost: pos.avg_cost,
-        sell_price: parseFloat(sellPrice.toFixed(2)),
-        pnl: parseFloat(pnl.toFixed(2)),
-        pnl_percent: parseFloat(pnlPercent.toFixed(2)),
-        entry_thesis: pos.entry_thesis,
-        price_target: pos.price_target,
-        stop_loss: pos.stop_loss,
-        trade_notes: pos.trade_notes,
-        exit_reflection: exitReflection,
-        exit_outcome: exitOutcome,
-        thesis_played_out: thesisPlayedOut,
-        reflection_what_happened: reflectionWhatHappened,
-        reflection_lesson: reflectionLesson,
-        // Same rule as hold_days above: only the user-provided purchase date counts.
-        // If they never set one, we record null instead of fabricating from row creation.
-        opened_at: pos.purchased_at || null,
-        closed_at: new Date().toISOString(),
-        hold_days: holdDays,
-      });
-    } catch (archiveErr) {
-      console.error('[Portfolio] Failed to archive closed trade:', archiveErr.message);
+    const livePrice = getPrices([pos.ticker])?.[pos.ticker]?.price;
+    const rawSell = req.body?.sellPrice ? parseFloat(req.body.sellPrice) : null;
+    const sellPrice = (rawSell && isFinite(rawSell) && rawSell > 0) ? rawSell : (livePrice ?? pos.avg_cost ?? 0);
+    const costBasis = (pos.avg_cost ?? 0) * (pos.shares ?? 0);
+    const proceeds = sellPrice * (pos.shares ?? 0);
+    const pnl = proceeds - costBasis;
+    const pnlPercent = costBasis > 0 ? ((pnl / costBasis) * 100) : 0;
+    // Calendar-day diff anchored on UTC midnight — matches IRS-style day counting.
+    // Use ONLY the user-provided purchased_at. If it's missing we leave hold_days
+    // as null rather than pretending the row's created_at (when added to our DB)
+    // is when the user actually bought. A wrong number is worse than a missing one.
+    let holdDays = null;
+    if (pos.purchased_at) {
+      const startDay = Math.floor(new Date(pos.purchased_at).getTime() / 86400000);
+      const endDay = Math.floor(Date.now() / 86400000);
+      holdDays = Math.max(0, endDay - startDay);
     }
+
+    // Phase 2 — structured close-time reflection. Three fields:
+    //   thesis_played_out: 'yes' | 'partially' | 'no' | null
+    //   reflection_what_happened: narrative of what played out
+    //   reflection_lesson: the takeaway for next time
+    // Legacy fields (exit_reflection, exit_outcome) are still written for
+    // backward compat with the agent's get_closed_trade_reflection tool.
+    const reflectionWhatHappened = sanitizeString(req.body?.reflectionWhatHappened, 1000) || null;
+    const reflectionLesson = sanitizeString(req.body?.reflectionLesson, 1000) || null;
+    const VALID_PLAYED_OUT = ['yes', 'partially', 'no'];
+    const rawPlayedOut = typeof req.body?.thesisPlayedOut === 'string' ? req.body.thesisPlayedOut : null;
+    const thesisPlayedOut = VALID_PLAYED_OUT.includes(rawPlayedOut) ? rawPlayedOut : null;
+
+    // Legacy fields — accept if provided (old UI), otherwise derive a
+    // backward-compat exit_outcome from new fields when possible.
+    let exitReflection = sanitizeString(req.body?.exitReflection, 500) || null;
+    if (!exitReflection) exitReflection = reflectionWhatHappened?.slice(0, 500) || null;
+    const rawOutcome = typeof req.body?.exitOutcome === 'string' ? req.body.exitOutcome : null;
+    const VALID_OUTCOMES = ['win_thesis_right', 'win_thesis_wrong', 'loss_thesis_right', 'loss_thesis_wrong'];
+    let exitOutcome = VALID_OUTCOMES.includes(rawOutcome) ? rawOutcome : null;
+    if (!exitOutcome && thesisPlayedOut && pnl != null) {
+      const win = pnl > 0;
+      if (thesisPlayedOut === 'yes') exitOutcome = win ? 'win_thesis_right' : 'loss_thesis_right';
+      else if (thesisPlayedOut === 'no') exitOutcome = win ? 'win_thesis_wrong' : 'loss_thesis_wrong';
+      // 'partially' doesn't map cleanly to the 4-state legacy enum — leave null.
+    }
+
+    // Atomic close: migration 016 DELETE + INSERT in one transaction.
+    // If the INSERT fails (constraint violation, etc) the DELETE rolls back
+    // and the position is preserved. Previous pattern silently lost the
+    // closed_trades row when the async archive INSERT failed — that data is
+    // needed for tax reporting and the My Theses retrospective.
+    const { data: closed, error: rpcErr } = await supabase.rpc('close_position', {
+      p_position_id: req.params.id,
+      p_user_id: req.user.id,
+      p_sell_price: parseFloat(sellPrice.toFixed(2)),
+      p_pnl: parseFloat(pnl.toFixed(2)),
+      p_pnl_percent: parseFloat(pnlPercent.toFixed(2)),
+      p_hold_days: holdDays,
+      p_reflection_what_happened: reflectionWhatHappened,
+      p_reflection_lesson: reflectionLesson,
+      p_thesis_played_out: thesisPlayedOut,
+      p_exit_reflection: exitReflection,
+      p_exit_outcome: exitOutcome,
+    });
+    if (rpcErr) throw rpcErr;
+    // Null return = position was already deleted between our read and the RPC
+    // (double-close race). Treat as 404 — caller's first attempt won.
+    if (!closed) return res.status(404).json({ error: 'Position not found' });
+
     res.json({ success: true });
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);

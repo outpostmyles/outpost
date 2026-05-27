@@ -454,7 +454,19 @@ export async function getUserHistory(options) {
  *   { source, date, excerpt, context, ticker, outcome }
  * where `context` is the verbatim quote (so the agent can pass it through
  * to the user with attribution).
+ *
+ * SECURITY: `excerpt` and `context` are the user's own prior writing pulled
+ * from agent_messages / journal_notes / closed_trades — i.e. arbitrary text
+ * an attacker could have planted in their own data weeks ago. Wrap them in
+ * <user_quoted> tags so the agent's system prompt's anti-injection clause
+ * applies even when this comes back as a tool result. Strips any nested
+ * </user_quoted> close-tag to keep the wrapper intact.
  */
+function wrapQuote(text, max = 400) {
+  if (!text) return text;
+  const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
+  return `<user_quoted>${clean}</user_quoted>`;
+}
 export async function recallHistory(options) {
   const events = await getUserHistory(options);
   return events.map(e => ({
@@ -462,8 +474,8 @@ export async function recallHistory(options) {
     date: e.date,
     ticker: e.ticker,
     title: e.title,
-    excerpt: e.excerpt,
-    context: e.quote, // user's verbatim writing — agent should quote this
+    excerpt: wrapQuote(e.excerpt, 220),
+    context: wrapQuote(e.quote, 400), // user's verbatim writing — wrap before agent sees it
     outcome: e.outcome,
     pnl: e.pnl,
     holdDays: e.holdDays,

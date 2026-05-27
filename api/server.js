@@ -2,6 +2,7 @@ import './config.js';
 import express from 'express';
 import cors from 'cors';
 import { globalRateLimit } from './middleware/rateLimit.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
 import authRoutes from './functions/auth.js';
 import marketRoutes from './functions/market.js';
 import aiRoutes from './functions/ai.js';
@@ -35,6 +36,13 @@ const app = express();
 // bypassable by spoofing XFF without Express's trust filter. Trust the first
 // hop only (Railway's edge proxy).
 app.set('trust proxy', 1);
+
+// Assigns a short request ID to every inbound request, mirrors it back as
+// `X-Request-Id`, and exposes `req.log.{info,warn,error}` so error handlers
+// can emit correlated log lines. AsyncLocalStorage-backed so deep call sites
+// can also pull the current ID via `getRequestId()`. Mounted before CORS so
+// even rejected-by-CORS requests still get an ID in the response.
+app.use(requestIdMiddleware());
 
 app.use(cors({
   origin: [
@@ -165,8 +173,15 @@ app.get('/api/admin/insights', async (req, res) => {
 
 app.use((err, req, res, next) => {
   trackError(req.path, err, 'critical');
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  // Include the request ID so an incident report ("the app showed me an
+  // Internal server error around 3pm with code abc1234") maps directly to
+  // a greppable log line. We log the message + stack, not the raw err object,
+  // because err may contain attacker-controlled user input that we don't want
+  // dumped verbatim into structured log aggregators.
+  const rid = req.requestId ?? 'no-rid';
+  console.error(`[req:${rid}] Unhandled error on ${req.method} ${req.path}: ${err?.message ?? err}`);
+  if (err?.stack) console.error(`[req:${rid}] stack:`, err.stack);
+  res.status(500).json({ error: 'Internal server error', requestId: rid });
 });
 
 // Catch unhandled promise rejections — prevents silent crashes

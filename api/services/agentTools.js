@@ -1820,6 +1820,15 @@ async function getClosedTradeReflection({ ticker, userId }) {
     };
   }
 
+  // Wrap user-authored fields (entry_thesis, exit_reflection, trade_notes) in
+  // <user_quoted> tags before returning to the agent loop. These come from the
+  // user's own past inputs — could contain prompt-injection payloads planted
+  // weeks ago. The agent's system prompt treats user_quoted as data.
+  const wrap = (text, max = 600) => {
+    if (!text) return null;
+    const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
+    return `<user_quoted>${clean}</user_quoted>`;
+  };
   const trades = data.map(t => ({
     opened: t.opened_at?.slice(0, 10) ?? null,
     closed: t.closed_at?.slice(0, 10) ?? null,
@@ -1828,10 +1837,10 @@ async function getClosedTradeReflection({ ticker, userId }) {
     sell_price: t.sell_price,
     pnl: t.pnl,
     pnl_percent: t.pnl_percent,
-    entry_thesis: t.entry_thesis || null,
-    exit_reflection: t.exit_reflection || null,
+    entry_thesis: wrap(t.entry_thesis),
+    exit_reflection: wrap(t.exit_reflection),
     exit_outcome: t.exit_outcome || null, // 'win_thesis_right' | 'win_thesis_wrong' | 'loss_thesis_right' | 'loss_thesis_wrong'
-    trade_notes: t.trade_notes || null,
+    trade_notes: wrap(t.trade_notes),
   }));
 
   // Build a short summary signal for the agent to reference
