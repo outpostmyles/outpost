@@ -739,7 +739,6 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showPlan, setShowPlan] = useState(false);
-  const [skipConfirm, setSkipConfirm] = useState(false);
 
   function basicsValid() {
     if (!form.ticker || !form.shares) { setError('Ticker and shares are required'); return false; }
@@ -753,16 +752,14 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
 
   function attemptSave() {
     if (!basicsValid()) return;
-    // Soft gate — if both thesis fields are empty, prompt before proceeding.
-    if (!form.entryThesis.trim() && !form.reversalCondition.trim()) {
-      setSkipConfirm(true);
-      return;
-    }
+    // Phase 5 lighten — thesis is now genuinely optional at first add. The
+    // soft-skip modal interruption was friction the user didn't want. The
+    // position card still shows the "no thesis yet — write it" nudge after
+    // save, and the agent can prompt for missing theses proactively later.
     doSave();
   }
 
   async function doSave() {
-    setSkipConfirm(false);
     setSaving(true); setError('');
     try {
       const shares = parseFloat(form.shares);
@@ -821,48 +818,51 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
           If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
         </p>
 
-        {/* THESIS — first-class step. Always visible, AI-assisted.
-            Not gated behind a toggle. Captures the reason the user is making
-            this decision so future-them (and the agent) can hold them to it. */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginBottom: 4 }}>
-          <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 4 }}>YOUR THESIS</p>
-          <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, lineHeight: 1.5 }}>
-            30 seconds now saves you from second-guessing yourself for months. Outpost will hold you to what you write.
-          </p>
-
-          <ThesisAssistField
-            label="WHY ARE YOU BUYING THIS?"
-            placeholder="What's the story here? Why this stock, why now?"
-            value={form.entryThesis}
-            onChange={v => setForm(f => ({ ...f, entryThesis: v }))}
-            rows={3}
-            assist={assistEntry}
-          />
-
-          <ThesisAssistField
-            label="WHAT WOULD MAKE YOU CHANGE YOUR MIND?"
-            placeholder="What would have to happen for you to sell or cut your losses?"
-            value={form.reversalCondition}
-            onChange={v => setForm(f => ({ ...f, reversalCondition: v }))}
-            rows={3}
-            assist={assistReversal}
-          />
-
-          {!ticker && (
-            <p style={{ fontSize: 9, color: 'var(--faint)', marginTop: -4, marginBottom: 8, fontStyle: 'italic' }}>
-              Enter a ticker above to enable the AI assist on these fields.
-            </p>
-          )}
-        </div>
-
+        {/* PLAN — ALL OPTIONAL at first add (Phase 5 lighten). Thesis + price
+            targets collapsed into one "+ ADD A PLAN" expand so the default
+            add flow is just ticker + shares + cost. The position card surfaces
+            "no thesis yet — write it" nudge after save for users who skip. */}
         {!showPlan ? (
-          <button onClick={() => setShowPlan(true)} style={{ fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginTop: 4, marginBottom: 8, letterSpacing: '0.3px' }}>
-            + ADD PRICE TARGET / STOP LOSS (optional)
+          <button
+            onClick={() => setShowPlan(true)}
+            style={{ fontSize: 10, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginTop: 4, marginBottom: 8, letterSpacing: '0.3px' }}
+          >
+            + ADD A PLAN (optional — thesis, target, stop. Add later anytime.)
           </button>
         ) : (
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4, marginBottom: 8 }}>
-            <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 8 }}>PRICE TARGETS (optional)</p>
-            <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginBottom: 4 }}>
+            <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 4 }}>
+              YOUR PLAN <span style={{ color: 'var(--faint)', fontWeight: 500, letterSpacing: '0.3px', marginLeft: 4 }}>(all optional)</span>
+            </p>
+            <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, lineHeight: 1.5 }}>
+              Add any of these now, or skip and Outpost will ask later when it makes sense.
+            </p>
+
+            <ThesisAssistField
+              label="WHY ARE YOU BUYING THIS?"
+              placeholder="What's the story here? Why this stock, why now?"
+              value={form.entryThesis}
+              onChange={v => setForm(f => ({ ...f, entryThesis: v }))}
+              rows={3}
+              assist={assistEntry}
+            />
+
+            <ThesisAssistField
+              label="WHAT WOULD MAKE YOU CHANGE YOUR MIND?"
+              placeholder="What would have to happen for you to sell or cut your losses?"
+              value={form.reversalCondition}
+              onChange={v => setForm(f => ({ ...f, reversalCondition: v }))}
+              rows={3}
+              assist={assistReversal}
+            />
+
+            {!ticker && (
+              <p style={{ fontSize: 9, color: 'var(--faint)', marginTop: -4, marginBottom: 8, fontStyle: 'italic' }}>
+                Enter a ticker above to enable the AI assist on these fields.
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <FormField label="Price Target $"><input className="input" type="number" placeholder="200.00" value={form.priceTarget} onChange={e => setForm(f => ({ ...f, priceTarget: e.target.value }))} /></FormField>
               <FormField label="Stop Loss $"><input className="input" type="number" placeholder="120.00" value={form.stopLoss} onChange={e => setForm(f => ({ ...f, stopLoss: e.target.value }))} /></FormField>
             </div>
@@ -873,13 +873,6 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
         <button onClick={attemptSave} disabled={saving} className="btn btn-green btn-full">{saving ? 'Adding...' : 'Add Position'}</button>
       </Modal>
 
-      {skipConfirm && (
-        <SkipThesisModal
-          kind="thesis"
-          onWrite={() => setSkipConfirm(false)}
-          onSkip={doSave}
-        />
-      )}
     </>
   );
 }
