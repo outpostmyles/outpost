@@ -285,6 +285,10 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     const stopLoss = req.body.stopLoss ? sanitizeNumber(req.body.stopLoss, 0, 1000000) : null;
     const tradeNotes = sanitizeString(req.body.tradeNotes || '', 1000);
 
+    // Phase 4 — provenance ('manual' | 'deploy_cash' | 'import' | 'screenshot')
+    const VALID_SOURCES = ['manual', 'deploy_cash', 'import', 'screenshot'];
+    const source = VALID_SOURCES.includes(req.body.source) ? req.body.source : 'manual';
+
     // Validate ticker is a real stock + prices pass sanity checks
     const validation = await validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss });
     if (!validation.ok) return res.status(400).json({ error: validation.error });
@@ -318,6 +322,7 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     if (priceTarget) insertData.price_target = priceTarget;
     if (stopLoss) insertData.stop_loss = stopLoss;
     if (tradeNotes) insertData.trade_notes = tradeNotes;
+    if (source && source !== 'manual') insertData.source = source;
 
     const { data: position, error } = await supabase.from('positions').insert(insertData).select().single();
 

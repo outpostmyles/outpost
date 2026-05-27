@@ -88,6 +88,9 @@ export const api = {
     feedback: (body) => post('/api/settings/ai-feedback', body),
     thesisAssist: (body) => post('/api/ai/thesis-assist', body),
     exitReflectionAssist: (body) => post('/api/ai/exit-reflection-assist', body),
+    deployCash: (body) => post('/api/ai/deploy-cash', body),
+    deployCashCounter: (body) => post('/api/ai/deploy-cash/counter', body),
+    deployCashChoice: (body) => post('/api/ai/deploy-cash/choice', body),
   },
   portfolio: {
     value: () => get('/api/portfolio/value'),

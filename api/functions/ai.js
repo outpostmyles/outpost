@@ -874,6 +874,410 @@ ${statsBlock}`,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 4 — DEPLOY CASH WORKFLOW
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEPLOY_CASH_MIN_AMOUNT = 25;
+const DEPLOY_CASH_CONCENTRATION_CAP_PCT = 5;   // soft cap unless user picked aggressive
+const DEPLOY_CASH_CREDIT_COST = 5;
+const DEPLOY_CASH_COUNTER_CREDIT_COST = 2;
+
+const VALID_TIME_HORIZONS = ['never', '5plus', '1to5', 'this_year', 'unsure'];
+const VALID_GOALS = ['grow_aggressively', 'build_steadily', 'preserve', 'open'];
+
+// Build the "what does the user already know/think" context for deploy-cash.
+// Compact, structured — Sonnet will reason over this to produce options that
+// reference the user's actual portfolio + thesis history.
+async function buildDeployCashContext(userId, user) {
+  const [posRes, closedRes, watchRes, recentChatsRes] = await Promise.all([
+    supabase.from('positions').select('ticker,company_name,shares,avg_cost,entry_thesis,reversal_condition,thesis_written_at,purchased_at').eq('user_id', userId),
+    supabase.from('closed_trades').select('ticker,pnl,pnl_percent,thesis_played_out,reflection_lesson,reflection_what_happened,closed_at,hold_days,entry_thesis').eq('user_id', userId).order('closed_at', { ascending: false }).limit(10),
+    supabase.from('watchlist').select('ticker,notes,alert_price').eq('user_id', userId).limit(20),
+    supabase.from('agent_messages').select('role,content,created_at').eq('user_id', userId).eq('role', 'user').gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(40),
+  ]);
+
+  const positions = posRes.data ?? [];
+  const closedTrades = closedRes.data ?? [];
+  const watchlist = watchRes.data ?? [];
+  const recentChats = (recentChatsRes.data ?? []).filter(m => (m.content || '').trim().split(/\s+/).length >= 25);
+
+  // Live prices for ALL tickers the model might recommend: portfolio + watchlist
+  // + common defensive ETFs. Without this the model invents prices for
+  // non-portfolio tickers, which is the single biggest correctness risk here.
+  const COMMON_DEFENSIVE_ETFS = ['VOO', 'VTI', 'QQQ', 'SCHD', 'BND', 'VEA', 'SPY'];
+  const allTickers = Array.from(new Set([
+    ...positions.map(p => p.ticker),
+    ...watchlist.map(w => w.ticker),
+    ...COMMON_DEFENSIVE_ETFS,
+  ]));
+  const priceMap = allTickers.length ? getPrices(allTickers) : {};
+
+  // For any non-pool ticker still missing a price, fetch on demand.
+  const missing = allTickers.filter(t => !priceMap[t]?.price);
+  if (missing.length) {
+    const fetches = await Promise.allSettled(missing.map(t => getSnapshot(t)));
+    fetches.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value?.price) priceMap[missing[i]] = r.value;
+    });
+  }
+  let totalValue = 0;
+  const enriched = positions.map(p => {
+    const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+    const value = livePrice * (p.shares ?? 0);
+    totalValue += value;
+    return { ...p, livePrice, currentValue: value };
+  });
+  for (const p of enriched) {
+    p.pctOfBook = totalValue > 0 ? (p.currentValue / totalValue) * 100 : 0;
+  }
+
+  return { positions: enriched, closedTrades, watchlist, recentChats, totalValue, priceMap };
+}
+
+// POST /api/ai/deploy-cash
+// Generate 2-3 personalized cash-deployment options for the user, grounded
+// in their portfolio + thesis history + recent thinking. Logs the session
+// so the user choice can later be threaded back to an executed position.
+router.post('/deploy-cash', requireAuth, rateLimit(10), async (req, res) => {
+  try {
+    const plan = req.user.plan ?? 'free';
+    if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Deploy Cash recommendations require a paid plan' }); }
+
+    // Inputs
+    const amount = typeof req.body.amount === 'number' ? req.body.amount : parseFloat(req.body.amount);
+    if (!isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Valid amount required' });
+    if (amount > 10_000_000) return res.status(400).json({ error: 'Amount too large' });
+    const timeHorizon = VALID_TIME_HORIZONS.includes(req.body.time_horizon) ? req.body.time_horizon : null;
+    const goal = VALID_GOALS.includes(req.body.goal) ? req.body.goal : null;
+    // "Show me different angles" flag — the UI uses this when the user taps
+    // "Show alternatives" so the model knows not to repeat the previous take.
+    const seekVariety = req.body.seek_variety === true;
+    const previousTitles = Array.isArray(req.body.previous_titles)
+      ? req.body.previous_titles.map(t => String(t).slice(0, 100)).slice(0, 6)
+      : [];
+
+    // Tiny-amount guardrail — the model will still respond, but the system
+    // surfaces a clear note up front so the user knows DCA / accumulation
+    // is the better play here. We don't refuse; we educate.
+    const isTinyAmount = amount < DEPLOY_CASH_MIN_AMOUNT;
+
+    let newBalance;
+    try { newBalance = await deductCredits(req.user.id, DEPLOY_CASH_CREDIT_COST); }
+    catch (e) {
+      if (e.message === 'insufficient_credits') return res.status(402).json({ error: 'Not enough credits — upgrade your plan or buy more' });
+      throw e;
+    }
+
+    // Pull all of the user's context that matters for this decision.
+    const ctxData = await buildDeployCashContext(req.user.id, req.user);
+    const market = getMarketData();
+
+    // Concentration cap: 5% of TOTAL portfolio (existing + the new cash being deployed).
+    // Aggressive growth users can override.
+    const projectedPortfolio = ctxData.totalValue + amount;
+    const isAggressive = goal === 'grow_aggressively';
+    const concentrationCapDollars = isAggressive
+      ? Math.min(amount, projectedPortfolio * 0.15)  // looser cap for aggressive — 15%
+      : Math.min(amount, projectedPortfolio * (DEPLOY_CASH_CONCENTRATION_CAP_PCT / 100));
+
+    // Build the structured-data block for the prompt. We summarize hard so
+    // Sonnet stays focused on the strategic picks rather than re-deriving math.
+    const positionsLines = ctxData.positions.length
+      ? ctxData.positions.map(p => {
+          const thesisPart = p.entry_thesis ? ` · thesis: "${(p.entry_thesis || '').slice(0, 140)}"` : ' · no thesis written';
+          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}, ${p.pctOfBook.toFixed(1)}% of book${thesisPart}`;
+        }).join('\n')
+      : '  (no positions yet)';
+
+    const closedLines = ctxData.closedTrades.length
+      ? ctxData.closedTrades.slice(0, 5).map(t => {
+          const outcome = (t.pnl ?? 0) > 0 ? 'WIN' : (t.pnl ?? 0) < 0 ? 'LOSS' : 'EVEN';
+          const lesson = t.reflection_lesson ? ` · lesson: "${t.reflection_lesson.slice(0, 140)}"` : '';
+          return `  ${t.ticker} — ${outcome} ${(t.pnl ?? 0) >= 0 ? '+' : ''}$${(t.pnl ?? 0).toFixed(0)} (held ${t.hold_days ?? '?'}d, thesis ${t.thesis_played_out ?? '?'})${lesson}`;
+        }).join('\n')
+      : '  (none)';
+
+    const watchlistLines = ctxData.watchlist.length
+      ? ctxData.watchlist.map(w => {
+          const live = ctxData.priceMap[w.ticker]?.price;
+          const priceStr = live ? ` (current $${live.toFixed(2)})` : '';
+          return `  ${w.ticker}${priceStr}${w.notes ? ` — "${(w.notes).slice(0, 100)}"` : ''}`;
+        }).join('\n')
+      : '  (empty)';
+
+    // Live prices for tickers the model is likely to recommend but the user
+    // doesn't currently hold. Without this, the model invents prices.
+    const candidatePrices = Object.entries(ctxData.priceMap)
+      .filter(([t]) => !ctxData.positions.some(p => p.ticker === t))
+      .filter(([, v]) => v?.price)
+      .map(([t, v]) => `  ${t}: $${v.price.toFixed(2)}`)
+      .join('\n') || '  (none)';
+
+    const recentChatLines = ctxData.recentChats.length
+      ? ctxData.recentChats.slice(0, 5).map(m => `  "${m.content.slice(0, 160)}"`).join('\n')
+      : '  (no recent substantive conversations)';
+
+    const tickerSetForBan = new Set();
+    // For "show alternatives": ban repeating the prior titles' primary tickers.
+    for (const title of previousTitles) {
+      const match = title.match(/\b([A-Z]{1,5})\b/);
+      if (match) tickerSetForBan.add(match[1]);
+    }
+    const banLine = seekVariety && tickerSetForBan.size > 0
+      ? `\nDO NOT recommend any of these tickers — the user asked for different angles: ${[...tickerSetForBan].join(', ')}`
+      : '';
+
+    const tinyAmountNote = isTinyAmount
+      ? `\nSPECIAL CASE: amount is under $${DEPLOY_CASH_MIN_AMOUNT}. Lead with a friendly note that small amounts are best deployed by accumulating (e.g. setting recurring weekly DCA into VOO/VTI or a stock they already own) — don't recommend tiny single-share buys that get eaten by spread or feel pointless.`
+      : '';
+
+    const systemPrompt = `You are Outpost — the friend in someone's phone who actually knows finance. The user just told you they have $${amount.toFixed(0)} to put to work and asked what to do with it. Your job is to give them 2-3 specific, personalized options grounded in WHAT THEY ALREADY OWN and HOW THEY ALREADY THINK.
+
+THE THREE SHAPES — typically one of each, in this order when possible:
+1. ADD TO A POSITION they already hold and have written conviction about (favors positions with a thesis that's still tracking).
+2. START A NEW POSITION in something from their watchlist OR a ticker they've been discussing with you OR a name that fits the gap in their book.
+3. DEFENSIVE — DCA into a broad index (VOO, VTI, SCHD, BND depending on horizon). ALWAYS INCLUDE THIS UNLESS the user explicitly chose "grow_aggressively".
+
+If amount or context makes any shape silly (e.g. they have no positions yet → skip option 1), pick the next most useful angle.
+
+ACCOUNT-SIZE AWARENESS — this is non-negotiable:
+- For a $4,000 portfolio, $200 is a meaningful position. Say so plainly.
+- For a $40,000 portfolio, $200 is a starter. Say so plainly.
+- NO single new-idea allocation may exceed $${concentrationCapDollars.toFixed(0)} (the 5% concentration cap${isAggressive ? ' — relaxed to 15% because they chose aggressive growth' : ''}). If even the full amount busts the cap, recommend a partial allocation and explain why.
+- For "ADD TO A POSITION", the cap applies to the INCREMENTAL add, not the total resulting position size.
+
+AFFORDABILITY — also non-negotiable:
+- The total cost of any recommendation (estimated_cost) MUST be ≤ the user's available amount of $${amount.toFixed(2)}. They literally only have that much cash. Never recommend a $416 share buy when they have $50.
+- If a ticker's per-share price exceeds the amount, EITHER (a) recommend a fractional-share buy and SAY SO in action_summary ("Buy ~0.1 share at $416 — your broker needs to support fractional shares; Robinhood/Fidelity/Schwab do"), OR (b) pick a different ticker the user can actually afford a whole share of.
+- For small amounts (under ~$200), strongly prefer fractional shares of an index ETF (VOO, VTI) or adding fractionally to a position they already hold over starting a tiny new position that will get eaten by spread.
+- action_summary, reasoning, and estimated_cost MUST be internally consistent. If you say "buy 2 shares at $216" the math is 2 × 216 = $432, so estimated_cost must be 432 AND the amount must be ≥ 432. Never write "1 share at $416" with estimated_cost $318 — the user reads the action_summary, that's the contract.
+- NEVER invent prices. Every price you cite must come from the PORTFOLIO live prices, WATCHLIST live prices, or LIVE PRICES FOR NON-PORTFOLIO TICKERS sections. If a ticker has no live price provided, don't recommend it.
+
+VOICE:
+- Friend texting, not a Bloomberg analyst. Plain English. Short sentences.
+- Reference SPECIFIC tickers, theses, lessons from their data — never generic platitudes.
+- Honest about risk. If something is speculative, say it's speculative. Don't hype.
+- Reference past behavior when it's relevant: "Last time you held NVDA you noted X" or "You've been circling AAPL for a month."
+- Use FULL company names when natural ("Apple", "Microsoft"), not just tickers.
+
+OUTPUT — return ONLY valid JSON, no markdown fences:
+{
+  "market_context_note": "one short sentence on what the market is doing today, friend voice",
+  "options": [
+    {
+      "id": "opt_<shape>_<ticker>",       // unique within this response, e.g. "opt_add_AAPL"
+      "title": "Short imperative — 'Add to your AAPL position' / 'Start a small NVDA position' / 'Park it in VOO'",
+      "action_summary": "One concrete line: 'Buy ~2 shares at ~$215. Brings AAPL to 12% of your book.' Reference real numbers from the data.",
+      "reasoning": "3-4 short friend-voice sentences explaining WHY this fits, referencing their specific thesis/history/holdings.",
+      "risk_note": "One honest line on what could go wrong.",
+      "fit_note": "One line on why this fits THIS user specifically (their style, history, prior thinking).",
+      "ticker": "AAPL",
+      "estimated_shares": 2,
+      "estimated_cost": 432.80
+    }
+  ]
+}
+
+ABSOLUTE RULES:
+- Always 2-3 options. Never 1, never 4+.
+- NEVER invent positions or holdings the user doesn't have. Cross-check tickers against the PORTFOLIO and WATCHLIST sections.
+- NEVER invent past behavior. Reference only what's in CLOSED TRADES or RECENT CONVERSATIONS sections below.
+- estimated_shares and estimated_cost must be consistent with the current price provided and respect the concentration cap above.
+- NEVER use these words without immediate plain-language context: drawdown, basis points, alpha, beta, position sizing, capex, ROI, secular, headwinds, tailwinds, dollar-cost averaging (say "buying a little at a time" or "DCA" with the explanation inline).
+- Return ONLY the JSON object. No prose before or after.${banLine}${tinyAmountNote}`;
+
+    const userMsg = `AMOUNT TO DEPLOY: $${amount.toFixed(2)}
+TIME HORIZON: ${timeHorizon || 'not specified'}
+GOAL: ${goal || 'not specified'}
+
+USER PROFILE: ${req.user.trading_style ?? 'unspecified'} style, ${req.user.risk_tolerance ?? 'unspecified'} risk tolerance.
+
+CURRENT MARKET: VIX ${market.vix?.value ?? '—'} (${market.vix?.label ?? ''}), Fear & Greed ${market.fearGreed?.value ?? '—'} (${market.fearGreed?.label ?? ''}), Regime ${market.regime ?? '—'}.
+
+PORTFOLIO (total value $${ctxData.totalValue.toFixed(0)}):
+${positionsLines}
+
+CLOSED TRADES (most recent first):
+${closedLines}
+
+WATCHLIST:
+${watchlistLines}
+
+LIVE PRICES FOR NON-PORTFOLIO TICKERS YOU MIGHT RECOMMEND (use these — do not invent prices):
+${candidatePrices}
+
+RECENT SUBSTANTIVE CONVERSATIONS (last 30 days, user messages):
+${recentChatLines}
+
+Concentration cap for any single new-idea allocation: $${concentrationCapDollars.toFixed(0)} (${isAggressive ? '15%' : '5%'} of projected portfolio).
+
+Generate the JSON now.`;
+
+    let rawText;
+    try {
+      rawText = await claudeCall(systemPrompt, userMsg, 1800, { model: 'sonnet', cache: false });
+    } catch (aiErr) {
+      await refundCredits(req.user.id, DEPLOY_CASH_CREDIT_COST);
+      throw aiErr;
+    }
+
+    // Parse JSON robustly — strip any accidental code fences, find the first object.
+    let parsed;
+    try {
+      const cleaned = rawText.replace(/```json|```/g, '').trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('no JSON object in response');
+      parsed = JSON.parse(match[0]);
+    } catch (parseErr) {
+      console.error('[deploy-cash] JSON parse failed:', parseErr.message, 'raw:', rawText.slice(0, 300));
+      await refundCredits(req.user.id, DEPLOY_CASH_CREDIT_COST);
+      return res.status(502).json({ error: 'Could not generate recommendations — credits refunded. Please try again.' });
+    }
+
+    const options = Array.isArray(parsed.options) ? parsed.options.slice(0, 3) : [];
+    if (options.length === 0) {
+      await refundCredits(req.user.id, DEPLOY_CASH_CREDIT_COST);
+      return res.status(502).json({ error: 'No recommendations returned — credits refunded.' });
+    }
+
+    // Enforce the concentration cap defensively (model may slip) — clamp
+    // estimated_cost downward, recompute shares from current price when available.
+    for (const opt of options) {
+      const livePrice = opt.ticker && ctxData.priceMap[opt.ticker]?.price;
+      if (typeof opt.estimated_cost === 'number' && opt.estimated_cost > concentrationCapDollars) {
+        opt.estimated_cost = parseFloat(concentrationCapDollars.toFixed(2));
+        if (livePrice && livePrice > 0) {
+          opt.estimated_shares = Math.max(1, Math.floor(opt.estimated_cost / livePrice));
+        }
+      }
+    }
+
+    const marketNote = typeof parsed.market_context_note === 'string'
+      ? parsed.market_context_note.slice(0, 240)
+      : '';
+
+    // Persist the session so the Timeline + future check-ins can reference it.
+    let sessionId = null;
+    try {
+      const { data: inserted } = await supabase.from('deploy_cash_sessions').insert({
+        user_id: req.user.id,
+        amount, time_horizon: timeHorizon, goal,
+        options_shown: options,
+        market_context_note: marketNote,
+      }).select('id').single();
+      sessionId = inserted?.id ?? null;
+    } catch (logErr) {
+      console.error('[deploy-cash] session log failed:', logErr.message);
+      // Non-blocking — the user still gets their recommendations.
+    }
+
+    trackFeature('deploy_cash', req.user.id);
+    res.json({
+      session_id: sessionId,
+      market_context_note: marketNote,
+      options,
+      amount,
+      concentration_cap_dollars: parseFloat(concentrationCapDollars.toFixed(2)),
+      tiny_amount: isTinyAmount,
+      creditsUsed: DEPLOY_CASH_CREDIT_COST,
+      creditsRemaining: newBalance,
+      disclaimer: DISCLAIMER,
+    });
+  } catch (err) {
+    console.error('[AI/deploy-cash] failed:', err.message);
+    res.status(500).json({ error: 'Deploy Cash unavailable' });
+  }
+});
+
+// POST /api/ai/deploy-cash/counter
+// "Why not this?" — pushes back honestly on a specific option from a prior
+// session. Real counter-arguments, not soft hedges. 2 credits.
+router.post('/deploy-cash/counter', requireAuth, rateLimit(15), async (req, res) => {
+  try {
+    const plan = req.user.plan ?? 'free';
+    if (plan === 'free') { trackPlanGate(req.user.id); return res.status(403).json({ error: 'Deploy Cash requires a paid plan' }); }
+
+    const sessionId = typeof req.body.session_id === 'string' ? req.body.session_id : null;
+    const optionId = typeof req.body.option_id === 'string' ? req.body.option_id : null;
+    if (!sessionId || !optionId) return res.status(400).json({ error: 'session_id and option_id required' });
+
+    const { data: session } = await supabase.from('deploy_cash_sessions')
+      .select('amount,time_horizon,goal,options_shown')
+      .eq('id', sessionId).eq('user_id', req.user.id).maybeSingle();
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const option = (session.options_shown ?? []).find(o => o.id === optionId);
+    if (!option) return res.status(404).json({ error: 'Option not found in session' });
+
+    let newBalance;
+    try { newBalance = await deductCredits(req.user.id, DEPLOY_CASH_COUNTER_CREDIT_COST); }
+    catch (e) {
+      if (e.message === 'insufficient_credits') return res.status(402).json({ error: 'Not enough credits' });
+      throw e;
+    }
+
+    const systemPrompt = `You are Outpost — the friend in someone's phone who actually knows finance. The user is considering a specific recommendation you (or another version of you) made. They tapped "Why not this?" — they want HONEST PUSHBACK. Be the friend who says "wait, here's the case against this" without being a doomer.
+
+OUTPUT: 2-4 short sentences, plain prose, first person ("Here's the case against..." or "The honest pushback is..."), no headers, no bullets, no markdown.
+
+ABSOLUTE RULES:
+- Real counter-arguments, NOT soft hedges. Don't write "well, some might say" or "it depends". Be specific.
+- Tie counter-arguments to the user's actual situation when possible (their portfolio, their horizon, their goal).
+- Don't talk them OUT of investing in general — just lay out what could go wrong with THIS specific option.
+- Acknowledge the option's strongest point in one phrase before pushing back. Honest dialogue, not strawmanning.
+- NEVER use these without plain context: drawdown, basis points, capex, ROI, alpha, beta, secular.
+- ${PLAIN_TEXT_RULE}`;
+
+    const userMsg = `The user has $${(session.amount ?? 0).toFixed(0)} to deploy. Horizon: ${session.time_horizon || 'not specified'}. Goal: ${session.goal || 'not specified'}.
+
+THE OPTION THEY'RE QUESTIONING:
+Title: ${option.title || '(no title)'}
+Action: ${option.action_summary || '(no action)'}
+Reasoning given: ${option.reasoning || '(none)'}
+Risk note: ${option.risk_note || '(none)'}
+Fit note: ${option.fit_note || '(none)'}
+
+Push back honestly on this specific option. What's the real case against it?`;
+
+    const counter = await claudeCall(systemPrompt, userMsg, 400, { model: 'sonnet', cache: false });
+    res.json({
+      counter: counter.trim(),
+      creditsUsed: DEPLOY_CASH_COUNTER_CREDIT_COST,
+      creditsRemaining: newBalance,
+    });
+  } catch (err) {
+    console.error('[AI/deploy-cash/counter] failed:', err.message);
+    res.status(500).json({ error: 'Counter-argument unavailable' });
+  }
+});
+
+// POST /api/ai/deploy-cash/choice
+// Records which option the user picked + the executed position id (if any).
+// Used by the Add Position flow when the user confirms with "I'll do this".
+router.post('/deploy-cash/choice', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const sessionId = typeof req.body.session_id === 'string' ? req.body.session_id : null;
+    const optionId = typeof req.body.option_id === 'string' ? req.body.option_id : null;
+    if (!sessionId || !optionId) return res.status(400).json({ error: 'session_id and option_id required' });
+    const executedPositionId = typeof req.body.executed_position_id === 'string' ? req.body.executed_position_id : null;
+
+    const updates = { user_choice_id: optionId };
+    if (executedPositionId) updates.executed_position_id = executedPositionId;
+
+    const { error: updateErr } = await supabase.from('deploy_cash_sessions')
+      .update(updates)
+      .eq('id', sessionId)
+      .eq('user_id', req.user.id);
+    if (updateErr) return res.status(500).json({ error: 'Failed to record choice' });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[AI/deploy-cash/choice] failed:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PHASE 2 — THESIS & ACCOUNTABILITY LOOP
 // ═══════════════════════════════════════════════════════════════════════════
 

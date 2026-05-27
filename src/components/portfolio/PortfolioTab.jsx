@@ -717,8 +717,21 @@ function SkipThesisModal({ kind, onWrite, onSkip }) {
   );
 }
 
-function AddModal({ onClose, onDone, showToast }) {
-  const [form, setForm] = useState({
+function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
+  // Phase 4 — when opened via a Deploy Cash pick, prefill the form with
+  // the chosen recommendation's ticker/shares/cost/reasoning. The user can
+  // edit any field before saving.
+  const [form, setForm] = useState(() => prefill ? {
+    ticker: prefill.ticker || '',
+    companyName: prefill.companyName || '',
+    shares: prefill.shares || '',
+    avgCost: prefill.avgCost || '',
+    purchasedAt: '',
+    entryThesis: prefill.entryThesis || '',
+    reversalCondition: '',
+    priceTarget: '',
+    stopLoss: '',
+  } : {
     ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '',
     entryThesis: '', reversalCondition: '',
     priceTarget: '', stopLoss: '',
@@ -759,10 +772,23 @@ function AddModal({ onClose, onDone, showToast }) {
       if (form.reversalCondition.trim()) body.reversalCondition = form.reversalCondition.trim();
       if (form.priceTarget) body.priceTarget = parseFloat(form.priceTarget);
       if (form.stopLoss) body.stopLoss = parseFloat(form.stopLoss);
-      await api.portfolio.addPosition(body);
+      // Phase 4 — tag the position with where it came from so the Timeline
+      // can attribute it back to the Deploy Cash session that produced it.
+      if (prefill?.source) body.source = prefill.source;
+      const result = await api.portfolio.addPosition(body);
+      // Record the executed position back on the Deploy Cash session so future
+      // check-ins ("you deployed $X into Y — here's how it's tracking") work.
+      if (prefill?.sessionId && prefill?.optionId && result?.position?.id) {
+        api.ai.deployCashChoice({
+          session_id: prefill.sessionId,
+          option_id: prefill.optionId,
+          executed_position_id: result.position.id,
+        }).catch(() => {}); // non-blocking
+      }
       showToast(`${form.ticker.toUpperCase()} added to portfolio`, 'success');
       setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
+      onPrefillConsumed?.();
       onDone();
       onClose();
     } catch (e) { setError(e.error || 'Failed to add position'); setSaving(false); }
@@ -1991,8 +2017,12 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
 function PortfolioSubTab({ marketOpen, showToast }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
-  const [modal, setModal] = useState(null); // 'add' | 'import' | 'menu' | 'closed' | null
+  const [modal, setModal] = useState(null); // 'add' | 'import' | 'menu' | 'closed' | 'theses' | null
   const [showGrowth, setShowGrowth] = useState(false);
+  // Phase 4 — when the user picks a Deploy Cash recommendation, the Home
+  // card dispatches 'deploy_cash_pick' + switches to Portfolio. We catch
+  // the event here and open AddModal with the recommendation pre-filled.
+  const [addPrefill, setAddPrefill] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2001,6 +2031,36 @@ function PortfolioSubTab({ marketOpen, showToast }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Phase 4 deploy-cash pick handler — open AddModal pre-filled with the
+  // chosen recommendation's ticker, shares, cost, and reasoning (the bridge
+  // to Phase 2 thesis capture). Records the choice + executed position id
+  // back on the session via the choice endpoint after the user confirms.
+  useEffect(() => {
+    function onPick(e) {
+      const opt = e?.detail?.option;
+      const sessionId = e?.detail?.sessionId;
+      if (!opt?.ticker) return;
+      setAddPrefill({
+        ticker: opt.ticker,
+        companyName: opt.company_name || '',
+        shares: opt.estimated_shares != null ? String(opt.estimated_shares) : '',
+        avgCost: opt.ticker && opt.estimated_cost && opt.estimated_shares
+          ? (opt.estimated_cost / opt.estimated_shares).toFixed(2)
+          : '',
+        // The recommendation's reasoning becomes the user's starting thesis.
+        // They can edit, accept, or rewrite — friend-voice draft already done.
+        entryThesis: opt.reasoning || '',
+        // Source tag for Phase 4 attribution back to the session.
+        source: 'deploy_cash',
+        sessionId,
+        optionId: opt.id,
+      });
+      setModal('add');
+    }
+    window.addEventListener('deploy_cash_pick', onPick);
+    return () => window.removeEventListener('deploy_cash_pick', onPick);
+  }, []);
 
   const positions = data?.positions ?? [];
 
@@ -2106,7 +2166,15 @@ function PortfolioSubTab({ marketOpen, showToast }) {
           <GrowthChartInline showGrowth={showGrowth} setShowGrowth={setShowGrowth} />
         </>
       )}
-      {modal === 'add' && <AddModal onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
+      {modal === 'add' && (
+        <AddModal
+          onClose={() => { setModal(null); setAddPrefill(null); }}
+          onDone={load}
+          showToast={showToast}
+          prefill={addPrefill}
+          onPrefillConsumed={() => setAddPrefill(null)}
+        />
+      )}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
       {modal === 'menu' && (
         <PortfolioMenuDrawer

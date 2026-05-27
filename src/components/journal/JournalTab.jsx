@@ -400,6 +400,7 @@ const SOURCE_LABEL = {
   position_close: 'POSITION CLOSED',
   thesis: 'THESIS WRITTEN',
   journal: 'JOURNAL NOTE',
+  deploy_cash: 'DEPLOYED CASH',
 };
 const SOURCE_COLOR = {
   agent: '#a78bfa',          // soft violet — conversations
@@ -407,13 +408,15 @@ const SOURCE_COLOR = {
   position_close: 'var(--amber)',
   thesis: 'var(--blue)',
   journal: 'var(--muted)',
+  deploy_cash: '#38bdf8',    // soft cyan — deploy moments
 };
 
 const SOURCE_FILTER_OPTIONS = [
-  { id: 'all', label: 'ALL', sources: ['agent', 'position_open', 'position_close', 'thesis', 'journal'] },
+  { id: 'all', label: 'ALL', sources: ['agent', 'position_open', 'position_close', 'thesis', 'journal', 'deploy_cash'] },
   { id: 'positions', label: 'POSITIONS', sources: ['position_open', 'position_close', 'thesis'] },
   { id: 'chats', label: 'CHATS', sources: ['agent'] },
   { id: 'notes', label: 'NOTES', sources: ['journal'] },
+  { id: 'deploys', label: 'DEPLOYS', sources: ['deploy_cash'] },
 ];
 
 function TimelineView({ showToast }) {

@@ -34,7 +34,7 @@ router.get('/timeline', requireAuth, rateLimit(30), async (req, res) => {
     const dateFrom = req.query.date_from ? String(req.query.date_from).slice(0, 30) : undefined;
     const dateTo = req.query.date_to ? String(req.query.date_to).slice(0, 30) : undefined;
     const sourcesParam = req.query.sources ? String(req.query.sources) : undefined;
-    const allowedSources = ['agent', 'position_open', 'position_close', 'thesis', 'journal'];
+    const allowedSources = ['agent', 'position_open', 'position_close', 'thesis', 'journal', 'deploy_cash'];
     const sources = sourcesParam
       ? sourcesParam.split(',').map(s => s.trim()).filter(s => allowedSources.includes(s))
       : allowedSources;

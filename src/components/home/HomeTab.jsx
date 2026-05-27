@@ -8,6 +8,7 @@ import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard 
 import ActivationChecklist from './ActivationChecklist.jsx';
 import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
+import DeployCashFlow from './DeployCashFlow.jsx';
 // Removed cards superseded by TODAY (kept files for now, no longer imported here):
 //   - BargainRadarCard / SectorRadarCard / ConcentrationAlertCard / ProactiveDigestCard
 // All five surfaces those represented are now ranked into TODAY's 5-pick feed.
@@ -232,6 +233,11 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
               </p>
             </div>
           )}
+
+          {/* Phase 4: Deploy Cash — the recurring engagement moment. Sits
+              above everything else so it's the first thing the user sees
+              when they open the app with new money to put to work. */}
+          <DeployCashCard onTabSwitch={onTabSwitch} showToast={showToast} />
 
           {/* TODAY — Outpost's 5 ranked picks, always at the top of Home.
               Each row deep-links to its origin (portfolio, watchlist, etc.). */}
@@ -488,5 +494,99 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
         showToast={showToast}
       />
     </div>
+  );
+}
+
+/**
+ * Phase 4 — Home Deploy Cash card.
+ * Always visible (this is the recurring engagement moment). Tapping opens
+ * the full-screen DeployCashFlow. When the user picks an option, we dispatch
+ * a window event that PortfolioTab listens for to open AddModal with the
+ * recommendation pre-filled, then switch to the Portfolio tab.
+ *
+ * Adaptive copy: if the user has used the feature recently, the headline
+ * shifts from first-timer framing to recurring framing. We detect "recent
+ * use" by checking the timeline for a deploy_cash entry in the last 30 days.
+ */
+function DeployCashCard({ onTabSwitch, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [hasUsedRecently, setHasUsedRecently] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Light check — once the timeline aggregator surfaces deploy_cash, this
+    // returns >0 events. Until migration 015 is applied + timeline integration
+    // ships (step 18), this returns 0 and we just show first-timer copy.
+    const from = new Date(Date.now() - 30 * 86400000).toISOString();
+    api.journal.timeline({ sources: ['deploy_cash'], dateFrom: from, limit: 1 })
+      .then(d => { if (!cancelled) setHasUsedRecently((d?.events?.length ?? 0) > 0); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  function handlePick(opt, sessionId) {
+    // Record the choice (best-effort — non-blocking)
+    if (sessionId) {
+      api.ai.deployCashChoice({ session_id: sessionId, option_id: opt.id }).catch(() => {});
+    }
+    // Hand the option + session to PortfolioTab to open AddModal pre-filled.
+    window.dispatchEvent(new CustomEvent('deploy_cash_pick', { detail: { option: opt, sessionId } }));
+    setOpen(false);
+    onTabSwitch?.('portfolio');
+  }
+
+  function handleAgentFallback(amount, optionsShown) {
+    const titles = (optionsShown || []).map(o => o.title).join('; ');
+    const message = `I have $${amount} to invest. The recommendations Outpost gave me — ${titles} — didn't quite feel right because`;
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message } }));
+    setOpen(false);
+    onTabSwitch?.('agent');
+  }
+
+  const headline = hasUsedRecently
+    ? 'Same question — what do you want to do with new cash this month?'
+    : 'Tell Outpost what you have, get three personalized ways to put it to work.';
+
+  return (
+    <>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(59,130,246,0.10), rgba(168,85,247,0.06))',
+          border: '1px solid rgba(59,130,246,0.30)',
+          borderRadius: 10,
+          padding: '14px 16px',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div>
+            <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1.2px', marginBottom: 4 }}>
+              GOT CASH TO PUT TO WORK?
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>
+              {headline}
+            </p>
+          </div>
+          <button
+            onClick={() => setOpen(true)}
+            style={{
+              background: 'var(--blue)', color: '#fff', border: 'none',
+              borderRadius: 6, padding: '10px 16px', fontSize: 11,
+              fontWeight: 700, letterSpacing: '1px', cursor: 'pointer',
+              alignSelf: 'flex-start', fontFamily: 'inherit',
+            }}
+          >
+            DEPLOY IT →
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <DeployCashFlow
+          onClose={() => setOpen(false)}
+          onPickRecommendation={handlePick}
+          onOpenAgent={handleAgentFallback}
+          showToast={showToast}
+        />
+      )}
+    </>
   );
 }

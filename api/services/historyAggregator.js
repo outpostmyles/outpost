@@ -9,15 +9,16 @@
  *                                     own past writing back to them)
  *
  * Sources:
- *  - agent_messages   (substantive user messages, role='user', word count > 40)
- *  - closed_trades    (past positions with thesis + reflection + outcome)
- *  - positions        (active positions; theses surface as "thesis written" events)
- *  - journal_notes    (free-form notes, including saved bookmarks)
+ *  - agent_messages         (substantive user messages, word count > 40)
+ *  - closed_trades          (past positions with thesis + reflection + outcome)
+ *  - positions              (active positions; theses surface as separate events)
+ *  - journal_notes          (free-form notes, including saved bookmarks)
+ *  - deploy_cash_sessions   (Phase 4 — each session is a Timeline event)
  *
  * Entry shape (uniform across sources):
  *  {
  *    id:        unique within source ("agent:<msgId>")
- *    source:    'agent' | 'position_open' | 'position_close' | 'thesis' | 'journal'
+ *    source:    'agent' | 'position_open' | 'position_close' | 'thesis' | 'journal' | 'deploy_cash'
  *    date:      ISO timestamp (newest first when sorted)
  *    ticker:    string | null
  *    title:     short label for the entry, e.g. "Bought 5 AAPL @ $200"
@@ -316,6 +317,72 @@ async function fetchJournalNotes({ userId, ticker, dateFrom, dateTo, limit, know
 }
 
 /**
+ * Source: deploy_cash_sessions → one event per session.
+ * If the user picked an option, the title reflects the choice and the chosen
+ * option's reasoning becomes the quote. If they didn't pick, the title says
+ * "explored deployment options" and the quote shows the first option's idea.
+ */
+async function fetchDeployCashSessions({ userId, ticker, dateFrom, dateTo, limit }) {
+  let q = supabase.from('deploy_cash_sessions')
+    .select('id,amount,time_horizon,goal,options_shown,user_choice_id,executed_position_id,market_context_note,created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(Math.min(limit ?? DEFAULT_LIMIT, HARD_CAP_PER_SOURCE));
+  if (dateFrom) q = q.gte('created_at', dateFrom);
+  if (dateTo) q = q.lte('created_at', dateTo);
+  let data;
+  try {
+    ({ data } = await q);
+  } catch {
+    // Table may not exist yet (migration 015 not applied) — degrade silently.
+    return [];
+  }
+  if (!data) return [];
+
+  const out = [];
+  for (const s of data) {
+    const opts = Array.isArray(s.options_shown) ? s.options_shown : [];
+    const chosen = s.user_choice_id ? opts.find(o => o.id === s.user_choice_id) : null;
+    const featured = chosen || opts[0] || null;
+
+    // Ticker filter — match against the chosen option's ticker or any option's ticker
+    if (ticker) {
+      const mentionedTickers = opts.map(o => o?.ticker).filter(Boolean);
+      if (!mentionedTickers.includes(ticker)) continue;
+    }
+
+    const title = chosen
+      ? `Deployed $${(s.amount ?? 0).toFixed(0)} — chose: ${chosen.title || 'unnamed option'}`
+      : `Explored options for $${(s.amount ?? 0).toFixed(0)} of cash`;
+    const excerpt = featured?.action_summary || featured?.title || `${opts.length} options generated`;
+    const quote = featured?.reasoning || null;
+
+    out.push({
+      id: `deploy_cash:${s.id}`,
+      source: 'deploy_cash',
+      date: s.created_at,
+      ticker: chosen?.ticker || null,
+      title,
+      excerpt: truncate(excerpt, 220),
+      quote: quote ? truncate(quote, 400) : null,
+      outcome: null,
+      pnl: null,
+      holdDays: null,
+      meta: {
+        amount: s.amount,
+        timeHorizon: s.time_horizon,
+        goal: s.goal,
+        optionCount: opts.length,
+        chosenTicker: chosen?.ticker || null,
+        executedPositionId: s.executed_position_id,
+        wasExecuted: !!s.executed_position_id,
+      },
+    });
+  }
+  return out;
+}
+
+/**
  * Top-level aggregator. Returns events sorted newest first.
  *
  * options: {
@@ -324,7 +391,7 @@ async function fetchJournalNotes({ userId, ticker, dateFrom, dateTo, limit, know
  *   topic?:     free-text substring across title/excerpt/quote
  *   dateFrom?:  ISO
  *   dateTo?:    ISO
- *   sources?:   array of any of ['agent','position_open','position_close','thesis','journal']
+ *   sources?:   array of any of ['agent','position_open','position_close','thesis','journal','deploy_cash']
  *               default = all
  *   limit?:     hard cap on the returned list, default 30
  * }
@@ -332,7 +399,7 @@ async function fetchJournalNotes({ userId, ticker, dateFrom, dateTo, limit, know
 export async function getUserHistory(options) {
   const {
     userId, ticker, topic, dateFrom, dateTo,
-    sources = ['agent', 'position_open', 'position_close', 'thesis', 'journal'],
+    sources = ['agent', 'position_open', 'position_close', 'thesis', 'journal', 'deploy_cash'],
     limit = DEFAULT_LIMIT,
   } = options;
   if (!userId) throw new Error('userId required');
@@ -354,6 +421,9 @@ export async function getUserHistory(options) {
   else tasks.push(Promise.resolve([]));
 
   if (sources.includes('journal')) tasks.push(fetchJournalNotes({ userId, ticker, dateFrom, dateTo, limit: perSourceLimit, knownTickers }));
+  else tasks.push(Promise.resolve([]));
+
+  if (sources.includes('deploy_cash')) tasks.push(fetchDeployCashSessions({ userId, ticker, dateFrom, dateTo, limit: perSourceLimit }));
   else tasks.push(Promise.resolve([]));
 
   const results = await Promise.all(tasks);
