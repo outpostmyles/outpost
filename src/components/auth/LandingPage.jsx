@@ -58,6 +58,92 @@ function FeatureBlock({ label, title, body }) {
   );
 }
 
+// PulseMockup. A CSS-only preview of the Pulse card the user sees inside the
+// app. Lives on the landing page between the hero and the feature blocks so
+// visitors get a "show, don't tell" moment before reading any feature copy.
+// Keeps the terminal aesthetic (mono-feel header, blue dot, muted body) so it
+// looks like a real screenshot of the product, not stock marketing imagery.
+function PulseMockup() {
+  return (
+    <div style={{
+      background: 'linear-gradient(180deg, #0e0e14, #08080c)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: '22px 18px 18px',
+      maxWidth: 360,
+      margin: '0 auto',
+      boxShadow: '0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(59,130,246,0.05)',
+    }}>
+      {/* Fake phone frame top bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, opacity: 0.45 }}>
+        <span style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '1px', fontWeight: 700 }}>TERMINAL</span>
+        <span style={{ fontSize: 8, color: 'var(--faint)' }}>9:32 AM</span>
+      </div>
+      {/* The Pulse card itself, rendered exactly like in the app */}
+      <div style={{
+        background: 'linear-gradient(180deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02))',
+        border: '1px solid rgba(59,130,246,0.18)',
+        borderRadius: 10,
+        padding: '14px 15px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)',
+            animation: 'lpDot 2s ease-in-out infinite',
+          }} />
+          <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '1.3px', fontWeight: 700 }}>OUTPOST</p>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, letterSpacing: '-0.1px', margin: 0 }}>
+          NVDA pulled back 3% on Nvidia conference noise. That's the kind of dip you said scared you, but you're still up 18% from your cost. Earnings aren't until Aug 28.
+        </p>
+        <style>{`@keyframes lpDot { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+      </div>
+      {/* Caption under the card */}
+      <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginTop: 14, lineHeight: 1.5, fontStyle: 'italic' }}>
+        What you see when you open Outpost. Personal, calm, specific. Pulled from your own answers and your live book.
+      </p>
+    </div>
+  );
+}
+
+// SplitCompare. "Without Outpost / With Outpost" side-by-side, two short
+// stories of the same moment. Designed to read like a tweet thread, not a
+// feature grid. Keeps the page from feeling like a wall of paragraphs.
+function SplitCompare() {
+  const cellBase = {
+    padding: '20px 18px',
+    borderRadius: 8,
+    fontSize: 13,
+    lineHeight: 1.6,
+  };
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+      <div style={{
+        ...cellBase,
+        background: 'rgba(239,68,68,0.04)',
+        border: '1px solid rgba(239,68,68,0.15)',
+        borderLeft: '2px solid var(--red)',
+      }}>
+        <p style={{ fontSize: 9, color: 'var(--red)', fontWeight: 700, letterSpacing: '1.2px', marginBottom: 8 }}>WITHOUT OUTPOST</p>
+        <p style={{ color: 'var(--muted)', margin: 0 }}>
+          NVDA drops 6%. You panic. You sell. You watch it run 22% the next month without you. Next time you buy NVDA you don't remember why you sold the last one. You make the same call again.
+        </p>
+      </div>
+      <div style={{
+        ...cellBase,
+        background: 'rgba(34,197,94,0.04)',
+        border: '1px solid rgba(34,197,94,0.18)',
+        borderLeft: '2px solid var(--green)',
+      }}>
+        <p style={{ fontSize: 9, color: 'var(--green)', fontWeight: 700, letterSpacing: '1.2px', marginBottom: 8 }}>WITH OUTPOST</p>
+        <p style={{ color: 'var(--muted)', margin: 0 }}>
+          NVDA drops 6%. Outpost shows you the thesis you wrote 90 days ago, before the dip. "I'm buying for the AI capex story. Will exit if Q3 capex commentary softens." Capex commentary hasn't softened. You hold. NVDA runs 22%. You're still in.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function LandingPage({ onGetStarted, onOpenGuide }) {
   return (
     <div style={{
@@ -122,7 +208,7 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
             maxWidth: 560,
             marginBottom: 32,
           }}>
-            Outpost asks why you bought it. Writes down what you said. Quotes you back to yourself the next time you're about to break your own plan. No human advisor, no Reddit thread, and no general-purpose chatbot does that — because they don't know you, and they don't remember.
+            Outpost asks why you bought it. Writes down what you said. Quotes you back to yourself the next time you're about to break your own plan. No human advisor does that for under $50K. No Reddit thread does it at all. ChatGPT forgets you tomorrow.
           </p>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <PrimaryButton onClick={onGetStarted}>Get started, free</PrimaryButton>
@@ -136,6 +222,17 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
           <p style={{ fontSize: 11, color: 'var(--faint)', marginTop: 20 }}>
             No credit card. Free tier covers your first portfolio.
           </p>
+        </div>
+      </div>
+
+      {/* Product mockup. Shows what the actual Pulse card looks like inside
+          the app so visitors get a "show, don't tell" moment before reading
+          any feature copy. Lives between the hero and the WHY THIS EXISTS
+          section. */}
+      <div style={{ padding: '40px 24px 56px', borderTop: '1px solid var(--border)' }}>
+        <div style={wrap}>
+          <p style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 700, letterSpacing: '2px', marginBottom: 18, textAlign: 'center' }}>WHAT YOU OPEN TO</p>
+          <PulseMockup />
         </div>
       </div>
 
@@ -158,38 +255,56 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
         </div>
       </div>
 
-      {/* What Outpost is */}
+      {/* Without / With Outpost. A two-story split. Reads like a tweet
+          thread, not a feature grid. Concrete, specific, emotionally honest
+          about the loop the app is built to break. */}
+      <div style={{ padding: SECTION_PAD, borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.01)' }}>
+        <div style={wrap}>
+          <p style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 700, letterSpacing: '2px', marginBottom: 14 }}>SAME MOMENT, TWO ENDINGS</p>
+          <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', marginBottom: 22, letterSpacing: '-0.5px', lineHeight: 1.2 }}>
+            The expensive habit retail has.
+          </h2>
+          <SplitCompare />
+          <p style={{ fontSize: 12, color: 'var(--faint)', marginTop: 18, lineHeight: 1.55 }}>
+            Outpost doesn't pick stocks. It makes sure the work you already do shows up at the moment you need it most.
+          </p>
+        </div>
+      </div>
+
+      {/* What Outpost is. Re-cut to lead with the actual differentiators:
+          memory, the thesis loop, deploy cash. The original five-jobs lineup
+          was accurate but undersold the parts no other app does. */}
       <div style={{ padding: SECTION_PAD, borderTop: '1px solid var(--border)' }}>
         <div style={wrap}>
           <p style={{ fontSize: 10, color: 'var(--blue)', fontWeight: 700, letterSpacing: '2px', marginBottom: 14 }}>WHAT IT DOES</p>
           <h2 style={{ fontSize: 28, fontWeight: 700, color: 'var(--text)', marginBottom: 24, letterSpacing: '-0.5px', lineHeight: 1.2 }}>
-            One app. Five jobs. Done daily.
+            One app. The five things that move the needle.
           </h2>
 
           <FeatureBlock
-            label="READS ON YOUR BOOK"
-            title="Tap any position. Get a calm read in 30 seconds."
-            body="Tuned to your specific situation. Calm during noise. Sharp when something is actually broken. Not a hype trader. Not a doomer. The voice you want when something feels off."
+            label="THE MEMORY"
+            title="Quotes your own words back to you when it matters."
+            body="Every thesis you write, every reflection you log, every conversation you have with the agent. All of it stays. When you ask about a ticker you traded last year, Outpost reads you what you said back then. So the same lesson doesn't have to be learned twice."
           />
           <FeatureBlock
-            label="MORNING BRIEF"
-            title="Pre-market context. Tailored to your book."
-            body="Every weekday before open, Outpost reads the tape and writes you a brief. The market regime. What it means for your specific positions. One thing to watch today. Yours, not generic."
+            label="THE THESIS LOOP"
+            title="You write why you bought it. We ask about it later."
+            body="On add, Outpost asks why this trade. On close, Outpost asks what played out and what you learned. Over time, your Patterns tab shows your win rate WITH a thesis versus WITHOUT. Most retail traders never see that delta. Yours becomes visible."
           />
           <FeatureBlock
-            label="DAILY CATALYSTS"
-            title="What's worth knowing today. Without the doom-scroll."
-            body="Three timed drops a day. Real catalysts. Earnings setups, breaking news, analyst upgrades, with a strength rating. Curated by AI from breaking sources, not a feed you have to wade through."
+            label="THE DAILY READ"
+            title="A pulse line on open. A real brief at 7:30am."
+            body="Open the app. One sentence at the top tells you what's notable in your book right now. Paid users also get a 3-sentence pre-market brief every weekday, tuned to your style, your risk, your specific positions. Personal, not generic."
+          />
+          <FeatureBlock
+            label="DEPLOY CASH"
+            title="Got cash sitting. Tell us your filters."
+            body="Aggressive or conservative. Income or growth. Timeframe. Outpost pulls 3 picks that fit YOUR book, not a generic top-stocks list. Server-side concentration caps mean it won't suggest dumping 30% of your portfolio into one name even if you ask aggressive."
           />
           <FeatureBlock
             label="PLAN ACCOUNTABILITY"
             title="You set the target and stop. We hold you to them."
-            body="Write down what you'll do at $X up and $Y down. When the price gets there, Outpost reminds you what you said. Built to fight the most expensive habit retail has: abandoning your own plan in the moment."
-          />
-          <FeatureBlock
-            label="DISCOVERY"
-            title="Find your next position without drowning in a feed."
-            body="Bargain Radar surfaces oversold stocks with intact fundamentals. Sector heat shows where money is rotating. Trending picks pulled from real signals. The picks come to you."
+            body="Write down what you'll do at $X up and $Y down. When the price gets there, Outpost reminds you what you said. Pre-trade gut-checks ask one sharp question rooted in your history before you add the position. Three timed catalyst drops a day so you're not doom-scrolling for news."
           />
         </div>
       </div>
@@ -243,8 +358,10 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
               <p style={{ fontSize: 28, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>$0</p>
               <p style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 14 }}>Try it. See if it fits.</p>
               <ul style={{ paddingLeft: 16, color: 'var(--muted)', fontSize: 12, lineHeight: 1.7, margin: 0 }}>
+                <li>Daily Pulse on open</li>
                 <li>Up to 10 positions</li>
-                <li>Daily AI reads (limited)</li>
+                <li>Thesis loop and Patterns view</li>
+                <li>AI reads on positions (limited)</li>
                 <li>Catalysts and sector heat</li>
                 <li>Trade plan tracking</li>
               </ul>
@@ -257,9 +374,10 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
               <ul style={{ paddingLeft: 16, color: 'var(--muted)', fontSize: 12, lineHeight: 1.7, margin: 0 }}>
                 <li>Unlimited positions</li>
                 <li>Unlimited AI reads</li>
-                <li>Daily morning brief</li>
+                <li>Daily pre-market brief at 7:30am</li>
+                <li>Deploy Cash recommendations</li>
                 <li>Weekly recap email</li>
-                <li>Deep analysis</li>
+                <li>Deep analysis on any position</li>
                 <li>Priority support</li>
               </ul>
             </div>

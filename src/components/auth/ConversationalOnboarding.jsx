@@ -74,8 +74,8 @@ export default function ConversationalOnboarding() {
         // Network blip — fall back to hardcoded copy so we never get stuck.
         if (!cancelled) {
           setQuestions([
-            { idx: 0, prompt: 'What made you start investing?', placeholder: 'A story, a goal, just curiosity — whatever\'s true.', minWords: 3 },
-            { idx: 1, prompt: 'What\'s a stock you wish you\'d bought — and what stopped you?', placeholder: 'The "what stopped you" part is the useful one.', minWords: 3 },
+            { idx: 0, prompt: 'What made you start investing?', placeholder: 'A story, a goal, just curiosity. Whatever\'s true.', minWords: 3 },
+            { idx: 1, prompt: 'What\'s a stock you wish you\'d bought, and what stopped you?', placeholder: 'The "what stopped you" part is the useful one.', minWords: 3 },
             { idx: 2, prompt: 'What scares you most about the market right now?', placeholder: 'A specific worry beats a generic one.', minWords: 3 },
           ]);
         }
@@ -100,7 +100,7 @@ export default function ConversationalOnboarding() {
     if (!q) return;
     const trimmed = answer.trim();
     if (wordCount(trimmed) < (q.minWords ?? 3)) {
-      setError(`Give us a bit more — at least ${q.minWords ?? 3} words. The depth is the point.`);
+      setError(`Give us a bit more. At least ${q.minWords ?? 3} words. The depth is the point.`);
       return;
     }
     setSubmitting(true);
@@ -118,7 +118,7 @@ export default function ConversationalOnboarding() {
       }
     } catch (err) {
       setSubmitting(false);
-      setError(err?.error || 'Could not save — try again in a moment.');
+      setError(err?.error || 'Could not save. Try again in a moment.');
     }
   }
 
@@ -149,7 +149,7 @@ export default function ConversationalOnboarding() {
       setWelcomeMsg(res?.message || '');
       setWelcomeVariant(res?.variant || null);
     } catch {
-      setWelcomeMsg("Welcome aboard. I'll get to know your style as we go — when you're ready, drop in a position or ask me anything about the market.");
+      setWelcomeMsg("Welcome aboard. I'll get to know your style as we go. When you're ready, drop in a position or ask me anything about the market.");
     } finally {
       setWelcomeLoading(false);
     }
@@ -179,7 +179,7 @@ export default function ConversationalOnboarding() {
         risk_tolerance: prefs.risk,
       });
     } catch {
-      setError('Could not finish — check your connection and try again.');
+      setError('Could not finish. Check your connection and try again.');
       setSubmitting(false);
     }
   }
@@ -199,7 +199,7 @@ export default function ConversationalOnboarding() {
       });
       updateUser({ onboarding_complete: true, trading_style: prefs.style, risk_tolerance: prefs.risk });
     } catch {
-      setError('Could not skip — check your connection and try again.');
+      setError('Could not skip. Check your connection and try again.');
       setSubmitting(false);
     }
   }
@@ -228,7 +228,7 @@ export default function ConversationalOnboarding() {
         <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 8 }}>Before we start</p>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 10, letterSpacing: '-0.3px' }}>Three questions, ninety seconds.</h1>
         <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 6 }}>
-          Outpost works best when it knows a little about you — not the form-fields kind of stuff, the real stuff.
+          Outpost works best when it knows a little about you. Not the form-fields kind of stuff. The real stuff.
         </p>
         <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 28 }}>
           What we ask now, we'll remember forever. Quote you back to yourself in 6 months. No one else gets to do that.
@@ -237,7 +237,7 @@ export default function ConversationalOnboarding() {
           {questions.length === 0 ? 'Loading…' : 'Begin'}
         </button>
         <button onClick={skipAll} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
-          {submitting ? 'Skipping…' : 'Skip — let me just add a position'}
+          {submitting ? 'Skipping…' : 'Skip, just take me to the app'}
         </button>
         {error && <p style={{ fontSize: 11, color: 'var(--red)', textAlign: 'center', paddingTop: 8 }}>{error}</p>}
       </Shell>
@@ -285,7 +285,7 @@ export default function ConversationalOnboarding() {
           {submitting ? 'Saving…' : questionIdx + 1 < questions.length ? 'Next question' : 'Continue'}
         </button>
         <button onClick={skipAll} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
-          Skip — open the app
+          Skip, open the app
         </button>
       </Shell>
     );
@@ -357,7 +357,7 @@ export default function ConversationalOnboarding() {
           {submitting ? 'Saving…' : 'Continue'}
         </button>
         <button onClick={() => { setPrefs({ style: 'swing', risk: 'moderate', assets: ['stocks'] }); savePrefsAndGoToWelcome(); }} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
-          Skip — use defaults
+          Skip, use defaults
         </button>
       </Shell>
     );
@@ -391,7 +391,7 @@ export default function ConversationalOnboarding() {
         </div>
       )}
       {welcomeRated && (
-        <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginBottom: 14 }}>Thanks — that helps us tune your AI.</p>
+        <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginBottom: 14 }}>Thanks. That helps us tune your AI.</p>
       )}
 
       {error && <p style={{ fontSize: 11, color: 'var(--red)', textAlign: 'center', paddingBottom: 8 }}>{error}</p>}

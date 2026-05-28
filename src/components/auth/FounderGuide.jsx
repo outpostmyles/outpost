@@ -100,7 +100,7 @@ export default function FounderGuide({ onBack, onGetStarted }) {
       {/* Why I built it */}
       <Section eyebrow="WHY I BUILT IT" heading="It's the tool I needed.">
         <P lead>
-          There's one trade in every retail trader's history they wish they hadn't made. Not the bad pick — the bad reaction. Sold on a 6% dip because the chat group was panicking. Held something broken because admitting it was hard. Bought a top because the narrative was loud and they never wrote down what would change their mind.
+          There's one trade in every retail trader's history they wish they hadn't made. Not the bad pick. The bad reaction. Sold on a 6% dip because the chat group was panicking. Held something broken because admitting it was hard. Bought a top because the narrative was loud and they never wrote down what would change their mind.
         </P>
         <P>
           I've made all three. Outpost is the partner I built so I make fewer of them.
@@ -112,7 +112,7 @@ export default function FounderGuide({ onBack, onGetStarted }) {
           The wealthy don't have this problem. They have advisors. Someone who knows the full picture. Calms them when things get scary. Points out the stuff they missed. That kind of help costs 1% of your portfolio per year. On a smaller book the math doesn't work.
         </P>
         <P>
-          Outpost is the version of that help that does work. Built for the little guy. Built by someone running the same kind of book — and making the same mistakes.
+          Outpost is the version of that help that does work. Built for the little guy. Built by someone running the same kind of book, and making the same mistakes.
         </P>
       </Section>
 

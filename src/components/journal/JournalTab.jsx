@@ -211,10 +211,10 @@ function PatternsView() {
         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Not enough data yet</h2>
         <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, maxWidth: 320, margin: '0 auto 16px' }}>
           We need at least {data?.minRequired ?? 5} closed trades before we can show real patterns.
-          {data?.totalTrades > 0 ? ` You're at ${data.totalTrades} — ${need} more to go.` : ' Add a position, write a thesis, and we\'ll start the count when you close it.'}
+          {data?.totalTrades > 0 ? ` You're at ${data.totalTrades}. ${need} more to go.` : ' Add a position, write a thesis, and we\'ll start the count when you close it.'}
         </p>
         <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.55, maxWidth: 320, margin: '0 auto' }}>
-          Once you have the data, this view will show your win rate cut by behavior — thesis vs no thesis, stop set vs not, reflection logged vs not. So you can see what's actually working.
+          Once you have the data, this view will show your win rate cut by behavior. Thesis vs no thesis, stop set vs not, reflection logged vs not. So you can see what's actually working.
         </p>
       </div>
     );
