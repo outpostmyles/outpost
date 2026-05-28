@@ -113,6 +113,19 @@ export const api = {
     performanceAttribution: () => get('/api/portfolio/performance-attribution'),
     synthesis: (force = false) => get(`/api/portfolio/synthesis${force ? '?force=true' : ''}`),
     history: (ticker, limit) => get(`/api/portfolio/history/${ticker}${limit ? `?limit=${limit}` : ''}`),
+    // Pre-trade sanity check — one sharp question grounded in the user's
+    // history with this ticker. Surfaced in AddModal above the thesis field.
+    gutCheck: (ticker) => post('/api/portfolio/positions/gut-check', { ticker }),
+    // Behavior-outcome attribution — win rate by thesis/stop/target/reflection.
+    // Shows "Your Patterns" card on the Journal tab.
+    attribution: () => get('/api/portfolio/attribution'),
+  },
+  // Conversational onboarding — 3 questions that anchor the user's identity
+  // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').
+  onboarding: {
+    questions: () => get('/api/onboarding/questions'),
+    answer: (body) => post('/api/onboarding/answer', body),
+    anchors: () => get('/api/onboarding/anchors'),
   },
   alerts: {
     list: () => get('/api/alerts'),

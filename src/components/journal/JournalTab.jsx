@@ -95,6 +95,7 @@ export default function JournalTab({ showToast }) {
         {[
           { id: 'notes', label: 'NOTES' },
           { id: 'timeline', label: 'TIMELINE' },
+          { id: 'patterns', label: 'PATTERNS' },
         ].map(t => (
           <button
             key={t.id}
@@ -161,9 +162,145 @@ export default function JournalTab({ showToast }) {
             )}
           </div>
         </>
-      ) : (
+      ) : subTab === 'timeline' ? (
         <TimelineView showToast={showToast} />
+      ) : (
+        <PatternsView />
       )}
+    </div>
+  );
+}
+
+// ============ PATTERNS VIEW ============
+// Behavior-outcome attribution. Shows the user's win rate cut by behavior:
+// did you write a thesis, did you set a stop, did you log a reflection on
+// close. The whole point is to make the framework MEASURABLE — the user can
+// see "my win rate is X% with a thesis vs Y% without" and decide for themselves
+// whether the discipline is paying off. Sub-5-trades shows an empty state
+// telling them to come back when they have more data.
+function PatternsView() {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.portfolio.attribution()
+      .then(d => { if (!cancelled) { setData(d); setError(''); } })
+      .catch(e => { if (!cancelled) setError(e?.error || 'Could not load patterns'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return <div style={{ flex: 1, display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>;
+  }
+  if (error) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <p style={{ fontSize: 12, color: 'var(--red)' }}>{error}</p>
+      </div>
+    );
+  }
+  if (!data?.ready) {
+    const need = (data?.minRequired ?? 5) - (data?.totalTrades ?? 0);
+    return (
+      <div style={{ padding: '32px 20px', textAlign: 'center', flex: 1 }}>
+        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 10 }}>Patterns</p>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Not enough data yet</h2>
+        <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, maxWidth: 320, margin: '0 auto 16px' }}>
+          We need at least {data?.minRequired ?? 5} closed trades before we can show real patterns.
+          {data?.totalTrades > 0 ? ` You're at ${data.totalTrades} — ${need} more to go.` : ' Add a position, write a thesis, and we\'ll start the count when you close it.'}
+        </p>
+        <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.55, maxWidth: 320, margin: '0 auto' }}>
+          Once you have the data, this view will show your win rate cut by behavior — thesis vs no thesis, stop set vs not, reflection logged vs not. So you can see what's actually working.
+        </p>
+      </div>
+    );
+  }
+
+  const { patterns, totalTrades } = data;
+  const rows = [
+    { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
+    { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
+    { key: 'priceTarget', label: 'Set a price target', explainer: 'You knew where you\'d take profits before you bought.' },
+    { key: 'reflection', label: 'Logged a reflection on close', explainer: 'You wrote what played out or what you learned.' },
+  ];
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px' }}>
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 4 }}>Your patterns</p>
+        <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55 }}>
+          Across your {totalTrades} closed trades. The number on the right is your win rate WITH each behavior vs WITHOUT it.
+        </p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map(r => (
+          <PatternRow key={r.key} row={r} pattern={patterns[r.key]} />
+        ))}
+      </div>
+
+      <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 22, lineHeight: 1.55, letterSpacing: '0.3px' }}>
+        Small samples are noisy. Patterns matter most after 20+ closed trades.
+      </p>
+    </div>
+  );
+}
+
+function PatternRow({ row, pattern }) {
+  const w = pattern?.with;
+  const wo = pattern?.without;
+  const lift = pattern?.lift;
+
+  // Color the lift: green = doing this helps you, red = doing this hurts,
+  // neutral = no signal yet. Lift null when one side has <3 trades.
+  const liftColor = lift == null ? 'var(--faint)'
+    : lift > 0 ? 'var(--green)'
+    : lift < 0 ? 'var(--red)'
+    : 'var(--muted)';
+  const liftText = lift == null
+    ? 'Need more data'
+    : lift > 0 ? `+${lift.toFixed(1)}pp win rate`
+    : lift < 0 ? `${lift.toFixed(1)}pp win rate`
+    : 'No measurable lift';
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 14px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+        <p style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600 }}>{row.label}</p>
+        <p style={{ fontSize: 11, color: liftColor, fontWeight: 700, whiteSpace: 'nowrap' }}>{liftText}</p>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, lineHeight: 1.55 }}>{row.explainer}</p>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <SplitBox label="With" agg={w} accent />
+        <SplitBox label="Without" agg={wo} />
+      </div>
+    </div>
+  );
+}
+
+function SplitBox({ label, agg, accent }) {
+  const count = agg?.count ?? 0;
+  const wr = agg?.winRate;
+  const pnl = agg?.avgPnlPercent;
+  return (
+    <div style={{
+      flex: 1,
+      background: accent ? 'rgba(59,130,246,0.08)' : 'var(--raised)',
+      border: `1px solid ${accent ? 'rgba(59,130,246,0.3)' : 'var(--border)'}`,
+      borderRadius: 6, padding: '8px 10px',
+    }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 4 }}>{label}</p>
+      <p style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700, marginBottom: 2 }}>
+        {wr != null ? `${wr.toFixed(0)}%` : '—'}
+      </p>
+      <p style={{ fontSize: 9, color: 'var(--muted)' }}>
+        {count} trade{count === 1 ? '' : 's'}
+        {pnl != null && count > 0 ? ` · avg ${pnl > 0 ? '+' : ''}${pnl.toFixed(1)}%` : ''}
+      </p>
     </div>
   );
 }

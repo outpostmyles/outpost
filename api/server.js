@@ -19,6 +19,8 @@ import todayRoutes from './functions/today.js';
 import journalRoutes from './functions/journal.js';
 import alertsRoutes from './functions/alerts.js';
 import adminRoutes from './functions/admin.js';
+import onboardingRoutes from './functions/onboarding.js';
+import attributionRoutes from './functions/attribution.js';
 import { config } from './config.js';
 import { initMarketDataService, getMarketData } from './services/marketData.js';
 import { initPricePool, poolStats } from './services/pricePool.js';
@@ -83,6 +85,8 @@ app.use('/api/ai/today', todayRoutes);
 app.use('/api/journal', journalRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/portfolio/attribution', attributionRoutes);
 
 // ============ HEALTH & MONITORING ============
 

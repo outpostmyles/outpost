@@ -138,17 +138,44 @@ router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req,
 
   const market = getMarketData();
 
+  // Pull conversational onboarding anchors. These are the user's own words
+  // from the 3 onboarding questions ("what made you start investing", etc).
+  // The welcome message quotes one back to them — the "you've been heard"
+  // moment. Stored as memory_type='onboarding_anchor' with content format
+  // "Qn: <question> | A: <answer>". Best-effort; falls back to anchor-less
+  // welcome on read failure.
+  let anchors = [];
+  try {
+    const { data } = await supabase
+      .from('agent_memory')
+      .select('content')
+      .eq('user_id', req.user.id)
+      .eq('memory_type', 'onboarding_anchor')
+      .order('created_at', { ascending: true });
+    anchors = (data ?? []).map(row => {
+      const m = row.content?.match(/^Q\d+:\s*(.+?)\s*\|\s*A:\s*([\s\S]+)$/);
+      return m ? { question: m[1].trim(), answer: m[2].trim() } : null;
+    }).filter(Boolean);
+  } catch (err) {
+    console.warn('[AI/welcome] Could not load anchors, falling back:', err.message);
+  }
+
   // A/B variant — sticky per user. Cache key includes the variant so two
-  // arms don't poison each other's cached output.
+  // arms don't poison each other's cached output. We DON'T cache when
+  // anchors are present — the welcome message is supposed to be unique to
+  // this user's words, not a 1h-cached generic per (style, risk, regime).
   const variant = assignVariant(req.user.id, 'welcome_system');
   const cacheKey = `welcome_${variant.id}_${style}_${risk}_${market.regime || 'neutral'}_${Math.floor((market.fearGreed ?? 50) / 10)}`;
+  const cacheEligible = anchors.length === 0;
 
   try {
-    const cached = await getCache(cacheKey);
-    if (cached) {
-      const ageMs = Date.now() - new Date(cached.created_at).getTime();
-      if (ageMs < 60 * 60 * 1000) {
-        return res.json({ message: cached.result, variant: variant.id, cached: true, disclaimer: DISCLAIMER });
+    if (cacheEligible) {
+      const cached = await getCache(cacheKey);
+      if (cached) {
+        const ageMs = Date.now() - new Date(cached.created_at).getTime();
+        if (ageMs < 60 * 60 * 1000) {
+          return res.json({ message: cached.result, variant: variant.id, cached: true, disclaimer: DISCLAIMER });
+        }
       }
     }
 
@@ -159,9 +186,9 @@ router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req,
     try {
       const msg = await anthropic.messages.create({
         model: MODEL_HAIKU,
-        max_tokens: 120,
+        max_tokens: 150,  // slightly higher to accommodate the quote-back
         system: variant.build(),
-        messages: [{ role: 'user', content: buildWelcomePrompt({ style, risk, assets, market }) }],
+        messages: [{ role: 'user', content: buildWelcomePrompt({ style, risk, assets, market, anchors }) }],
       }, { signal: controller.signal });
       trackAICall(true);
       message = msg.content?.[0]?.text?.trim() || buildFallbackWelcome({ style });
@@ -173,8 +200,10 @@ router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req,
       clearTimeout(timeout);
     }
 
-    // Cache only when Claude actually responded (don't poison cache with the static fallback)
-    if (message && !message.startsWith('Welcome aboard.')) {
+    // Cache only when (a) Claude actually responded (don't poison cache with
+    // the static fallback) AND (b) the response is anchor-less (per-user
+    // anchor responses aren't reusable across users).
+    if (cacheEligible && message && !message.startsWith('Welcome aboard.')) {
       await setCache(cacheKey, message).catch(() => {});
     }
 

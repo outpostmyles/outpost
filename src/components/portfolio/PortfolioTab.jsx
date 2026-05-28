@@ -740,6 +740,50 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
   const [error, setError] = useState('');
   const [showPlan, setShowPlan] = useState(false);
 
+  // Pre-trade gut-check — one sharp question rooted in the user's history with
+  // this ticker. Fires once the ticker reaches 1-5 letters and stabilizes. We
+  // cache per-ticker so flipping between tickers doesn't re-fire, and so the
+  // user doesn't see the question vanish/refetch on every keystroke.
+  // gutCheckCache: { [ticker]: { question, grounded } }
+  const [gutCheck, setGutCheck] = useState(null);  // current question to show, null = hidden
+  const [gutCheckLoading, setGutCheckLoading] = useState(false);
+  const gutCheckCacheRef = useRef({});
+
+  useEffect(() => {
+    const t = (form.ticker || '').toUpperCase().trim();
+    // Ticker must be 1-5 alpha chars. Anything else, clear the card and bail.
+    if (!t || !/^[A-Z]{1,5}$/.test(t)) {
+      setGutCheck(null);
+      setGutCheckLoading(false);
+      return;
+    }
+    // Already cached for this ticker — surface it instantly, no fetch.
+    if (gutCheckCacheRef.current[t]) {
+      setGutCheck(gutCheckCacheRef.current[t]);
+      setGutCheckLoading(false);
+      return;
+    }
+    // Debounce ~500ms so we don't fire on every keystroke. Cancel on unmount
+    // or ticker-change.
+    setGutCheckLoading(true);
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const res = await api.portfolio.gutCheck(t);
+        if (cancelled) return;
+        const cached = { question: res?.question || '', grounded: !!res?.grounded };
+        gutCheckCacheRef.current[t] = cached;
+        setGutCheck(cached);
+      } catch {
+        // Silent on failure — the gut-check is a nudge, not critical path.
+        if (!cancelled) setGutCheck(null);
+      } finally {
+        if (!cancelled) setGutCheckLoading(false);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [form.ticker]);
+
   function basicsValid() {
     if (!form.ticker || !form.shares) { setError('Ticker and shares are required'); return false; }
     const shares = parseFloat(form.shares);
@@ -817,6 +861,30 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
         <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: -4, marginBottom: 14, lineHeight: 1.5 }}>
           If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
         </p>
+
+        {/* Pre-trade gut-check — appears once the user types a valid ticker.
+            One sharp question grounded in their actual history with the name
+            (or a thesis-shaping question if no history). Shown above the plan
+            section so the user reads it before they write their thesis. The
+            question is NOT stored — it surfaces once and then they decide. */}
+        {(gutCheck?.question || gutCheckLoading) && (
+          <div style={{
+            background: 'rgba(59,130,246,0.07)',
+            border: '1px solid rgba(59,130,246,0.25)',
+            borderRadius: 8,
+            padding: '12px 14px',
+            marginBottom: 12,
+          }}>
+            <p style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '1px', marginBottom: 6 }}>
+              OUTPOST ASKS{gutCheck?.grounded ? ' (FROM YOUR HISTORY)' : ''}
+            </p>
+            {gutCheckLoading && !gutCheck?.question ? (
+              <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic' }}>Thinking…</p>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.55 }}>{gutCheck.question}</p>
+            )}
+          </div>
+        )}
 
         {/* PLAN — ALL OPTIONAL at first add (Phase 5 lighten). Thesis + price
             targets collapsed into one "+ ADD A PLAN" expand so the default

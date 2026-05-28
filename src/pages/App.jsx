@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import AuthScreen from '../components/auth/AuthScreen.jsx';
-import OnboardingScreen from '../components/auth/OnboardingScreen.jsx';
+import OnboardingScreen from '../components/auth/OnboardingScreen.jsx'; // kept for fallback / reference — no longer routed
+import ConversationalOnboarding from '../components/auth/ConversationalOnboarding.jsx';
 import LandingPage from '../components/auth/LandingPage.jsx';
 import FounderGuide from '../components/auth/FounderGuide.jsx';
 import ResetPasswordScreen from '../components/auth/ResetPasswordScreen.jsx';
@@ -76,6 +77,6 @@ export default function App() {
       />
     );
   }
-  if (!user.onboarding_complete) return <OnboardingScreen />;
+  if (!user.onboarding_complete) return <ConversationalOnboarding />;
   return <AppShell />;
 }
