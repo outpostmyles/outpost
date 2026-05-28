@@ -55,7 +55,7 @@ router.get('/', requireAuth, rateLimit(15), async (req, res) => {
   try {
     const { data: trades, error } = await supabase
       .from('closed_trades')
-      .select('pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days')
+      .select('pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days, execution_rating')
       .eq('user_id', req.user.id)
       .order('closed_at', { ascending: false })
       .limit(500);
@@ -105,6 +105,36 @@ router.get('/', requireAuth, rateLimit(15), async (req, res) => {
     const targetAgg = { with: aggregate(withTarget), without: aggregate(withoutTarget) };
     const reflectionAgg = { with: aggregate(withReflection), without: aggregate(withoutReflection) };
 
+    // Execution rating summary. Separate from the with/without pattern shape
+    // because it's a 1-5 score, not a binary cut. Show distribution + avg +
+    // win-rate-when-high-execution (4-5) vs win-rate-when-low (1-2). This is
+    // the killer retrospective metric: execution is the controllable thing,
+    // so seeing the win-rate delta when you executed well is the real edge.
+    const rated = all.filter(t => t.execution_rating != null);
+    let executionSummary = null;
+    if (rated.length >= 3) {
+      const avg = rated.reduce((s, t) => s + t.execution_rating, 0) / rated.length;
+      const dist = [1, 2, 3, 4, 5].map(score => ({
+        score,
+        count: rated.filter(t => t.execution_rating === score).length,
+      }));
+      const highExec = rated.filter(t => t.execution_rating >= 4);
+      const lowExec = rated.filter(t => t.execution_rating <= 2);
+      const highAgg = aggregate(highExec);
+      const lowAgg = aggregate(lowExec);
+      executionSummary = {
+        rated: rated.length,
+        unrated: all.length - rated.length,
+        avgRating: parseFloat(avg.toFixed(2)),
+        distribution: dist,
+        whenHigh: highAgg,
+        whenLow: lowAgg,
+        lift: (highAgg.winRate != null && lowAgg.winRate != null && highAgg.count >= 2 && lowAgg.count >= 2)
+          ? parseFloat((highAgg.winRate - lowAgg.winRate).toFixed(1))
+          : null,
+      };
+    }
+
     res.json({
       ready: true,
       totalTrades: all.length,
@@ -115,6 +145,7 @@ router.get('/', requireAuth, rateLimit(15), async (req, res) => {
         priceTarget: { ...targetAgg, lift: lift(targetAgg.with, targetAgg.without) },
         reflection: { ...reflectionAgg, lift: lift(reflectionAgg.with, reflectionAgg.without) },
       },
+      execution: executionSummary,  // null if fewer than 3 rated trades
     });
   } catch (err) {
     console.error(`[req:${req.requestId}] [Attribution] failed:`, err.message);

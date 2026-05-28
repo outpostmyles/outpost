@@ -1354,21 +1354,43 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
  * Edit link. Legacy positions (no thesis yet) get a quiet "Write one" CTA
  * so the absence isn't shaming — it's an invitation.
  */
-function ThesisSection({ pos, onEdit }) {
+function ThesisSection({ pos, onEdit, onReconfirmed }) {
   const hasEntry = !!(pos.entry_thesis && pos.entry_thesis.trim());
   const hasReversal = !!(pos.reversal_condition && pos.reversal_condition.trim());
   const hasAny = hasEntry || hasReversal;
 
-  // "Written N days ago" — graceful degradation if the timestamp is missing.
+  // "Written N days ago." Graceful degradation if the timestamp is missing.
   let ageLabel = null;
+  let ageDays = null;
   if (pos.thesis_written_at) {
     const ms = Date.now() - new Date(pos.thesis_written_at).getTime();
-    const days = Math.floor(ms / 86400000);
-    if (days <= 0) ageLabel = 'today';
-    else if (days === 1) ageLabel = '1 day ago';
-    else if (days < 30) ageLabel = `${days} days ago`;
-    else if (days < 365) ageLabel = `${Math.floor(days / 30)} mo ago`;
-    else ageLabel = `${Math.floor(days / 365)}y ago`;
+    ageDays = Math.floor(ms / 86400000);
+    if (ageDays <= 0) ageLabel = 'today';
+    else if (ageDays === 1) ageLabel = '1 day ago';
+    else if (ageDays < 30) ageLabel = `${ageDays} days ago`;
+    else if (ageDays < 365) ageLabel = `${Math.floor(ageDays / 30)} mo ago`;
+    else ageLabel = `${Math.floor(ageDays / 365)}y ago`;
+  }
+
+  // Thesis goes stale. After 90 days, the reasons you wrote down might not
+  // match the world anymore (earnings happened, narratives moved, your own
+  // conviction shifted). A soft nudge surfaces so the user can re-confirm
+  // (touches thesis_written_at to now) or rewrite it. Not blocking. Not
+  // shamey. Just a reminder that old conviction without a check-in is the
+  // same as no conviction.
+  const STALE_DAYS = 90;
+  const thesisIsStale = hasEntry && ageDays != null && ageDays >= STALE_DAYS;
+
+  async function reconfirmThesis() {
+    try {
+      // Explicit reconfirm flag bumps thesis_written_at server-side without
+      // changing any text. The user re-affirmed their existing conviction.
+      // Server handles the timestamp; we just refresh on success.
+      await api.portfolio.editPosition(pos.id, { reconfirmThesis: true });
+      if (typeof onReconfirmed === 'function') onReconfirmed();
+    } catch {
+      // Non-blocking. User can also use EDIT to re-confirm via the form.
+    }
   }
 
   if (!hasAny) {
@@ -1430,8 +1452,55 @@ function ThesisSection({ pos, onEdit }) {
       )}
       {hasEntry && !hasReversal && (
         <p style={{ fontSize: 9, color: 'var(--faint)', fontStyle: 'italic', marginTop: 6 }}>
-          No reversal condition yet — <span style={{ color: 'var(--blue)', cursor: 'pointer' }} onClick={onEdit}>add one</span>.
+          No reversal condition yet. <span style={{ color: 'var(--blue)', cursor: 'pointer' }} onClick={onEdit}>Add one</span>.
         </p>
+      )}
+
+      {/* Thesis expiration nudge. 90+ days old thesis without a check-in
+          surfaces a soft prompt. Re-confirm bumps thesis_written_at to now.
+          Revise opens the edit form. Skips silently if the user does
+          nothing. The visible reminder is the point. */}
+      {thesisIsStale && (
+        <div style={{
+          marginTop: 10,
+          padding: '8px 10px',
+          background: 'rgba(245,158,11,0.08)',
+          border: '1px solid rgba(245,158,11,0.25)',
+          borderRadius: 5,
+        }}>
+          <p style={{ fontSize: 10, color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.6px', marginBottom: 4 }}>
+            STALE THESIS · {ageDays}+ DAYS OLD
+          </p>
+          <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 6 }}>
+            A lot has happened since you wrote this. Still believe it? Re-confirm or revise.
+          </p>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={reconfirmThesis}
+              style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+                background: 'rgba(34,197,94,0.12)', color: 'var(--green)',
+                border: '1px solid rgba(34,197,94,0.3)',
+                borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              STILL TRUE
+            </button>
+            <button
+              onClick={onEdit}
+              style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+                background: 'rgba(59,130,246,0.12)', color: 'var(--blue)',
+                border: '1px solid rgba(59,130,246,0.3)',
+                borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              REVISE IT
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1562,6 +1631,11 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   const [thesisPlayedOut, setThesisPlayedOut] = useState(null); // 'yes' | 'partially' | 'no'
   const [reflectionWhatHappened, setReflectionWhatHappened] = useState('');
   const [reflectionLesson, setReflectionLesson] = useState('');
+  // Execution rating 1-5. The CONTROLLABLE half of the close reflection.
+  // Outcome (thesisPlayedOut) is luck-contaminated. Execution is the skill
+  // metric. Patterns view tracks both separately so the user can see if
+  // their high-execution trades have a better win rate than their low.
+  const [executionRating, setExecutionRating] = useState(null);
   const [skipReflectionConfirm, setSkipReflectionConfirm] = useState(false);
   const [err, setErr] = useState('');
   const [journalSave, setJournalSave] = useState(null);
@@ -1637,8 +1711,9 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   }
 
   function attemptClose() {
-    // Soft gate: if all three reflection fields are empty, prompt before closing.
-    if (!thesisPlayedOut && !reflectionWhatHappened.trim() && !reflectionLesson.trim()) {
+    // Soft gate: if NOTHING was filled in (no thesis-played-out, no reflection,
+    // no execution rating), prompt before closing. Skipping is still allowed.
+    if (!thesisPlayedOut && !reflectionWhatHappened.trim() && !reflectionLesson.trim() && executionRating == null) {
       setSkipReflectionConfirm(true);
       return;
     }
@@ -1654,6 +1729,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
       if (thesisPlayedOut) body.thesisPlayedOut = thesisPlayedOut;
       if (reflectionWhatHappened.trim()) body.reflectionWhatHappened = reflectionWhatHappened.trim();
       if (reflectionLesson.trim()) body.reflectionLesson = reflectionLesson.trim();
+      if (executionRating != null) body.executionRating = executionRating;
       await api.portfolio.removePosition(pos.id, body);
       onRefresh();
       showToast(`${pos.ticker} closed and saved to history`, 'success');
@@ -1746,6 +1822,19 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
                 position. Uses the top news headline when present, falls back
                 to a calm framing line when news is empty. Works in concert
                 with the lazy news fetch (loadNewsIfNeeded ran on expand). */}
+            {/* YOUR THESIS. Lead element on expansion. The user's own words
+                are the centerpiece of every Outpost position, not the news of
+                the day. The thesis was the reason they bought. It is what they
+                need to re-read first before anything else. */}
+            <ThesisSection
+              pos={pos}
+              onEdit={() => setMode('edit')}
+              onReconfirmed={onRefresh}
+            />
+
+            {/* TODAY'S DRIVER. The fresh context after the thesis. Why did
+                this stock move today, in one line. Sits below the thesis so
+                the user reads their conviction first, then the news second. */}
             <div style={{ marginBottom: 10 }}>
               <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 3, fontWeight: 600 }}>TODAY'S DRIVER</p>
               {newsLoading ? (
@@ -1754,7 +1843,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
                 <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{news[0].title || news[0].headline}</p>
               ) : Math.abs(pos.todayChangePercent ?? 0) >= 1 ? (
                 <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
-                  No company-specific headlines — moving with the broader tape.
+                  No company-specific headlines. Moving with the broader tape.
                 </p>
               ) : (
                 <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
@@ -1763,18 +1852,9 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               )}
             </div>
 
-            {/* YOUR THESIS — always visible, the record of the user's own
-                thinking. Sits above the trade-plan price levels because the
-                story is the lead; the levels are the rails. Quiet styling so
-                it doesn't compete with today's driver/news for attention. */}
-            <ThesisSection
-              pos={pos}
-              onEdit={() => setMode('edit')}
-            />
-
-            {/* Phase 3: YOUR HISTORY — surfaces past chats, prior closed
-                positions in the same ticker, and journal notes referencing
-                this stock. Hides entirely when there's no history. */}
+            {/* Phase 3 YOUR HISTORY. Past chats, prior closed positions in
+                the same ticker, and journal notes referencing this stock.
+                Hides entirely when there's no history. */}
             <HistorySection ticker={pos.ticker} currentPositionId={pos.id} />
 
             {/* Price levels (target/stop) — only rendered when at least one
@@ -2001,6 +2081,48 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
                 return d.draft;
               }}
             />
+
+            {/* Execution rating. The CONTROLLABLE half of this reflection.
+                Thesis playing out is about outcome (partially luck). This
+                question is about execution. Did you follow your own plan, or
+                did you panic, hold too long, fat-finger something. Five
+                buttons, 1 to 5. Optional. Surfaces in the Patterns view as
+                its own row plus "win rate when execution was 4-5 vs 1-2."
+                Different from outcome on purpose. Skill, not luck. */}
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '0.5px', marginBottom: 4, fontWeight: 700 }}>HOW WELL DID YOU EXECUTE?</p>
+              <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 7, lineHeight: 1.5 }}>
+                Not the outcome. The execution. Did you follow your own plan? 1 is panic, 5 is exactly what you said you'd do.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+                {[1, 2, 3, 4, 5].map(n => {
+                  const on = executionRating === n;
+                  return (
+                    <button
+                      key={n}
+                      onClick={() => setExecutionRating(on ? null : n)}
+                      style={{
+                        padding: '9px 0',
+                        background: on ? 'rgba(59,130,246,0.18)' : 'var(--raised)',
+                        border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
+                        borderRadius: 6,
+                        color: on ? 'var(--blue)' : 'var(--text)',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                <span style={{ fontSize: 9, color: 'var(--faint)' }}>panicked</span>
+                <span style={{ fontSize: 9, color: 'var(--faint)' }}>nailed it</span>
+              </div>
+            </div>
 
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
             <div style={{ display: 'flex', gap: 6 }}>

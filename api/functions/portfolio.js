@@ -924,9 +924,9 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
     if (req.body.entryThesis !== undefined) {
       const cleaned = sanitizeString(req.body.entryThesis, 500) || null;
       updates.entry_thesis = cleaned;
-      // Only stamp thesis_written_at when entry_thesis is moving from empty → set.
-      // If the user just edits an existing thesis we keep the original timestamp
-      // so the "thesis from 23 days ago" age stays meaningful.
+      // Only stamp thesis_written_at when entry_thesis is moving from empty
+      // to set. If the user just edits an existing thesis we keep the original
+      // timestamp so the "thesis from 23 days ago" age stays meaningful.
       if (cleaned) {
         const { data: existing } = await supabase.from('positions')
           .select('entry_thesis,thesis_written_at')
@@ -936,6 +936,13 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
           updates.thesis_written_at = new Date().toISOString();
         }
       }
+    }
+    // Explicit re-confirm: user tapped "STILL TRUE" on the stale-thesis nudge.
+    // Bumps the timestamp to now so the nudge stops firing for another 90
+    // days. No text changes. Independent of entryThesis so the user can also
+    // re-confirm via the form without rewriting their thesis.
+    if (req.body.reconfirmThesis === true) {
+      updates.thesis_written_at = new Date().toISOString();
     }
     if (req.body.reversalCondition !== undefined) {
       updates.reversal_condition = sanitizeString(req.body.reversalCondition, 500) || null;
@@ -1020,11 +1027,20 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       // 'partially' doesn't map cleanly to the 4-state legacy enum — leave null.
     }
 
+    // Execution rating (1-5). Optional. Captured at close to track the
+    // CONTROLLABLE half of trading. Outcome is luck-contaminated, execution
+    // is the user's actual skill at following their own plan. Stored on
+    // closed_trades after the atomic RPC since migration 016's signature
+    // does not include it. The RPC is the source of truth for the row's
+    // existence. The execution rating is supplemental.
+    const rawRating = req.body?.executionRating;
+    const ratingNum = rawRating != null ? parseInt(rawRating, 10) : null;
+    const executionRating = (Number.isInteger(ratingNum) && ratingNum >= 1 && ratingNum <= 5) ? ratingNum : null;
+
     // Atomic close: migration 016 DELETE + INSERT in one transaction.
     // If the INSERT fails (constraint violation, etc) the DELETE rolls back
     // and the position is preserved. Previous pattern silently lost the
-    // closed_trades row when the async archive INSERT failed — that data is
-    // needed for tax reporting and the My Theses retrospective.
+    // closed_trades row when the async archive INSERT failed.
     const { data: closed, error: rpcErr } = await supabase.rpc('close_position', {
       p_position_id: req.params.id,
       p_user_id: req.user.id,
@@ -1040,8 +1056,21 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     });
     if (rpcErr) throw rpcErr;
     // Null return = position was already deleted between our read and the RPC
-    // (double-close race). Treat as 404 — caller's first attempt won.
+    // (double-close race). Treat as 404. Caller's first attempt won.
     if (!closed) return res.status(404).json({ error: 'Position not found' });
+
+    // Best-effort UPDATE for execution_rating. If this fails the trade is
+    // still archived correctly. The user just has no rating on that row,
+    // which the Patterns view handles gracefully (null skipped from averages).
+    if (executionRating != null && closed?.id) {
+      try {
+        await supabase.from('closed_trades')
+          .update({ execution_rating: executionRating })
+          .eq('id', closed.id);
+      } catch (rateErr) {
+        console.warn(`[req:${req.requestId}] [Portfolio] failed to set execution_rating on ${closed.id}:`, rateErr.message);
+      }
+    }
 
     res.json({ success: true });
   } catch (err) {

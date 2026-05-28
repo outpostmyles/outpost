@@ -220,7 +220,7 @@ function PatternsView() {
     );
   }
 
-  const { patterns, totalTrades } = data;
+  const { patterns, totalTrades, execution } = data;
   const rows = [
     { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
     { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
@@ -243,9 +243,79 @@ function PatternsView() {
         ))}
       </div>
 
+      {/* Execution rating block. Different shape than the binary patterns
+          above, so it gets its own row component. Only renders if the user
+          has rated at least 3 closed trades. Tracks the CONTROLLABLE half
+          of trading: did you follow your own plan, regardless of outcome. */}
+      {execution && (
+        <div style={{ marginTop: 14 }}>
+          <ExecutionRatingBlock execution={execution} />
+        </div>
+      )}
+
       <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 22, lineHeight: 1.55, letterSpacing: '0.3px' }}>
         Small samples are noisy. Patterns matter most after 20+ closed trades.
       </p>
+    </div>
+  );
+}
+
+function ExecutionRatingBlock({ execution }) {
+  const { rated, unrated, avgRating, distribution, whenHigh, whenLow, lift } = execution;
+  const total = rated + unrated;
+  const liftColor = lift == null ? 'var(--faint)'
+    : lift > 0 ? 'var(--green)'
+    : lift < 0 ? 'var(--red)'
+    : 'var(--muted)';
+  const liftText = lift == null
+    ? 'Need more rated trades'
+    : lift > 0 ? `+${lift.toFixed(1)}pp when execution was 4-5 vs 1-2`
+    : lift < 0 ? `${lift.toFixed(1)}pp when execution was 4-5 vs 1-2`
+    : 'No measurable lift';
+
+  // Find the max bar value so distribution heights are relative.
+  const maxBar = Math.max(1, ...distribution.map(d => d.count));
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 14px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 4 }}>
+        <p style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600 }}>Execution rating</p>
+        <p style={{ fontSize: 11, color: liftColor, fontWeight: 700, whiteSpace: 'nowrap' }}>{liftText}</p>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10, lineHeight: 1.55 }}>
+        The skill metric. How well you followed your own plan, regardless of the outcome. You've rated {rated} of {total} closes.
+      </p>
+
+      {/* Distribution bars. Five columns, height scales with frequency. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, marginBottom: 4, alignItems: 'end', height: 50 }}>
+        {distribution.map(d => (
+          <div key={d.score} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+            <div style={{
+              width: '100%',
+              height: `${Math.max(4, (d.count / maxBar) * 100)}%`,
+              background: d.score >= 4 ? 'rgba(34,197,94,0.55)'
+                : d.score <= 2 ? 'rgba(239,68,68,0.45)'
+                : 'rgba(59,130,246,0.45)',
+              borderRadius: 3,
+              transition: 'height 0.2s',
+            }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, marginBottom: 12 }}>
+        {distribution.map(d => (
+          <div key={d.score} style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)' }}>{d.score}</p>
+            <p style={{ fontSize: 9, color: 'var(--muted)' }}>{d.count}</p>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <SplitBox label="Avg" agg={{ count: rated, winRate: null, avgPnlPercent: null }} accent customValue={avgRating.toFixed(1)} customUnit="/ 5" />
+        <SplitBox label="When 4-5" agg={whenHigh} />
+        <SplitBox label="When 1-2" agg={whenLow} />
+      </div>
     </div>
   );
 }
@@ -282,7 +352,7 @@ function PatternRow({ row, pattern }) {
   );
 }
 
-function SplitBox({ label, agg, accent }) {
+function SplitBox({ label, agg, accent, customValue, customUnit }) {
   const count = agg?.count ?? 0;
   const wr = agg?.winRate;
   const pnl = agg?.avgPnlPercent;
@@ -295,11 +365,12 @@ function SplitBox({ label, agg, accent }) {
     }}>
       <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 4 }}>{label}</p>
       <p style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700, marginBottom: 2 }}>
-        {wr != null ? `${wr.toFixed(0)}%` : '—'}
+        {customValue != null ? customValue : (wr != null ? `${wr.toFixed(0)}%` : '—')}
+        {customUnit ? <span style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 400, marginLeft: 2 }}>{customUnit}</span> : null}
       </p>
       <p style={{ fontSize: 9, color: 'var(--muted)' }}>
         {count} trade{count === 1 ? '' : 's'}
-        {pnl != null && count > 0 ? ` · avg ${pnl > 0 ? '+' : ''}${pnl.toFixed(1)}%` : ''}
+        {customValue == null && pnl != null && count > 0 ? ` · avg ${pnl > 0 ? '+' : ''}${pnl.toFixed(1)}%` : ''}
       </p>
     </div>
   );
