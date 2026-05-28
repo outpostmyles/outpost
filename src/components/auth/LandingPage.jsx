@@ -113,7 +113,7 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
             color: 'var(--text)',
             marginBottom: 24,
           }}>
-            For the people<br/>doing the work.
+            The trading partner<br/>who remembers.
           </h1>
           <p style={{
             fontSize: 17,
@@ -122,7 +122,7 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
             maxWidth: 560,
             marginBottom: 32,
           }}>
-            Outpost is your research analyst, your second opinion, and your accountability partner. The kind of help wealthy investors get from advisors. Built for the little guy.
+            Outpost asks why you bought it. Writes down what you said. Quotes you back to yourself the next time you're about to break your own plan. No human advisor, no Reddit thread, and no general-purpose chatbot does that — because they don't know you, and they don't remember.
           </p>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <PrimaryButton onClick={onGetStarted}>Get started, free</PrimaryButton>
@@ -294,7 +294,7 @@ export default function LandingPage({ onGetStarted, onOpenGuide }) {
             Stop trading alone.
           </h2>
           <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 24, lineHeight: 1.5 }}>
-            Add your first position in under 60 seconds.
+            Three questions, ninety seconds. We'll be a way better partner.
           </p>
           <PrimaryButton onClick={onGetStarted}>Get started, free</PrimaryButton>
         </div>

@@ -119,6 +119,8 @@ export const api = {
     // Behavior-outcome attribution — win rate by thesis/stop/target/reflection.
     // Shows "Your Patterns" card on the Journal tab.
     attribution: () => get('/api/portfolio/attribution'),
+    // Daily pulse — one short personal sentence at the top of Home. Free tier.
+    pulse: () => get('/api/portfolio/pulse'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

@@ -9,6 +9,68 @@ import ActivationChecklist from './ActivationChecklist.jsx';
 import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
 import DeployCashFlow from './DeployCashFlow.jsx';
+
+// PULSE — the single-sentence personal moment at the top of Home.
+//
+// Reads from GET /api/portfolio/pulse, which returns one short line (80-160
+// chars) tailored to the user's onboarding anchors + current portfolio state
+// + market regime. Free-tier eligible. Cached server-side per-hour per-user
+// so reloads don't fire new Claude calls.
+//
+// Voice: friend texting you, not analyst report. Examples the backend can
+// produce: "Quiet morning. Coffee, not panic." / "AAPL just touched your
+// stop. Same setup as last August." / "Nothing pressing on your book."
+//
+// Loading state shows a subtle line so the layout doesn't jump. Errors fall
+// through silently — the endpoint itself returns a deterministic fallback
+// rather than 5xx, so the network failure case is rare.
+function PulseCard({ refreshKey }) {
+  const [pulse, setPulse] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    // 30-min client cache so opening Home repeatedly doesn't re-hit the
+    // backend; the backend itself caches for 2h, so the typical request
+    // round-trip is a 304-equivalent (it just hits the ai_cache table).
+    cachedFetch('home_pulse', () => api.portfolio.pulse(), 30 * 60000)
+      .then(d => { if (!cancelled) setPulse(d?.pulse || ''); })
+      .catch(() => { if (!cancelled) setPulse(''); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  // If the line failed to load entirely, don't render — better to show
+  // nothing than a "could not load" error message at the top of Home.
+  if (!loading && !pulse) return null;
+
+  return (
+    <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{
+        background: 'linear-gradient(180deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02))',
+        border: '1px solid rgba(59,130,246,0.18)',
+        borderRadius: 10,
+        padding: '13px 15px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)',
+            // Subtle pulse animation — keeps the "live" feel without being distracting.
+            animation: 'pulseDot 2s ease-in-out infinite',
+          }} />
+          <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '1.3px', fontWeight: 700 }}>OUTPOST</p>
+        </div>
+        {loading ? (
+          <p style={{ fontSize: 12, color: 'var(--faint)', lineHeight: 1.6, fontStyle: 'italic' }}>Reading your book…</p>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, letterSpacing: '-0.1px' }}>{pulse}</p>
+        )}
+        <style>{`@keyframes pulseDot { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+      </div>
+    </div>
+  );
+}
 // Removed cards superseded by TODAY (kept files for now, no longer imported here):
 //   - BargainRadarCard / SectorRadarCard / ConcentrationAlertCard / ProactiveDigestCard
 // All five surfaces those represented are now ranked into TODAY's 5-pick feed.
@@ -234,9 +296,15 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
             </div>
           )}
 
-          {/* Phase 4: Deploy Cash — the recurring engagement moment. Sits
-              above everything else so it's the first thing the user sees
-              when they open the app with new money to put to work. */}
+          {/* PULSE — one personal sentence. Lives ABOVE everything else so it's
+              the first felt moment when the user opens the app. The reason it's
+              not Deploy Cash anymore: Deploy Cash only matters if you have
+              cash to deploy. Pulse always matters. */}
+          <PulseCard refreshKey={lastUpdated?.getTime() ?? 0} />
+
+          {/* Deploy Cash — the recurring engagement moment for users with
+              new money to put to work. Demoted from #1 to #2 to make room
+              for the personal pulse above it. */}
           <DeployCashCard onTabSwitch={onTabSwitch} showToast={showToast} />
 
           {/* TODAY — Outpost's 5 ranked picks, always at the top of Home.
