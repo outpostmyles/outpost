@@ -121,6 +121,9 @@ export const api = {
     attribution: () => get('/api/portfolio/attribution'),
     // Daily pulse — one short personal sentence at the top of Home. Free tier.
     pulse: () => get('/api/portfolio/pulse'),
+    // "Outpost noticed" passive observations. Up to 3, ranked by priority.
+    // Pure deterministic logic on the backend (no AI call).
+    notices: () => get('/api/portfolio/notices'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

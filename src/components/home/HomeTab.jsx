@@ -10,6 +10,138 @@ import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
 import DeployCashFlow from './DeployCashFlow.jsx';
 
+// "Outpost noticed" card. Surfaces up to 3 passive observations the user
+// might miss otherwise. Closes without reflections. Aged positions without
+// theses. Tickers they keep mentioning in chat but don't own.
+//
+// Dismissals tracked in localStorage by notice id. Survives page reload but
+// not cross-device. Acceptable for a 10-user beta. Migrate to durable
+// server-side dismissals if users complain about repeat nudges on another
+// browser.
+//
+// CTA actions handled inline. None of them are blocking. Worst case: the
+// CTA jumps to the relevant tab and the user finds the thing themselves.
+const NOTICE_DISMISS_KEY = 'outpost_dismissed_notices';
+
+function loadDismissedNotices() {
+  try {
+    const raw = localStorage.getItem(NOTICE_DISMISS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+
+function persistDismissedNotices(set) {
+  try {
+    localStorage.setItem(NOTICE_DISMISS_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function NoticesCard({ onTabSwitch, refreshKey }) {
+  const [notices, setNotices] = useState([]);
+  const [dismissed, setDismissed] = useState(() => loadDismissedNotices());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    cachedFetch('home_notices', () => api.portfolio.notices(), 5 * 60000)
+      .then(d => { if (!cancelled) setNotices(d?.notices || []); })
+      .catch(() => { if (!cancelled) setNotices([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  function dismiss(id) {
+    setDismissed(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      persistDismissedNotices(next);
+      return next;
+    });
+  }
+
+  function handleAction(notice) {
+    // Best-effort routing. Each action goes to the tab where the user can
+    // act on the thing. We dismiss the notice so it stops nagging once the
+    // user has taken a step toward addressing it. Not perfect but honest.
+    switch (notice.cta?.action) {
+      case 'open_close_reflection':
+        onTabSwitch && onTabSwitch('journal');
+        break;
+      case 'add_thesis':
+        onTabSwitch && onTabSwitch('portfolio');
+        break;
+      case 'look_at_ticker':
+        onTabSwitch && onTabSwitch('agent');
+        break;
+      default:
+        break;
+    }
+    dismiss(notice.id);
+  }
+
+  if (loading) return null;  // no skeleton, just hide until ready (avoids layout flash)
+  const visible = notices.filter(n => !dismissed.has(n.id));
+  if (visible.length === 0) return null;
+
+  return (
+    <div style={{ padding: '6px 16px 14px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, marginTop: 6 }}>
+        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.2px', fontWeight: 700 }}>OUTPOST NOTICED</p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {visible.map(notice => {
+          const accent = notice.severity === 'high' ? 'var(--amber)'
+            : notice.severity === 'medium' ? 'var(--blue)'
+            : 'var(--faint)';
+          return (
+            <div
+              key={notice.id}
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderLeft: `2px solid ${accent}`,
+                borderRadius: 7,
+                padding: '11px 12px',
+              }}
+            >
+              <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.55, marginBottom: 9 }}>{notice.text}</p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {notice.cta?.label && (
+                  <button
+                    onClick={() => handleAction(notice)}
+                    style={{
+                      fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+                      background: 'rgba(59,130,246,0.12)', color: 'var(--blue)',
+                      border: '1px solid rgba(59,130,246,0.3)',
+                      borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    {notice.cta.label.toUpperCase()}
+                  </button>
+                )}
+                <button
+                  onClick={() => dismiss(notice.id)}
+                  style={{
+                    fontSize: 10, color: 'var(--faint)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    padding: '5px 6px', fontFamily: 'inherit', letterSpacing: '0.4px',
+                  }}
+                >
+                  DISMISS
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // PULSE — the single-sentence personal moment at the top of Home.
 //
 // Reads from GET /api/portfolio/pulse, which returns one short line (80-160
@@ -302,9 +434,13 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
               cash to deploy. Pulse always matters. */}
           <PulseCard refreshKey={lastUpdated?.getTime() ?? 0} />
 
+          {/* OUTPOST NOTICED — passive observations. Shown only when there
+              are non-dismissed notices to surface. Renders nothing in the
+              empty-state, so a calm week sees no card at all. */}
+          <NoticesCard onTabSwitch={onTabSwitch} refreshKey={lastUpdated?.getTime() ?? 0} />
+
           {/* Deploy Cash — the recurring engagement moment for users with
-              new money to put to work. Demoted from #1 to #2 to make room
-              for the personal pulse above it. */}
+              new money to put to work. */}
           <DeployCashCard onTabSwitch={onTabSwitch} showToast={showToast} />
 
           {/* TODAY — Outpost's 5 ranked picks, always at the top of Home.

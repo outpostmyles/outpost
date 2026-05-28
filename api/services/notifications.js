@@ -100,6 +100,7 @@ export function buildWeeklySummaryEmail({ displayName, weekly }) {
   const {
     weekStart, weekEnd, closedThisWeek, netPnl, winRate,
     topWinner, topLoser, attribution, adherence, openUnrealized,
+    behavioralLead,
   } = weekly;
 
   const greeting = displayName ? `Hey ${escapeHtml(displayName)},` : 'Hey,';
@@ -149,7 +150,11 @@ export function buildWeeklySummaryEmail({ displayName, weekly }) {
   const html = `${SHELL_OPEN}
     <p style="margin:0 0 6px 0;font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:0.5px;text-transform:uppercase">Week of ${periodStr}</p>
     <h2 style="margin:0 0 8px 0;font-size:18px;color:#f1f1f3">${greeting}</h2>
+    ${behavioralLead ? `
+    <p style="margin:0 0 14px 0;font-size:14px;color:#f1f1f3;line-height:1.7;border-left:2px solid #3b82f6;padding-left:12px">${escapeHtml(behavioralLead)}</p>
+    ` : `
     <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.6);line-height:1.6">Here's how the week broke down across your closed trades and current positions.</p>
+    `}
 
     ${stats}
 
@@ -172,6 +177,8 @@ export function buildWeeklySummaryEmail({ displayName, weekly }) {
     greeting,
     `Week of ${periodStr}`,
     '',
+    behavioralLead || '',
+    behavioralLead ? '' : null,
     `Closed: ${closedThisWeek}  ·  Win rate: ${winRate}%  ·  Net P&L: ${pnlSign}$${Math.abs(netPnl).toFixed(0)}`,
     '',
     topWinner ? `Top winner: ${topWinner.ticker} +$${topWinner.pnl.toFixed(0)}` : '',
@@ -181,7 +188,7 @@ export function buildWeeklySummaryEmail({ displayName, weekly }) {
     adherence || '',
     '',
     `Open Outpost: ${APP_URL}`,
-  ].filter(Boolean).join('\n');
+  ].filter(s => s != null && s !== false).join('\n').replace(/\n{3,}/g, '\n\n');
 
   const subject = `Outpost weekly — ${closedThisWeek} trades, ${winRate}% win, ${pnlSign}$${Math.abs(netPnl).toFixed(0)}`;
 
@@ -198,7 +205,7 @@ export async function computeWeeklySummary(userId, now = new Date()) {
   // Closed trades in the last 7 days
   const { data: trades } = await supabase
     .from('closed_trades')
-    .select('ticker, pnl, pnl_percent, hold_days, closed_at, sell_price, avg_cost, shares')
+    .select('id, ticker, pnl, pnl_percent, hold_days, closed_at, sell_price, avg_cost, shares, thesis_played_out, reflection_what_happened, reflection_lesson, exit_reflection')
     .eq('user_id', userId)
     .gte('closed_at', sevenDaysAgo.toISOString())
     .order('closed_at', { ascending: false });
@@ -213,6 +220,35 @@ export async function computeWeeklySummary(userId, now = new Date()) {
 
   const topWinner = winners.sort((a, b) => b.pnl - a.pnl)[0] || null;
   const topLoser = losers.sort((a, b) => a.pnl - b.pnl)[0] || null;
+
+  // Behavioral lead. Counts of disciplined actions taken this week. Used to
+  // generate a "what you DID this week" paragraph above the stats table.
+  // Deterministic, no AI call.
+  let behavior = { addedPositions: 0, addedWithThesis: 0, reflectionsLogged: 0, closesNoReflection: 0 };
+  try {
+    const [posRes, theseRes] = await Promise.all([
+      supabase.from('positions')
+        .select('id, entry_thesis, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', sevenDaysAgo.toISOString()),
+      supabase.from('positions')
+        .select('id, thesis_written_at')
+        .eq('user_id', userId)
+        .gte('thesis_written_at', sevenDaysAgo.toISOString()),
+    ]);
+    const newPos = posRes.data ?? [];
+    behavior.addedPositions = newPos.length;
+    behavior.addedWithThesis = newPos.filter(p => p.entry_thesis && p.entry_thesis.trim().length > 0).length;
+    // Reflections logged this week = closes with any reflection field populated
+    behavior.reflectionsLogged = list.filter(t =>
+      t.thesis_played_out ||
+      (t.reflection_what_happened?.trim()) ||
+      (t.reflection_lesson?.trim()) ||
+      (t.exit_reflection?.trim())
+    ).length;
+    // Closes without any reflection — pending behavior debt
+    behavior.closesNoReflection = list.length - behavior.reflectionsLogged;
+  } catch {}
 
   // Open position unrealized — pull from existing attribution service for consistency
   let openUnrealized = null;
@@ -244,7 +280,53 @@ export async function computeWeeklySummary(userId, now = new Date()) {
     openUnrealized: openUnrealized != null ? parseFloat(openUnrealized.toFixed(2)) : null,
     attribution: attributionLine || null,
     adherence: adherenceLine || null,
+    behavior,
+    behavioralLead: buildBehavioralLead(behavior, list.length),
   };
+}
+
+/**
+ * Builds the "what you DID this week" paragraph from behavior counts.
+ * Pure function. Deterministic. Exported for tests.
+ *
+ * Voice: friend looking back over your week. Calls out the disciplined acts
+ * (added positions with theses, logged reflections) AND surfaces any
+ * behavior debt (closes without reflection) as a soft prompt to fix.
+ * Returns null when there's nothing meaningful to say so the email can
+ * skip the paragraph rather than show a vacuous one.
+ */
+export function buildBehavioralLead(behavior, closedCount) {
+  if (!behavior) return null;
+  const { addedPositions, addedWithThesis, reflectionsLogged, closesNoReflection } = behavior;
+  const totalActivity = (addedPositions || 0) + (closedCount || 0) + (reflectionsLogged || 0);
+  if (totalActivity === 0) return null;
+
+  const parts = [];
+
+  // Adds with thesis. The disciplined act.
+  if (addedPositions > 0) {
+    if (addedWithThesis === addedPositions) {
+      parts.push(`You added ${addedPositions} new position${addedPositions === 1 ? '' : 's'} this week, and wrote a thesis on ${addedPositions === 1 ? 'it' : 'every one'}. That's the work.`);
+    } else if (addedWithThesis > 0) {
+      const missing = addedPositions - addedWithThesis;
+      parts.push(`You added ${addedPositions} positions this week. ${addedWithThesis} got a thesis, ${missing} didn't. The ${missing} without ${missing === 1 ? 'one' : 'them'} will be harder to defend when the price moves.`);
+    } else {
+      parts.push(`You added ${addedPositions} new position${addedPositions === 1 ? '' : 's'} this week without writing a thesis on ${addedPositions === 1 ? 'it' : 'any of them'}. Future you is going to wish past you had.`);
+    }
+  }
+
+  // Reflections logged. The retrospective act.
+  if (reflectionsLogged > 0 && closedCount > 0) {
+    if (closesNoReflection === 0) {
+      parts.push(`You closed ${closedCount} position${closedCount === 1 ? '' : 's'} and logged a reflection on each. Most people skip this. You didn't.`);
+    } else {
+      parts.push(`You logged reflections on ${reflectionsLogged} of ${closedCount} closes. The other ${closesNoReflection} are still open in your head, just not on paper.`);
+    }
+  } else if (closesNoReflection > 0) {
+    parts.push(`You closed ${closesNoReflection} position${closesNoReflection === 1 ? '' : 's'} without logging what happened. The lesson is the asset. It fades fast.`);
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 // ============ SEND HELPERS ============

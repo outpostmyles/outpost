@@ -20,6 +20,7 @@ import { getPortfolioSynthesis } from '../services/portfolioSynthesis.js';
 import { dailyAiCeiling } from '../middleware/aiCeiling.js';
 import { recallHistory } from '../services/historyAggregator.js';
 import { getMarketData } from '../services/marketData.js';
+import { getNoticesForUser } from '../services/notices.js';
 
 /**
  * Validate ticker exists on a real exchange and prices pass sanity checks.
@@ -389,6 +390,29 @@ router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, r
  * the user hit a refresh on just the synthesis without reloading every
  * position price.
  */
+
+// GET /api/portfolio/notices
+//
+// "Outpost noticed" passive observations. Deterministic, no AI call, cheap
+// enough to run on every Home load. Returns up to 3 ranked observations
+// sourced from missing reflections on recent closes, theses overdue on aged
+// positions, and tickers the user keeps mentioning in chat but doesn't own.
+// Client decides which to render (dismissals tracked client-side).
+//
+// Voice and ranking logic live in services/notices.js. This route is just
+// the HTTP wrapper plus the standard auth/rate-limit chain. Always returns
+// 200 with at least an empty notices array, so frontend can render
+// unconditionally without try/catch wrappers.
+router.get('/notices', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const notices = await getNoticesForUser(req.user.id);
+    res.json({ notices });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /notices failed:`, err.message);
+    res.json({ notices: [] });
+  }
+});
+
 router.get('/synthesis', requireAuth, rateLimit(15), async (req, res) => {
   try {
     const force = req.query.force === 'true';

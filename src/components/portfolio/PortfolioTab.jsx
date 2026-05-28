@@ -1534,14 +1534,71 @@ function HistorySection({ ticker, currentPositionId }) {
   );
   if (filtered.length === 0) return null;
 
+  // Build the dot-strip data. Sort chronologically (oldest left). One dot per
+  // event, color by source. Shows ALL events even when we only render the
+  // most recent 4 in detail below. The dot strip is the glanceable density
+  // view; the rows are the readable detail view.
+  const strip = [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const showStrip = strip.length >= 3;
+
   return (
     <div style={{ marginBottom: 10 }}>
       <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 5, fontWeight: 700 }}>
         YOUR HISTORY WITH {ticker}
+        {filtered.length > 4 && (
+          <span style={{ color: 'var(--faint)', fontWeight: 500, marginLeft: 6, letterSpacing: '0.3px' }}>
+            · {filtered.length} events
+          </span>
+        )}
       </p>
+      {showStrip && <HistoryDotStrip events={strip} />}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {filtered.slice(0, 4).map(e => <HistoryRow key={e.id} ev={e} />)}
       </div>
+    </div>
+  );
+}
+
+// Tiny horizontal strip of dots, one per history event, color by source.
+// Glanceable density of your relationship with this stock. Older on the
+// left, newer on the right. Hover tooltip shows the date + event type.
+function HistoryDotStrip({ events }) {
+  const dotColor = (source, outcome) => ({
+    agent: '#a78bfa',
+    position_open: 'var(--green)',
+    position_close: outcome === 'win' ? 'var(--green)' : outcome === 'loss' ? 'var(--red)' : 'var(--amber)',
+    thesis: 'var(--blue)',
+    journal: 'var(--muted)',
+    deploy_cash: '#38bdf8',
+  })[source] || 'var(--faint)';
+
+  const formatTooltip = (ev) => {
+    const d = new Date(ev.date);
+    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const labels = { agent: 'Chat', position_open: 'Opened', position_close: 'Closed', thesis: 'Thesis', journal: 'Note', deploy_cash: 'Deploy' };
+    return `${dateStr} · ${labels[ev.source] || ev.source}`;
+  };
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 4,
+      padding: '7px 9px', marginBottom: 7,
+      background: 'var(--raised)', borderRadius: 4,
+      overflowX: 'auto',
+    }}>
+      {events.map((ev) => (
+        <div
+          key={ev.id}
+          title={formatTooltip(ev)}
+          style={{
+            flexShrink: 0,
+            width: 8, height: 8, borderRadius: '50%',
+            background: dotColor(ev.source, ev.outcome),
+            opacity: 0.85,
+            cursor: 'help',
+          }}
+        />
+      ))}
     </div>
   );
 }
