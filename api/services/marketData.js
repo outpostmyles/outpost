@@ -103,27 +103,60 @@ async function refreshRSI() {
   data.rsiFetchedAt = new Date().toISOString();
 }
 
+// Sanity bounds for mover changePercent. Same threshold as the price-pool
+// sanitizer. Polygon's gainers/losers endpoint occasionally returns thin
+// tickers with absurd changes (stale prevClose, mid-split reporting, etc).
+// A "+7,825%" on the Top Movers list is essentially always bad data, and
+// surfacing it costs trust more than dropping a few rows costs information.
+// Real news pumps that hit 500%+ in a session are exceedingly rare; if
+// they're real, they'll still be in tomorrow's news.
+const MOVER_CHANGE_PCT_MAX = 500;
+const MOVER_CHANGE_PCT_MIN = -95;
+
+function sanityFilterMovers(list) {
+  if (!Array.isArray(list)) return list;
+  const dropped = [];
+  const kept = list.filter(m => {
+    const cp = m?.changePercent;
+    if (cp == null) return true;  // keep entries with no change% (will render as "—")
+    if (cp > MOVER_CHANGE_PCT_MAX || cp < MOVER_CHANGE_PCT_MIN) {
+      dropped.push(`${m.ticker}:${cp.toFixed(0)}%`);
+      return false;
+    }
+    return true;
+  });
+  if (dropped.length > 0) {
+    console.warn(`[MarketData] Dropped ${dropped.length} suspicious mover entries: ${dropped.join(', ')}`);
+  }
+  return kept;
+}
+
 async function refreshMovers() {
   const [gainers, losers] = await Promise.allSettled([
     refreshWithRetry(() => getMovers('gainers'), 'Gainers'),
     refreshWithRetry(() => getMovers('losers'), 'Losers'),
   ]);
-  const newGainers = gainers.status === 'fulfilled' ? gainers.value : null;
-  const newLosers = losers.status === 'fulfilled' ? losers.value : null;
+  const newGainers = gainers.status === 'fulfilled' ? sanityFilterMovers(gainers.value) : null;
+  const newLosers = losers.status === 'fulfilled' ? sanityFilterMovers(losers.value) : null;
 
-  // Only overwrite if we got real data — this keeps last session's movers alive after hours
+  // Only overwrite if we got real data. This keeps last session's movers
+  // alive after hours.
   if (newGainers?.length) {
     data.moversGainers = newGainers;
     data.moversLive = true;
     data.moversFetchedAt = new Date().toISOString();
   } else if (data.moversGainers.length > 0 && !isMarketHours()) {
-    // After hours with no new data — keep existing but mark as not live
     data.moversLive = false;
   }
   if (newLosers?.length) {
     data.moversLosers = newLosers;
     if (!newGainers?.length) data.moversFetchedAt = new Date().toISOString();
   }
+}
+
+// Test seam for sanity-guard unit tests.
+export function _sanityFilterMoversForTest(list) {
+  return sanityFilterMovers(list);
 }
 
 /**

@@ -150,6 +150,63 @@ async function fetchClosedTrades({ userId, ticker, dateFrom, dateTo, limit }) {
  * When a position has no thesis, we still emit a position_open event so the
  * user sees they own it; the quote is null in that case.
  */
+/**
+ * Pure transformation: position row -> open-event for the history feed.
+ * Returns null when the position has no usable open date.
+ *
+ * The trick this function exists to handle: distinguishing the user-provided
+ * purchase date (`purchased_at`, when they actually bought the stock) from
+ * the row-creation timestamp (`created_at`, when they added it to Outpost).
+ * Before this split, the agent would say "you bought N days ago" based on
+ * created_at, which is wrong for any position where the user didn't fill in
+ * the optional purchase-date field.
+ *
+ * Output contract when purchaseDateProvided is false:
+ *  - title says "Added to Outpost", NOT "Bought"
+ *  - meta.purchaseDateProvided === false
+ *  - recallHistory upgrades this to a top-level dateMeaning='added_to_outpost_only'
+ *    flag and the recall_history tool description instructs the model to
+ *    refrain from hold-duration inference.
+ *
+ * Exported for unit tests.
+ */
+export function positionToOpenEvent(p) {
+  if (!p) return null;
+  const purchaseDateProvided = !!p.purchased_at;
+  const openDate = p.purchased_at || p.created_at;
+  if (!openDate) return null;
+
+  const quoteCandidate = p.entry_thesis || null;
+  const avg = (p.avg_cost ?? 0).toFixed(2);
+  const title = purchaseDateProvided
+    ? `Bought ${p.shares} ${p.ticker} @ $${avg}`
+    : `Added ${p.shares} ${p.ticker} @ $${avg} avg to Outpost (purchase date not specified)`;
+  const excerpt = purchaseDateProvided
+    ? truncate(p.entry_thesis || `Opened ${p.ticker} position`, 220)
+    : truncate(p.entry_thesis || `Tracking ${p.ticker} position in Outpost. User did not specify when they actually bought it.`, 220);
+
+  return {
+    id: `open:${p.id}`,
+    source: 'position_open',
+    date: openDate,
+    ticker: p.ticker,
+    title,
+    excerpt,
+    quote: quoteCandidate ? truncate(quoteCandidate, 400) : null,
+    outcome: null,
+    pnl: null,
+    holdDays: null,
+    meta: {
+      shares: p.shares,
+      avgCost: p.avg_cost,
+      companyName: p.company_name,
+      reversalCondition: p.reversal_condition || null,
+      stillOpen: true,
+      purchaseDateProvided,
+    },
+  };
+}
+
 async function fetchActivePositions({ userId, ticker, dateFrom, dateTo, limit }) {
   let q = supabase.from('positions')
     .select('id,ticker,company_name,shares,avg_cost,entry_thesis,reversal_condition,thesis_written_at,purchased_at,created_at')
@@ -160,30 +217,10 @@ async function fetchActivePositions({ userId, ticker, dateFrom, dateTo, limit })
 
   const out = [];
   for (const p of data ?? []) {
-    const openDate = p.purchased_at || p.created_at;
-    // Open event — fires for every active position
-    if (openDate) {
-      if ((!dateFrom || openDate >= dateFrom) && (!dateTo || openDate <= dateTo)) {
-        const quoteCandidate = p.entry_thesis || null;
-        out.push({
-          id: `open:${p.id}`,
-          source: 'position_open',
-          date: openDate,
-          ticker: p.ticker,
-          title: `Bought ${p.shares} ${p.ticker} @ $${(p.avg_cost ?? 0).toFixed(2)}`,
-          excerpt: truncate(p.entry_thesis || `Opened ${p.ticker} position`, 220),
-          quote: quoteCandidate ? truncate(quoteCandidate, 400) : null,
-          outcome: null,
-          pnl: null,
-          holdDays: null,
-          meta: {
-            shares: p.shares,
-            avgCost: p.avg_cost,
-            companyName: p.company_name,
-            reversalCondition: p.reversal_condition || null,
-            stillOpen: true,
-          },
-        });
+    const openEvent = positionToOpenEvent(p);
+    if (openEvent) {
+      if ((!dateFrom || openEvent.date >= dateFrom) && (!dateTo || openEvent.date <= dateTo)) {
+        out.push(openEvent);
       }
     }
 
@@ -469,15 +506,29 @@ function wrapQuote(text, max = 400) {
 }
 export async function recallHistory(options) {
   const events = await getUserHistory(options);
-  return events.map(e => ({
-    source: e.source,
-    date: e.date,
-    ticker: e.ticker,
-    title: e.title,
-    excerpt: wrapQuote(e.excerpt, 220),
-    context: wrapQuote(e.quote, 400), // user's verbatim writing — wrap before agent sees it
-    outcome: e.outcome,
-    pnl: e.pnl,
-    holdDays: e.holdDays,
-  }));
+  return events.map(e => {
+    // For position_open events whose date is the row-creation timestamp
+    // (not a user-provided purchase date), pass through an explicit signal
+    // so the agent doesn't reason about hold duration from a meaningless
+    // date. Other event types are unaffected: their dates are real
+    // timestamps of when the user wrote/closed/chatted.
+    const isUnreliableOpenDate = e.source === 'position_open' && e.meta?.purchaseDateProvided === false;
+    return {
+      source: e.source,
+      date: e.date,
+      ticker: e.ticker,
+      title: e.title,
+      excerpt: wrapQuote(e.excerpt, 220),
+      context: wrapQuote(e.quote, 400), // user's verbatim writing, wrap before agent sees it
+      outcome: e.outcome,
+      pnl: e.pnl,
+      holdDays: e.holdDays,
+      // For position_open with no user-provided purchase date, this date is
+      // when the row was added to Outpost, NOT when the user bought. Do not
+      // infer hold duration from it. The user has not told us when they bought.
+      dateMeaning: e.source === 'position_open'
+        ? (isUnreliableOpenDate ? 'added_to_outpost_only' : 'actual_purchase_date')
+        : undefined,
+    };
+  });
 }

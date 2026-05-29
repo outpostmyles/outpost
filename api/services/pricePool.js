@@ -22,26 +22,44 @@ let interval = null;
 // Always-include benchmarks. Without these, features that compare a position's
 // move to the broad market (e.g. /analysis MARKET-RELATIVE) silently lose
 // their comparison data when no user happens to hold SPY/QQQ. Pin them to
-// the pool so every user — including the very first one — gets the comparison.
+// the pool so every user, including the very first one, gets the comparison.
 const BENCHMARK_TICKERS = ['SPY', 'QQQ', 'DIA', 'IWM'];
 
+// Ticker-set cache. The pool used to query positions + watchlist + alerts on
+// every refresh tick (every 30s). At 1000 users with 30 positions each that's
+// 60k rows scanned twice a minute just to know which tickers to fetch. Now
+// the set is cached for TICKER_CACHE_TTL_MS and invalidated explicitly when
+// any mutation site calls requestRefresh().
+const TICKER_CACHE_TTL_MS = 5 * 60 * 1000;
+let tickerCacheEntry = null;  // { tickers: Set<string>, expiresAt: number }
+
+// Sanity bounds for changePercent at ingestion. Polygon's snapshot endpoint
+// occasionally returns wildly wrong change percentages for thin-volume stocks
+// (stale prevClose, bad split adjustment, weird premarket pricing). Anything
+// outside these bounds is almost certainly a data error and gets nulled out
+// so the UI shows "—" instead of "+7,825%". Real moves like a small-cap pump
+// on news rarely exceed +500% in a single session, and a stock dropping more
+// than 95% in one day is essentially delisting territory.
+const CHANGE_PCT_MAX = 500;
+const CHANGE_PCT_MIN = -95;
+
 /**
- * Query all unique tickers across positions and watchlists.
- * This is one lightweight DB query.
+ * Query all unique tickers across positions, watchlists, and alerts.
+ * Cached in memory for TICKER_CACHE_TTL_MS. Mutation sites (position add,
+ * watchlist add, alert create) call invalidateTickerSet via requestRefresh
+ * so a new ticker shows up in the next refresh, not 5 minutes later.
  */
-async function collectTickers() {
+async function getTickerSet() {
+  if (tickerCacheEntry && Date.now() < tickerCacheEntry.expiresAt) {
+    return tickerCacheEntry.tickers;
+  }
   try {
-    // Also pull tickers from active, not-yet-triggered price alerts so the
-    // alert monitor always has fresh prices for any symbol a user cares
-    // about — even if it's not in their portfolio or watchlist.
     const [posResult, watchResult, alertResult] = await Promise.allSettled([
       supabase.from('positions').select('ticker'),
       supabase.from('watchlist').select('ticker'),
       supabase.from('price_alerts').select('ticker').eq('active', true).eq('triggered', false),
     ]);
     const tickers = new Set();
-    // Always seed with benchmarks so MARKET-RELATIVE / sector comparisons
-    // never lose their reference even when no user holds the index ETF.
     for (const t of BENCHMARK_TICKERS) tickers.add(t);
     if (posResult.status === 'fulfilled') {
       for (const p of posResult.value.data ?? []) tickers.add(p.ticker);
@@ -53,11 +71,44 @@ async function collectTickers() {
       for (const a of alertResult.value.data ?? []) tickers.add(a.ticker);
     }
     allTickers = tickers;
+    tickerCacheEntry = { tickers, expiresAt: Date.now() + TICKER_CACHE_TTL_MS };
     return tickers;
   } catch (err) {
     console.error('[PricePool] Ticker collection error:', err.message);
+    // If we have a stale cache entry, prefer that over an empty set so prices
+    // keep refreshing for known tickers during a transient DB blip.
+    if (tickerCacheEntry?.tickers?.size) return tickerCacheEntry.tickers;
     return allTickers;
   }
+}
+
+/**
+ * Invalidate the ticker-set cache. Called by requestRefresh so a newly-added
+ * position triggers a fresh DB query on the next refresh tick.
+ */
+function invalidateTickerSet() {
+  tickerCacheEntry = null;
+}
+
+/**
+ * Validates a price snapshot. Returns the snapshot with changePercent set to
+ * null if it falls outside sanity bounds (likely a stale prevClose from
+ * Polygon, not a real move). Logs the rejection so we can monitor frequency.
+ * Pure-ish: only side effect is a console.warn for outliers.
+ */
+function sanitizeSnapshot(ticker, snapshot) {
+  if (!snapshot || snapshot.price == null) return snapshot;
+  const cp = snapshot.changePercent;
+  if (cp != null && (cp > CHANGE_PCT_MAX || cp < CHANGE_PCT_MIN)) {
+    console.warn(`[PricePool] Rejecting suspicious changePercent for ${ticker}: ${cp.toFixed(2)}% (price $${snapshot.price}, prevClose $${snapshot.prevClose}). Nulling out.`);
+    return { ...snapshot, changePercent: null };
+  }
+  return snapshot;
+}
+
+// Exported alias so callers that haven't migrated to getTickerSet still work.
+async function collectTickers() {
+  return getTickerSet();
 }
 
 /**
@@ -91,7 +142,8 @@ async function refreshPrices() {
       const now = Date.now();
       for (const [ticker, data] of Object.entries(snapshots)) {
         if (data.price != null) {
-          prices.set(ticker, { ...data, updatedAt: now });
+          const clean = sanitizeSnapshot(ticker, data);
+          prices.set(ticker, { ...clean, updatedAt: now });
           successCount++;
         }
       }
@@ -106,7 +158,8 @@ async function refreshPrices() {
       const now = Date.now();
       fetches.forEach((result, i) => {
         if (result.status === 'fulfilled' && result.value?.price) {
-          prices.set(missing[i], { ...result.value, updatedAt: now });
+          const clean = sanitizeSnapshot(missing[i], result.value);
+          prices.set(missing[i], { ...clean, updatedAt: now });
           successCount++;
         }
       });
@@ -173,16 +226,33 @@ export function getPrices(tickers) {
 }
 
 /**
- * Force a refresh — useful after a user adds a new position.
- * Debounced to prevent spam.
+ * Force a refresh. Useful after a user adds a new position or watchlist
+ * entry, since otherwise the pool won't know to fetch the new ticker for
+ * up to TICKER_CACHE_TTL_MS. Invalidates the ticker-set cache so the
+ * upcoming refresh re-queries the DB for the new set.
+ *
+ * Debounced 2 seconds. Multiple rapid mutations (e.g. screenshot import
+ * adding 5 positions at once) collapse into a single refresh.
  */
 let pendingRefresh = null;
 export function requestRefresh() {
+  invalidateTickerSet();
   if (pendingRefresh) return;
   pendingRefresh = setTimeout(() => {
     refreshPrices();
     pendingRefresh = null;
   }, 2000);
+}
+
+// Test seam. Exports a way to force the cache to expire NOW so unit tests can
+// verify the cached-vs-fresh paths without waiting 5 minutes of wall clock.
+export function _expireTickerCacheForTest() {
+  if (tickerCacheEntry) tickerCacheEntry.expiresAt = 0;
+}
+
+// Test seam. Lets unit tests exercise the sanitizer directly.
+export function _sanitizeSnapshotForTest(ticker, snapshot) {
+  return sanitizeSnapshot(ticker, snapshot);
 }
 
 /**
