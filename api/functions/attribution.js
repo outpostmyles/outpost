@@ -51,15 +51,49 @@ function aggregate(trades) {
 //
 // When ready=false, frontend shows the "not enough data — write theses on
 // your active positions to start tracking" empty state.
+// Columns the endpoint selects. execution_rating is in its own list because
+// it was added in migration 017 and may not exist in older DBs. If the
+// primary query fails with a "column does not exist" error we retry without
+// the optional columns so users on stale schemas still see Patterns. The
+// execution-rating block in the response just won't appear for them, which
+// is correct behavior since they couldn't have rated any closes anyway.
+const REQUIRED_COLS = 'pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days';
+const OPTIONAL_COLS = ['execution_rating'];
+
+async function fetchClosedTradesResilient(userId) {
+  const fullSelect = [REQUIRED_COLS, ...OPTIONAL_COLS].join(', ');
+  const { data, error } = await supabase
+    .from('closed_trades')
+    .select(fullSelect)
+    .eq('user_id', userId)
+    .order('closed_at', { ascending: false })
+    .limit(500);
+  if (!error) return data ?? [];
+
+  // Retry without optional columns if the error looks schema-related. Supabase
+  // returns code '42703' (undefined_column) or a message containing 'column'
+  // and 'does not exist'. Be lenient on detection because exact error shape
+  // varies across PostgREST versions.
+  const msg = (error.message || '').toLowerCase();
+  const looksLikeMissingColumn = error.code === '42703'
+    || (msg.includes('column') && msg.includes('does not exist'))
+    || msg.includes('execution_rating');
+  if (!looksLikeMissingColumn) throw error;
+
+  console.warn(`[Attribution] Falling back to schema-safe query (missing optional column). Error was: ${error.message}`);
+  const { data: fallbackData, error: fallbackErr } = await supabase
+    .from('closed_trades')
+    .select(REQUIRED_COLS)
+    .eq('user_id', userId)
+    .order('closed_at', { ascending: false })
+    .limit(500);
+  if (fallbackErr) throw fallbackErr;
+  return fallbackData ?? [];
+}
+
 router.get('/', requireAuth, rateLimit(15), async (req, res) => {
   try {
-    const { data: trades, error } = await supabase
-      .from('closed_trades')
-      .select('pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days, execution_rating')
-      .eq('user_id', req.user.id)
-      .order('closed_at', { ascending: false })
-      .limit(500);
-    if (error) throw error;
+    const trades = await fetchClosedTradesResilient(req.user.id);
 
     const all = trades ?? [];
     if (all.length < MIN_TRADES_FOR_ATTRIBUTION) {
