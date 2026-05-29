@@ -1,9 +1,10 @@
 /**
  * TODAY — Outpost's curated picks surface.
  *
- * Aggregates the highest-signal item from each category and returns up to 5
- * ranked picks for the user. Designed to answer "what should I look at right
- * now?" in 30 seconds without forcing the user to walk every tab.
+ * Aggregates the highest-signal item from each category and returns up to
+ * `limit` (default 10) ranked picks for the user. Designed to answer "what
+ * should I look at right now?" in 30 seconds without forcing the user to
+ * walk every tab. Renders smaller on calm days, not padded to 10.
  *
  * Sources (all cached — no fresh AI calls here):
  *   - User positions     → ALERT (drawdown ≥20%, target hit, stop broken)
@@ -22,7 +23,15 @@
  * Cost: zero Claude calls. Returns in <100ms when caches are warm.
  *
  * Ranking: priority score per item (higher = more important).
- * Returns sorted by priority, capped at 5.
+ * Returns sorted by priority, capped at `limit` (default 10).
+ *
+ * Mover compositing: on a volatile day a single user might have 5 holdings
+ * each up or down 5%+, which used to fill every TODAY slot with the same
+ * boilerplate "Big move on one of your holdings" card and crowd out
+ * catalysts, sector heat, and other distinct signals. When >=3 movers land
+ * in TODAY, they collapse into ONE composite item (type='mover_group')
+ * that lists every mover compactly. Other signal types stay free to fill
+ * the remaining slots.
  */
 import { supabase } from '../db.js';
 import { getPrices } from './pricePool.js';
@@ -44,8 +53,45 @@ const PRIORITY = {
  * Build the TODAY feed for one user.
  * Returns: { items: [{ type, ticker, title, detail, priority, link }] }
  */
+/**
+ * Pure: given the raw items list, collapse 3+ portfolio movers into a
+ * single composite item. Returns a new array, never mutates the input.
+ * Below the threshold, returns the items unchanged. Exported for tests.
+ *
+ * The composite item inherits the priority of the highest-priority mover
+ * in the group so it still floats up to the same position in the final
+ * sort. Movers inside the group are sorted by absolute % desc so the
+ * biggest move shows first when rendered.
+ */
+export function compositeMovers(items, threshold = 3) {
+  const movers = items.filter(i => i?.type === 'mover');
+  if (movers.length < threshold) return [...items];
+
+  const nonMovers = items.filter(i => i?.type !== 'mover');
+  const maxPriority = Math.max(...movers.map(m => m.priority ?? 0));
+  const sortedMovers = [...movers].sort((a, b) => Math.abs(b.pct ?? 0) - Math.abs(a.pct ?? 0));
+
+  const composite = {
+    type: 'mover_group',
+    subtype: 'portfolio_movers',
+    ticker: null,
+    title: `${movers.length} positions moved 5%+`,
+    detail: 'Big day across your book. Tap any ticker to dig in.',
+    priority: maxPriority,
+    movers: sortedMovers.map(m => ({
+      ticker: m.ticker,
+      pct: m.pct,
+      direction: m.direction,
+      title: m.title,
+      link: m.link,
+    })),
+  };
+  return [...nonMovers, composite];
+}
+
 export async function buildTodayFeed(userId, opts = {}) {
-  const limit = opts.limit ?? 5;
+  const limit = opts.limit ?? 10;
+  const moverCompositeThreshold = opts.moverCompositeThreshold ?? 3;
 
   // ── Load all the source data in parallel ────────────────────────────────
   const [
@@ -132,15 +178,19 @@ export async function buildTodayFeed(userId, opts = {}) {
       });
       continue;
     }
-    // Big mover — only flag if it's a meaningful chunk move
+    // Big mover. Only flag if it's a meaningful chunk move. The composite
+    // step below collapses 3+ of these into one card so they don't crowd
+    // out other signal types on a volatile day.
     if (todayPct != null && Math.abs(todayPct) >= 5) {
       const dir = todayPct >= 0 ? 'up' : 'down';
       items.push({
         type: 'mover', subtype: 'portfolio_mover', ticker: p.ticker,
         title: `${dir} ${Math.abs(todayPct).toFixed(1)}% today`,
-        detail: `Big move on one of your holdings — check what's driving it.`,
+        detail: `Big move on one of your holdings. Check what's driving it.`,
         priority: PRIORITY.PORTFOLIO_MOVER + (Math.abs(todayPct) >= 8 ? 5 : 0),
         link: { tab: 'portfolio', ticker: p.ticker },
+        pct: todayPct,           // signed, for compositing sort + rendering
+        direction: dir,
       });
     }
   }
@@ -235,9 +285,15 @@ export async function buildTodayFeed(userId, opts = {}) {
     } catch {}
   }
 
+  // ── Composite movers ────────────────────────────────────────────────────
+  // When 3+ portfolio movers landed in items, collapse them into ONE
+  // mover_group card so they don't eat every TODAY slot with boilerplate
+  // copy. Below the threshold, keep them as individual cards.
+  const composited = compositeMovers(items, moverCompositeThreshold);
+
   // ── Sort + cap ──────────────────────────────────────────────────────────
-  items.sort((a, b) => b.priority - a.priority);
-  let final = items.slice(0, limit);
+  composited.sort((a, b) => b.priority - a.priority);
+  let final = composited.slice(0, limit);
 
   // Quiet-day fallback — better than padding with broad-market noise.
   if (final.length === 0) {

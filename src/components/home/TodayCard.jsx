@@ -15,23 +15,25 @@ import { DisclaimerBadge } from '../shared/UI.jsx';
  */
 
 const STYLE_BY_TYPE = {
-  alert:    { label: 'ALERT',    color: 'var(--amber)', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
-  watch:    { label: 'WATCH',    color: '#a78bfa',       bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.3)' },
-  mover:    { label: 'MOVER',    color: '#60a5fa',       bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.3)' },
-  heat:     { label: 'HEAT',     color: 'var(--amber)', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
-  bargain:  { label: 'BARGAIN',  color: 'var(--green)', bg: 'rgba(34,197,94,0.15)',  border: 'rgba(34,197,94,0.3)' },
-  catalyst: { label: 'CATALYST', color: '#f97316',      bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.3)' },
-  quiet:    { label: 'QUIET',    color: 'var(--faint)', bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)' },
+  alert:       { label: 'ALERT',    color: 'var(--amber)', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
+  watch:       { label: 'WATCH',    color: '#a78bfa',       bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.3)' },
+  mover:       { label: 'MOVER',    color: '#60a5fa',       bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.3)' },
+  mover_group: { label: 'MOVERS',   color: '#60a5fa',       bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.3)' },
+  heat:        { label: 'HEAT',     color: 'var(--amber)', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
+  bargain:     { label: 'BARGAIN',  color: 'var(--green)', bg: 'rgba(34,197,94,0.15)',  border: 'rgba(34,197,94,0.3)' },
+  catalyst:    { label: 'CATALYST', color: '#f97316',      bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.3)' },
+  quiet:       { label: 'QUIET',    color: 'var(--faint)', bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)' },
 };
 
 const ACCENT_BY_TYPE = {
-  alert:    'var(--amber)',
-  watch:    '#8b5cf6',
-  mover:    'var(--blue)',
-  heat:     'var(--amber)',
-  bargain:  'var(--green)',
-  catalyst: '#f97316',
-  quiet:    'rgba(255,255,255,0.15)',
+  alert:       'var(--amber)',
+  watch:       '#8b5cf6',
+  mover:       'var(--blue)',
+  mover_group: 'var(--blue)',
+  heat:        'var(--amber)',
+  bargain:     'var(--green)',
+  catalyst:    '#f97316',
+  quiet:       'rgba(255,255,255,0.15)',
 };
 
 export default function TodayCard({ onTabSwitch, onItemTap }) {
@@ -109,6 +111,72 @@ export default function TodayCard({ onTabSwitch, onItemTap }) {
         const style = STYLE_BY_TYPE[item.type] || STYLE_BY_TYPE.mover;
         const accent = ACCENT_BY_TYPE[item.type] || 'var(--blue)';
         const isQuiet = item.type === 'quiet';
+
+        // Composite mover card: a single TODAY row that lists every big
+        // mover compactly. Replaces 3+ identical-looking mover rows when
+        // a volatile day would otherwise fill every slot with the same
+        // boilerplate. Each ticker in the list is independently tappable.
+        if (item.type === 'mover_group') {
+          return (
+            <div
+              key={`mover_group-${i}`}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                padding: '11px 16px',
+                borderTop: '1px solid var(--border)',
+                gap: 10,
+              }}
+            >
+              <div style={{ flexShrink: 0, width: 3, alignSelf: 'stretch', borderRadius: 2, background: accent }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                    background: style.bg, color: style.color,
+                    border: `0.5px solid ${style.border}`, letterSpacing: '0.5px',
+                  }}>
+                    {style.label}
+                  </span>
+                  {item.title && <span style={{ fontSize: 11, color: 'var(--text)', fontWeight: 600 }}>{item.title}</span>}
+                </div>
+                <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.45, margin: '0 0 7px 0' }}>{item.detail}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {(item.movers || []).map((m, mi) => {
+                    const up = m.direction === 'up';
+                    return (
+                      <div
+                        key={`${m.ticker}-${mi}`}
+                        onClick={() => onItemTap?.({ link: m.link, ticker: m.ticker, type: 'mover' })}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 8px',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          transition: 'background 0.12s',
+                          background: 'transparent',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px', minWidth: 48 }}>{m.ticker}</span>
+                          <span style={{ fontSize: 11, color: up ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                            {up ? '+' : ''}{m.pct != null ? m.pct.toFixed(1) : '?'}%
+                          </span>
+                        </div>
+                        <span style={{ color: 'var(--faint)', fontSize: 13 }}>›</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div
             key={`${item.type}-${item.ticker || 'noticker'}-${i}`}
