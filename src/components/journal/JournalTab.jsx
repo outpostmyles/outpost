@@ -306,7 +306,7 @@ function PatternsView() {
     );
   }
 
-  const { patterns, totalTrades, execution } = data;
+  const { patterns, totalTrades, execution, scorecard } = data;
   const rows = [
     { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
     { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
@@ -316,6 +316,8 @@ function PatternsView() {
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px' }}>
+      {scorecard && <ScorecardSummary s={scorecard} />}
+
       <div style={{ marginBottom: 16 }}>
         <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 4 }}>Your patterns</p>
         <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55 }}>
@@ -341,6 +343,95 @@ function PatternsView() {
 
       <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 22, lineHeight: 1.55, letterSpacing: '0.3px' }}>
         Small samples are noisy. Patterns matter most after 20+ closed trades.
+      </p>
+    </div>
+  );
+}
+
+// Top-line track record. Sits above the behavior cuts and answers the first
+// question any trader asks: am I actually making money, and do I win more than
+// I lose. The hold-time line is the behavioral tell most traders never see.
+function ScorecardSummary({ s }) {
+  if (!s) return null;
+
+  const money = (n) => {
+    if (n == null) return '—';
+    const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+    const abs = Math.abs(n);
+    return `${sign}$${abs.toLocaleString(undefined, { maximumFractionDigits: abs >= 1000 ? 0 : 2 })}`;
+  };
+  const pnlColor = s.totalPnl > 0 ? 'var(--green)' : s.totalPnl < 0 ? 'var(--red)' : 'var(--text)';
+
+  // Flag the classic mistake: riding losers longer than winners. Only call it
+  // out with enough trades on both sides to mean something.
+  const ridesLosersLonger = s.avgHoldWinners != null && s.avgHoldLosers != null
+    && s.wins >= 2 && s.losses >= 2 && s.avgHoldLosers > s.avgHoldWinners * 1.3;
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 14px 14px', marginBottom: 18 }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 8 }}>Your track record</p>
+
+      {/* Realized P&L hero */}
+      <p style={{ fontSize: 28, fontWeight: 800, color: pnlColor, lineHeight: 1, letterSpacing: '-0.5px', margin: 0 }}>{money(s.totalPnl)}</p>
+      <p style={{ fontSize: 10, color: 'var(--muted)', margin: '4px 0 14px' }}>
+        realized across {s.totalTrades} closed trade{s.totalTrades === 1 ? '' : 's'}
+      </p>
+
+      {/* Headline stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+        <ScoreStat label="Win rate" value={`${s.winRate.toFixed(0)}%`} sub={`${s.wins}W / ${s.losses}L`} />
+        <ScoreStat
+          label="Profit factor"
+          value={s.profitFactor != null ? s.profitFactor.toFixed(2) : '—'}
+          sub={s.profitFactor != null ? '$ won per $1 lost' : 'no losses yet'}
+        />
+        <ScoreStat label="Avg / trade" value={money(s.expectancy)} sub="realized" />
+      </div>
+
+      {/* Average winner vs loser, in plain words */}
+      {(s.avgWin != null || s.avgLoss != null) && (
+        <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 8px' }}>
+          Your average winner is {money(s.avgWin)}. Your average loser is {money(s.avgLoss)}.
+        </p>
+      )}
+
+      {/* Hold-time behavioral tell */}
+      {(s.avgHoldWinners != null || s.avgHoldLosers != null) && (
+        <p style={{ fontSize: 11, color: ridesLosersLonger ? 'var(--amber)' : 'var(--muted)', lineHeight: 1.5, margin: 0 }}>
+          You hold winners {s.avgHoldWinners ?? '—'} day{s.avgHoldWinners === 1 ? '' : 's'} on average, losers {s.avgHoldLosers ?? '—'} day{s.avgHoldLosers === 1 ? '' : 's'}.
+          {ridesLosersLonger ? ' You ride losers longer than winners, the opposite of what most plans intend.' : ''}
+        </p>
+      )}
+
+      {/* Best / worst */}
+      {(s.best || s.worst) && (
+        <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+          {s.best && <ScoreBestWorst label="Best trade" t={s.best} good />}
+          {s.worst && <ScoreBestWorst label="Worst trade" t={s.worst} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreStat({ label, value, sub }) {
+  return (
+    <div style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 9px' }}>
+      <p style={{ fontSize: 8.5, color: 'var(--faint)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 3 }}>{label}</p>
+      <p style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700, lineHeight: 1, margin: 0 }}>{value}</p>
+      {sub && <p style={{ fontSize: 8.5, color: 'var(--muted)', margin: '3px 0 0' }}>{sub}</p>}
+    </div>
+  );
+}
+
+function ScoreBestWorst({ label, t, good }) {
+  const color = good ? 'var(--green)' : 'var(--red)';
+  return (
+    <div style={{ flex: 1, background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+      <p style={{ fontSize: 8.5, color: 'var(--faint)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 3 }}>{label}</p>
+      <p style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700, margin: 0 }}>{t.ticker || '—'}</p>
+      <p style={{ fontSize: 10, color, fontWeight: 600, margin: '1px 0 0' }}>
+        {t.pnlPercent != null ? `${t.pnlPercent > 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%` : '—'}
       </p>
     </div>
   );

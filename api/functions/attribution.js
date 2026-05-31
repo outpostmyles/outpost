@@ -14,6 +14,7 @@ import express from 'express';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { computeScorecard } from '../services/tradeScorecard.js';
 
 const router = express.Router();
 
@@ -57,7 +58,7 @@ function aggregate(trades) {
 // the optional columns so users on stale schemas still see Patterns. The
 // execution-rating block in the response just won't appear for them, which
 // is correct behavior since they couldn't have rated any closes anyway.
-const REQUIRED_COLS = 'pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days';
+const REQUIRED_COLS = 'ticker, pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days';
 const OPTIONAL_COLS = ['execution_rating'];
 
 async function fetchClosedTradesResilient(userId) {
@@ -173,6 +174,9 @@ router.get('/', requireAuth, rateLimit(15), async (req, res) => {
       ready: true,
       totalTrades: all.length,
       minRequired: MIN_TRADES_FOR_ATTRIBUTION,
+      // Top-line track record (realized P&L, win rate, profit factor, hold-time
+      // split). Computed from the same `all` array, so no extra query.
+      scorecard: computeScorecard(all),
       patterns: {
         thesis: { ...thesisAgg, lift: lift(thesisAgg.with, thesisAgg.without) },
         stopLoss: { ...stopAgg, lift: lift(stopAgg.with, stopAgg.without) },
