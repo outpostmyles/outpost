@@ -6,6 +6,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { sessionPacing } from '../middleware/sessionPacing.js';
 import { buildAgentContext } from '../utils/promptEngine.js';
 import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
+import { assessRegister, moodDirective } from '../services/pulseContext.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
 import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
 import { config } from '../config.js';
@@ -398,6 +399,16 @@ You are NOT a financial advisor. You're a trading partner. Not financial advice 
  * lead — those are the most actionable questions a user could be asking RIGHT
  * NOW. Generic market and P&L starters fill the rest.
  */
+// Reuse the PULSE emotional-register read so the agent is calm in a storm too,
+// not just the home screen. Works off the context strings we already build.
+function moodFor(ctx) {
+  return moodDirective(assessRegister({
+    vix: parseFloat(ctx.vix),
+    fearGreed: parseFloat(ctx.fearGreed),
+    brokenStop: /BROK/i.test(ctx.activeAlerts || ''),
+  }).register);
+}
+
 function buildDynamicStarters(ctx) {
   const starters = [];
   const vixNum = parseFloat(ctx.vix) || 0;
@@ -689,6 +700,7 @@ ${sectorFocusStr}
 ${alreadyRecStr}
 ${ctx.activeAlerts || ''}
 ${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAlerts: ctx.activeAlerts })}
+${moodFor(ctx)}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 ECONOMIC CALENDAR AWARENESS:
@@ -1060,6 +1072,7 @@ ${sectorFocusStr}
 ${alreadyRecStr}
 ${ctx.activeAlerts || ''}
 ${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAlerts: ctx.activeAlerts })}
+${moodFor(ctx)}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 AGENT MEMORY:
