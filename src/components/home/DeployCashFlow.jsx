@@ -325,10 +325,10 @@ function OptionCard({ opt, sessionId, onPick, showToast }) {
         </div>
       )}
       {opt.risk_note && (
-        <p style={{ fontSize: 10, color: 'var(--faint)', lineHeight: 1.5, marginBottom: 10 }}>
-          <span style={{ color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.3px' }}>RISK · </span>
-          {opt.risk_note}
-        </p>
+        <div style={{ borderLeft: '2px solid var(--amber)', paddingLeft: 8, marginBottom: 10 }}>
+          <p style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 2 }}>THE RISK</p>
+          <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>{opt.risk_note}</p>
+        </div>
       )}
 
       {counter && (
@@ -338,17 +338,20 @@ function OptionCard({ opt, sessionId, onPick, showToast }) {
         </div>
       )}
 
+      {/* Reflect and act get equal weight on purpose: pausing should be as easy
+          as buying. The "talk me out of it" path leads (left) so the honest
+          pushback is the first thing the eye lands on, not an afterthought. */}
       <div style={{ display: 'flex', gap: 6 }}>
-        <button onClick={onPick} className="btn btn-blue" style={{ flex: 1, fontSize: 11, padding: '8px 0' }}>
-          I'll do this →
-        </button>
         <button
           onClick={fetchCounter}
           disabled={counterLoading}
           className="btn btn-muted"
-          style={{ fontSize: 10, padding: '8px 12px' }}
+          style={{ flex: 1, fontSize: 11, padding: '8px 0' }}
         >
-          {counterLoading ? '…' : counter ? 'HIDE' : 'WHY NOT?'}
+          {counterLoading ? '…' : counter ? 'Hide pushback' : 'Talk me out of it'}
+        </button>
+        <button onClick={onPick} className="btn btn-blue" style={{ flex: 1, fontSize: 11, padding: '8px 0' }}>
+          I'll do this →
         </button>
       </div>
     </div>
