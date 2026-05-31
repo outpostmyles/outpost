@@ -16,6 +16,7 @@ import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
 import { getPlanAdherence } from '../services/planAdherence.js';
 import { getPerformanceAttribution } from '../services/performanceAttribution.js';
+import { assessRegister, moodDirective, pickPulseFallback } from '../services/pulseContext.js';
 import { getPortfolioSynthesis } from '../services/portfolioSynthesis.js';
 import { dailyAiCeiling } from '../middleware/aiCeiling.js';
 import { recallHistory } from '../services/historyAggregator.js';
@@ -224,19 +225,13 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
 router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, res) => {
   // Fallback line picked by trivial hash of userId so it's stable per user
   // across the day, doesn't feel random on reload.
-  const FALLBACKS = [
-    'Quiet morning. Coffee, not panic.',
-    'Markets are markets. Nothing on your book demands attention right now.',
-    'No fires. Good day to read someone else\'s thesis.',
-    'Nothing screaming for action. Use the silence.',
-    'Steady. The opportunities you\'ll regret missing aren\'t on the screen today.',
-  ];
-  const pickFallback = () => {
-    const id = req.user.id || '';
-    const day = Math.floor(Date.now() / 86400000);
-    const seed = id.split('').reduce((s, c) => s + c.charCodeAt(0), 0) + day;
-    return FALLBACKS[Math.abs(seed) % FALLBACKS.length];
-  };
+  // Stable per-user-per-day seed so the fallback line doesn't feel random on
+  // reload. `register` starts calm and is upgraded to 'storm' below once we can
+  // see the book and the tape, so even the no-AI fallback matches the mood.
+  const seed = (req.user.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0)
+    + Math.floor(Date.now() / 86400000);
+  let register = 'calm';
+  const pickFallback = () => pickPulseFallback(register, seed);
 
   try {
     // Cache key buckets to the hour so the pulse can shift through the trading
@@ -300,6 +295,22 @@ router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, r
     const fg = market.fearGreed?.value;
     const regime = market.regime || 'Neutral';
 
+    // Read the emotional register so the line (and any fallback) matches the
+    // mood. Aggregate lifetime P&L %, the worst single-day move across holdings,
+    // and whether a stop just broke.
+    let costBasis = 0, curValue = 0, worstDayMove = null;
+    for (const p of positions) {
+      const live = priceMap[p.ticker]?.price;
+      const cost = Number(p.avg_cost) || 0;
+      const sh = Number(p.shares) || 0;
+      if (live && cost > 0 && sh > 0) { costBasis += cost * sh; curValue += live * sh; }
+      const ch = priceMap[p.ticker]?.changePercent;
+      if (ch != null && (worstDayMove == null || ch < worstDayMove)) worstDayMove = ch;
+    }
+    const pnlPercent = costBasis > 0 ? ((curValue - costBasis) / costBasis) * 100 : null;
+    const brokenStop = alerts.some(a => /BROKE/i.test(a));
+    register = assessRegister({ pnlPercent, dayMovePercent: worstDayMove, vix, fearGreed: fg, brokenStop }).register;
+
     // Anchors block for prompt — same Q/A format the agent context uses.
     // Wrap user text in <user_quoted> tags so the system prompt's safety
     // language applies. Slice to 200 chars each.
@@ -326,7 +337,8 @@ router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, r
       'NEVER use markdown. NEVER use emoji. Plain text only.',
       'If nothing notable is happening, say so plainly. Silence is information too.',
       'Return ONLY the sentence — no preamble, no quotes around it, no sign-off.',
-    ].join(' ');
+      moodDirective(register),
+    ].filter(Boolean).join(' ');
 
     const ctxLines = [
       `Trader: ${req.user.display_name || 'unnamed'}`,
