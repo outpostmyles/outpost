@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sessionPacing } from '../middleware/sessionPacing.js';
 import { buildAgentContext } from '../utils/promptEngine.js';
+import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
 import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
 import { config } from '../config.js';
@@ -687,6 +688,7 @@ TODAY'S FEATURED SECTORS (use these as starting points for stock ideas — they 
 ${sectorFocusStr}
 ${alreadyRecStr}
 ${ctx.activeAlerts || ''}
+${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAlerts: ctx.activeAlerts })}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 ECONOMIC CALENDAR AWARENESS:
@@ -1057,6 +1059,7 @@ TODAY'S FEATURED SECTORS:
 ${sectorFocusStr}
 ${alreadyRecStr}
 ${ctx.activeAlerts || ''}
+${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAlerts: ctx.activeAlerts })}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 AGENT MEMORY:
