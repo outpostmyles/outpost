@@ -12,12 +12,14 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
+import { filterNotes } from '../../lib/journalSearch.js';
 
 export default function JournalTab({ showToast, onTabSwitch }) {
   const [subTab, setSubTab] = useState('notes'); // 'notes' | 'timeline'
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openNote, setOpenNote] = useState(null); // full note object when editing
+  const [query, setQuery] = useState(''); // notes search box
   // Tickers the user owns (positions) and watches (watchlist). Used to turn
   // ALL-CAPS mentions in a note into tappable chips that jump to the agent.
   // We only linkify KNOWN tickers so stray all-caps prose (TODO, CASH) never
@@ -115,6 +117,9 @@ export default function JournalTab({ showToast, onTabSwitch }) {
     }
   }
 
+  // Notes filtered by the search box. Empty query returns all (instant).
+  const filteredNotes = filterNotes(notes, query);
+
   // ========== EDITOR VIEW ==========
   if (openNote) {
     return (
@@ -183,6 +188,40 @@ export default function JournalTab({ showToast, onTabSwitch }) {
             </button>
           </div>
 
+          {/* Search — pure client-side filter over title + preview. Only shown
+              once there are notes to search. Instant, no network per keystroke. */}
+          {!loading && notes.length > 0 && (
+            <div style={{ padding: '10px 16px 0', flexShrink: 0 }}>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Search notes…"
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: 'var(--raised)', border: '1px solid var(--border)',
+                    borderRadius: 6, padding: '8px 30px 8px 11px',
+                    color: 'var(--text)', fontSize: 11, fontFamily: 'inherit', outline: 'none',
+                  }}
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery('')}
+                    aria-label="Clear search"
+                    style={{
+                      position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', color: 'var(--faint)',
+                      cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 2, fontFamily: 'inherit',
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
             {loading ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: 30 }}><Spinner /></div>
@@ -196,9 +235,13 @@ export default function JournalTab({ showToast, onTabSwitch }) {
                   { title: 'Private by design', body: 'Trade plans you set on positions (thesis, target, stop) DO inform the agent. Free-form journal notes never do.' },
                 ]}
               />
+            ) : filteredNotes.length === 0 ? (
+              <p style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center', padding: '24px 16px', lineHeight: 1.5 }}>
+                No notes match "{query}". Search looks at titles and the start of each note.
+              </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {notes.map(note => (
+                {filteredNotes.map(note => (
                   <NoteListItem key={note.id} note={note} onOpen={() => handleOpenNote(note.id)} />
                 ))}
               </div>
