@@ -1527,10 +1527,13 @@ function HistorySection({ ticker, currentPositionId }) {
 
   if (loading) return null;
   // Filter out the current position's own "opened" + "thesis" events — the
-  // user is already looking at this position, no need to echo it back.
-  // Keep prior closed positions in the same ticker, agent chats, and notes.
+  // user is already looking at this position, no need to echo it back. Also
+  // drop journal notes: they get their own roomier NOTES section right below,
+  // so showing them here too would just duplicate them on the same card.
+  // Keep prior closed positions in the same ticker and agent chats.
   const filtered = (events || []).filter(e =>
     !(e.id === `open:${currentPositionId}` || e.id === `thesis:${currentPositionId}`)
+    && e.source !== 'journal'
   );
   if (filtered.length === 0) return null;
 
@@ -1651,6 +1654,120 @@ function HistoryRow({ ev }) {
       )}
     </div>
   );
+}
+
+/**
+ * NotesSection — the user's own journal notes that mention this ticker,
+ * surfaced on the expanded position card. The whole point: when you open a
+ * holding, the things you've already written about it are right there, instead
+ * of buried in the Journal tab. Tap a note to read it in full inline.
+ *
+ * Matching happens server-side with the shared ticker tokenizer (whole-token,
+ * ALL CAPS), so this only shows notes that genuinely reference the stock.
+ * Hides entirely when there are none. These notes are the user's private
+ * writing — the agent never reads them; this just shows them back to you.
+ */
+function NotesSection({ ticker }) {
+  const [notes, setNotes] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
+  const [fullById, setFullById] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    // Cache per ticker so re-expanding a card doesn't refetch. 5-min TTL is
+    // plenty — notes change rarely relative to how often cards get opened.
+    cachedFetch(`notes_by_ticker_${ticker}`, () => api.journal.notesByTicker(ticker), 5 * 60000)
+      .then(d => { if (!cancelled) setNotes(d.notes || []); })
+      .catch(() => { if (!cancelled) setNotes([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [ticker]);
+
+  async function toggle(note) {
+    if (openId === note.id) { setOpenId(null); return; }
+    setOpenId(note.id);
+    // Lazy-load the full body only when a note is opened and not cached yet.
+    // The list payload only carries a 220-char preview to stay small.
+    if (fullById[note.id] === undefined) {
+      try {
+        const { note: full } = await api.journal.getNote(note.id);
+        setFullById(prev => ({ ...prev, [note.id]: full?.content ?? '' }));
+      } catch {
+        setFullById(prev => ({ ...prev, [note.id]: null }));
+      }
+    }
+  }
+
+  if (loading) return null;
+  if (!notes || notes.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 5, fontWeight: 700 }}>
+        YOUR NOTES ON {ticker}
+        {notes.length > 1 && (
+          <span style={{ color: 'var(--faint)', fontWeight: 500, marginLeft: 6, letterSpacing: '0.3px' }}>
+            · {notes.length}
+          </span>
+        )}
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {notes.map(n => {
+          const isOpen = openId === n.id;
+          const full = fullById[n.id];
+          const when = noteTimeAgo(n.updated_at);
+          return (
+            <div
+              key={n.id}
+              onClick={() => toggle(n)}
+              style={{
+                background: 'var(--raised)',
+                borderLeft: '2px solid var(--muted)',
+                borderRadius: 4,
+                padding: '6px 9px',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: 10, color: 'var(--text)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {n.title || 'Untitled'}
+                </span>
+                <span style={{ fontSize: 9, color: 'var(--faint)', flexShrink: 0 }}>{when}</span>
+              </div>
+              {isOpen ? (
+                <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto' }}>
+                  {full === undefined ? 'Loading…' : full === null ? (n.preview || '') : (full || '(empty note)')}
+                </p>
+              ) : (
+                n.preview ? (
+                  <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    {n.preview}
+                  </p>
+                ) : null
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Compact relative time for note rows. Mirrors the Journal tab's timeAgo but
+// kept local so PortfolioTab doesn't take a dependency on JournalTab internals.
+function noteTimeAgo(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
@@ -1909,10 +2026,14 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               )}
             </div>
 
-            {/* Phase 3 YOUR HISTORY. Past chats, prior closed positions in
-                the same ticker, and journal notes referencing this stock.
-                Hides entirely when there's no history. */}
+            {/* Phase 3 YOUR HISTORY. Past chats and prior closed positions in
+                the same ticker. Journal notes are split out into their own
+                NOTES section below. Hides entirely when there's no history. */}
             <HistorySection ticker={pos.ticker} currentPositionId={pos.id} />
+
+            {/* YOUR NOTES — journal notes that mention this ticker, tap to read
+                in full. Hides entirely when there are none. */}
+            <NotesSection ticker={pos.ticker} />
 
             {/* Price levels (target/stop) — only rendered when at least one
                 level is set. Thesis is shown above in its own ThesisSection so

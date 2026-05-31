@@ -232,6 +232,7 @@ export const api = {
   journal: {
     listNotes: () => get('/api/journal/notes'),
     getNote: (id) => get(`/api/journal/notes/${id}`),
+    notesByTicker: (ticker) => get(`/api/journal/notes-by-ticker/${encodeURIComponent(ticker)}`),
     createNote: (body) => post('/api/journal/notes', body),
     updateNote: (id, body) => patch(`/api/journal/notes/${id}`, body),
     appendNote: (id, content) => post(`/api/journal/notes/${id}/append`, { content }),

@@ -8,6 +8,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sanitizeString } from '../middleware/validate.js';
 import { getUserHistory } from '../services/historyAggregator.js';
+import { filterNotesByTicker } from '../services/noteMatch.js';
 
 const router = express.Router();
 
@@ -79,6 +80,43 @@ router.get('/notes', requireAuth, rateLimit(60), async (req, res) => {
     res.json({ notes });
   } catch (err) {
     console.error('[Journal] list notes:', err.message);
+    res.status(500).json({ error: 'Failed to load notes' });
+  }
+});
+
+// List the current user's notes that mention a given ticker as a whole token.
+// Powers the "YOUR NOTES" section on a position card so the user sees what
+// they've already written about a holding, right where they manage it.
+//
+// We fetch the user's recent notes and confirm matches in JS with the shared
+// tokenizer rather than a SQL LIKE, so substring noise never leaks in (a SQL
+// '%CAT%' would match "education"; the tokenizer only matches a real CAT
+// token). At beta scale the 300-note scan is cheap; the client also caches by
+// ticker so expanding a card repeatedly doesn't refetch.
+router.get('/notes-by-ticker/:ticker', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const ticker = String(req.params.ticker || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6);
+    if (!ticker) return res.json({ ticker: '', notes: [] });
+
+    const { data, error } = await supabase
+      .from('journal_notes')
+      .select('id, title, content, created_at, updated_at')
+      .eq('user_id', req.user.id)
+      .order('updated_at', { ascending: false })
+      .limit(300);
+    if (error) throw error;
+
+    const matched = filterNotesByTicker(data ?? [], ticker).slice(0, 20);
+    const notes = matched.map(n => ({
+      id: n.id,
+      title: n.title,
+      preview: (n.content || '').slice(0, 220),
+      created_at: n.created_at,
+      updated_at: n.updated_at,
+    }));
+    res.json({ ticker, notes });
+  } catch (err) {
+    console.error('[Journal] notes-by-ticker:', err.message);
     res.status(500).json({ error: 'Failed to load notes' });
   }
 });
