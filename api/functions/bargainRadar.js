@@ -24,6 +24,7 @@ import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { getSnapshots, getFiftyTwoWeekHigh, getSMA200, getRSI } from '../utils/polygon.js';
+import { applyBuyableVerdicts } from '../services/bargainVerdicts.js';
 import {
   getAnalystRecommendation,
   getPriceTarget,
@@ -284,36 +285,22 @@ Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("b
       }, { signal: ctrl.signal });
     } finally { clearTimeout(tm); }
 
-    const text = msg.content[0].text;
+    const text = msg.content?.[0]?.text || '';
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return candidates.map(c => ({ ...c, verdict: 'buyable', thesis: 'Oversold large-cap with analyst support.' }));
-
-    const parsed = JSON.parse(match[0]);
-    const verdictMap = {};
-    for (const v of parsed.verdicts || []) {
-      verdictMap[v.ticker] = v;
+    let parsed = null;
+    if (match) {
+      try { parsed = JSON.parse(match[0]); } catch { parsed = null; }
     }
 
-    // Attach verdict, keep only buyables
-    const survivors = [];
-    for (const c of candidates) {
-      const v = verdictMap[c.ticker];
-      if (!v) {
-        // No verdict — keep with a generic thesis (shouldn't happen but be safe)
-        survivors.push({ ...c, verdict: 'buyable', thesis: 'Oversold large-cap with analyst support.' });
-        continue;
-      }
-      if (v.verdict === 'buyable') {
-        survivors.push({ ...c, verdict: 'buyable', thesis: v.thesis || 'Buyable dip.' });
-      }
-      // else: drop
-    }
-
-    return survivors;
+    // Fail closed: only names Claude explicitly marked "buyable" survive. If the
+    // verification did not produce usable verdicts, applyBuyableVerdicts returns
+    // [] rather than passing unvetted names through with a generic thesis.
+    return applyBuyableVerdicts(candidates, parsed);
   } catch (err) {
     console.error('[BargainRadar] Claude filter failed:', err.message);
-    // On failure, just pass through with generic theses
-    return candidates.map(c => ({ ...c, verdict: 'buyable', thesis: 'Oversold quality name with analyst support.' }));
+    // Fail closed: never present unverified names as vetted buyable dips. Better
+    // to show an empty radar than a confident wrong one.
+    return [];
   }
 }
 
