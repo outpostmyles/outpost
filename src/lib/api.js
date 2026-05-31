@@ -25,11 +25,16 @@ async function request(method, path, body, isFormData = false, retries = 1) {
       // app crashed" we'll have a code that maps to a specific log line.
       const requestId = res.headers.get('X-Request-Id') || null;
 
-      if (res.status === 401) {
+      // A 401 on a login/signup request means "wrong credentials", not an
+      // expired session. Only the auth-protected endpoints should trigger the
+      // session-expired flow (clear token + bounce to sign-in). For the auth
+      // endpoints themselves, fall through so the server's real message
+      // ("Invalid email or password") reaches the user.
+      if (res.status === 401 && !path.startsWith('/api/auth/')) {
         localStorage.removeItem('outpost_token');
         localStorage.removeItem('outpost_user');
         window.dispatchEvent(new Event('auth_expired'));
-        throw { error: 'Session expired — please sign in again', status: 401, requestId };
+        throw { error: 'Session expired. Please sign in again.', status: 401, requestId };
       }
 
       const data = await res.json().catch(() => ({}));
