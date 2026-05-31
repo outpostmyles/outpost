@@ -203,10 +203,10 @@ function PulseCard({ refreshKey }) {
     </div>
   );
 }
-// Removed cards superseded by TODAY (kept files for now, no longer imported here):
-//   - BargainRadarCard / SectorRadarCard / ConcentrationAlertCard / ProactiveDigestCard
-// All five surfaces those represented are now ranked into TODAY's 5-pick feed.
-// Bargain Radar moves to a dedicated drawer under the Social tab.
+// SectorRadarCard (defined below) and BargainRadarCard remain; their signals
+// also feed TODAY's ranked 5-pick list, and Bargain Radar has its own drawer
+// under the Social tab. Two cards that TODAY fully replaced
+// (ConcentrationAlertCard, ProactiveDigestCard) have been deleted.
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
 
 function SectorRadarCard({ refreshKey }) {
