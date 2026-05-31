@@ -8,15 +8,22 @@
 // surfaces (positions, closed trades, agent chats, notes). Sub-tab state
 // lives at the top of this component so opening a note from Timeline
 // returns to Timeline, not Notes.
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
+import { detectKnownTickers } from '../../lib/tickers.js';
 
-export default function JournalTab({ showToast }) {
+export default function JournalTab({ showToast, onTabSwitch }) {
   const [subTab, setSubTab] = useState('notes'); // 'notes' | 'timeline'
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openNote, setOpenNote] = useState(null); // full note object when editing
+  // Tickers the user owns (positions) and watches (watchlist). Used to turn
+  // ALL-CAPS mentions in a note into tappable chips that jump to the agent.
+  // We only linkify KNOWN tickers so stray all-caps prose (TODO, CASH) never
+  // becomes a chip. Owned drives a "you hold this" marker + a tailored prompt.
+  const [ownedTickers, setOwnedTickers] = useState(() => new Set());
+  const [watchTickers, setWatchTickers] = useState(() => new Set());
 
   // Stabilize showToast across renders so effects don't re-fire on parent updates.
   const showToastRef = useRef(showToast);
@@ -37,6 +44,39 @@ export default function JournalTab({ showToast }) {
     loadNotes().finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [loadNotes]);
+
+  // Load the user's known tickers once. Best-effort: if either call fails the
+  // note still works, it just won't show chips for that source.
+  useEffect(() => {
+    let cancelled = false;
+    api.portfolio.value()
+      .then(d => {
+        if (cancelled) return;
+        const owned = new Set((d?.positions ?? []).map(p => String(p.ticker || '').toUpperCase()).filter(Boolean));
+        setOwnedTickers(owned);
+      })
+      .catch(() => {});
+    api.social.watchlist()
+      .then(d => {
+        if (cancelled) return;
+        const watched = new Set((d?.items ?? []).map(w => String(w.ticker || '').toUpperCase()).filter(Boolean));
+        setWatchTickers(watched);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Tap a detected ticker chip inside a note. Both owned and not-owned route to
+  // the agent (it already has full portfolio context), just with a prompt that
+  // fits the situation. Reuses the same agent_prefill + tab-switch bridge the
+  // Deploy Cash flow uses, so there's one consistent way into the agent.
+  function handleTickerTap(ticker, owned) {
+    const message = owned
+      ? `Give me a quick read on my ${ticker} position. What should I be watching right now?`
+      : `What's the current setup on ${ticker}? I came across it in my notes and want a quick take.`;
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message } }));
+    onTabSwitch?.('agent');
+  }
 
   async function handleNewNote() {
     try {
@@ -83,6 +123,9 @@ export default function JournalTab({ showToast }) {
         onClose={handleCloseEditor}
         onDelete={() => handleDeleteNote(openNote.id)}
         showToast={showToast}
+        ownedTickers={ownedTickers}
+        watchTickers={watchTickers}
+        onTickerTap={handleTickerTap}
       />
     );
   }
@@ -423,13 +466,29 @@ function NoteListItem({ note, onOpen }) {
 
 // ============ EDITOR ============
 
-function NoteEditor({ note, onClose, onDelete, showToast }) {
+function NoteEditor({ note, onClose, onDelete, showToast, ownedTickers, watchTickers, onTickerTap }) {
   const [title, setTitle] = useState(note.title || '');
   const [content, setContent] = useState(note.content || '');
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const dirtyRef = useRef(false);
   const saveTimerRef = useRef(null);
+
+  // Union of owned + watched tickers is what we'll linkify. Owned ones get a
+  // marker so the user can tell "I hold this" from "I'm watching this" at a
+  // glance. Recomputed only when the source sets change.
+  const knownSet = useMemo(() => {
+    const s = new Set(ownedTickers || []);
+    for (const t of (watchTickers || [])) s.add(t);
+    return s;
+  }, [ownedTickers, watchTickers]);
+
+  // Detect known tickers mentioned in the body. Live as the user types, but
+  // cheap: a single regex pass plus a set lookup, memoized on content.
+  const mentioned = useMemo(
+    () => detectKnownTickers(content, knownSet),
+    [content, knownSet]
+  );
 
   // Stabilize showToast
   const showToastRef = useRef(showToast);
@@ -553,6 +612,40 @@ function NoteEditor({ note, onClose, onDelete, showToast }) {
           }}
         />
       </div>
+
+      {/* Mentioned tickers — auto-detected from the body, tap to ask the agent.
+          Owned names get a filled dot, watched names a hollow one. Hidden when
+          the note mentions nothing the user actually owns or watches. */}
+      {mentioned.length > 0 && (
+        <div style={{ padding: '2px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', marginRight: 2 }}>MENTIONED</span>
+          {mentioned.map(t => {
+            const owned = (ownedTickers || new Set()).has(t);
+            return (
+              <button
+                key={t}
+                onClick={() => onTickerTap?.(t, owned)}
+                title={owned ? `You hold ${t} — ask the agent about your position` : `Ask the agent about ${t}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '3px 9px', borderRadius: 999,
+                  background: 'var(--blue-dim)', border: '0.5px solid rgba(59,130,246,0.3)',
+                  color: 'var(--blue)', fontSize: 10, fontWeight: 700,
+                  cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.3px',
+                }}
+              >
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: owned ? 'var(--green)' : 'transparent',
+                  border: owned ? 'none' : '1px solid var(--faint)',
+                  flexShrink: 0,
+                }} />
+                {t}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Content textarea — fills remaining space */}
       <div style={{ flex: 1, padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>

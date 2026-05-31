@@ -182,7 +182,7 @@ export default function AppShell() {
         <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <AgentTab user={user} showToast={showToast} />
         </div>
-        {activeTab === 'journal' && <JournalTab showToast={showToast} />}
+        {activeTab === 'journal' && <JournalTab showToast={showToast} onTabSwitch={switchTab} />}
         {activeTab === 'settings' && <SettingsPage user={user} onLogout={logout} showToast={showToast} onOpenAdmin={() => switchTab('admin')} />}
         {activeTab === 'admin' && <FounderDashboard onBack={() => switchTab('settings')} />}
       </div>
