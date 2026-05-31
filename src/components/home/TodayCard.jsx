@@ -71,14 +71,36 @@ export default function TodayCard({ onTabSwitch, onItemTap }) {
 
   const items = data?.items ?? [];
 
-  // No picks today — graceful empty state. Could happen if user has zero
-  // positions/watchlist AND there are no big movers in the market. Rare.
+  // A failed scan must NOT read as "all calm". On success the endpoint always
+  // returns an object (even with zero items), so a null `data` here means the
+  // fetch failed and we say so honestly instead of implying the coast is clear.
+  if (!data) {
+    return (
+      <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '1.2px', margin: 0 }}>TODAY</p>
+          <button
+            onClick={refresh}
+            disabled={refreshing}
+            style={{ fontSize: 9, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, letterSpacing: '0.5px' }}
+          >
+            {refreshing ? 'RETRYING...' : 'RETRY'}
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
+          Could not finish scanning just now. That is on our end, not your portfolio, so don't read it as all clear. Give it a moment and retry.
+        </p>
+      </div>
+    );
+  }
+
+  // Genuinely quiet day: the scan ran and found nothing urgent. Safe to reassure.
   if (items.length === 0) {
     return (
       <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)' }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '1.2px', marginBottom: 4 }}>TODAY</p>
         <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
-          Quiet across your portfolio and watchlist. Nothing urgent — your positions are calm.
+          Quiet across your portfolio and watchlist. Nothing urgent. Your positions are calm.
         </p>
       </div>
     );
