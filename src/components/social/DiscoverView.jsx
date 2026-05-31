@@ -1,19 +1,53 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
+import { buildDiscoverFeed } from './discoverRanker.js';
 
 /**
- * DISCOVER — condensed top-of-Social view that surfaces 2-3 items from each
- * source (catalysts, sectors, bargains, trending). Each section has a
- * "See all →" link that opens the full deep-dive view inside the same tab.
+ * DISCOVER — one ranked feed.
  *
- * No new backend — pulls from the same APIs the deep-dives use, just trims
- * to the highest-signal items per category. Cached aggressively client-side.
+ * Used to be 4 stacked sections (catalysts, sectors, bargains, trending) and
+ * users said it was a wall of text they had to scan through. Now every source
+ * feeds one priority-ranked column so the most actionable thing is always on
+ * top. Same data, same deep-links, just merged and sorted.
+ *
+ * Each row: a type-colored accent bar, the ticker (or sector name), the move,
+ * a type pill, a one-line read, and a tap that deep-links to that source's
+ * full view via onSeeAll.
  *
  * Props:
  *   catalystData — already loaded by SocialTab (passed in to avoid double-fetch)
- *   onSeeAll(section) — callback that switches Social to a deep-dive section
+ *   onSeeAll(section) — switches Social to a deep-dive section
  */
+
+// No --orange in the theme, so the catalyst accent gets a literal one. The
+// rest map to existing CSS vars so they track the palette.
+const ACCENT = {
+  orange: '#f97316',
+  amber: 'var(--amber)',
+  green: 'var(--green)',
+  red: 'var(--red)',
+  blue: 'var(--blue)',
+};
+const ACCENT_DIM = {
+  orange: 'rgba(249,115,22,0.15)',
+  amber: 'var(--amber-dim)',
+  green: 'var(--green-dim)',
+  red: 'var(--red-dim)',
+  blue: 'var(--blue-dim)',
+};
+const ACCENT_BORDER = {
+  orange: 'rgba(249,115,22,0.32)',
+  amber: 'rgba(245,158,11,0.3)',
+  green: 'rgba(34,197,94,0.3)',
+  red: 'rgba(239,68,68,0.3)',
+  blue: 'rgba(59,130,246,0.3)',
+};
+
+// Generic one-word titles that just echo the type pill. No point repeating
+// them as a subtitle under the ticker.
+const GENERIC_TITLES = new Set(['trending', 'catalyst', 'signal']);
+
 export default function DiscoverView({ catalystData, onSeeAll, showToast }) {
   const [sector, setSector] = useState(null);
   const [bargain, setBargain] = useState(null);
@@ -33,269 +67,167 @@ export default function DiscoverView({ catalystData, onSeeAll, showToast }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Top catalysts — flatten generated drops, pick the 3 most impactful.
-  // Catalysts run on a schedule (premarket / mid-day / close) — if a drop
-  // hasn't fired yet there's nothing to show, which is normal not "scanning".
-  const topCatalysts = (() => {
-    if (!catalystData?.drops) return [];
-    const all = [];
-    for (const drop of catalystData.drops) {
-      for (const stock of (drop.stocks ?? [])) {
-        all.push({ ...stock, dropTime: drop.scheduledTime, dropLabel: drop.label });
-      }
-    }
-    return all
-      .filter(c => c.changePct != null)
-      .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
-      .slice(0, 3);
-  })();
+  const feed = buildDiscoverFeed({ catalystData, sector, bargain, buzz }, 12);
+  const hasCatalystRow = feed.some(i => i.type === 'catalyst');
 
-  // Pending drops we haven't reached yet — used in the empty/early-day state
-  // so the user sees the actual schedule instead of misleading "scanning..."
+  // Catalysts run on a schedule. If a drop hasn't fired yet there's nothing to
+  // show for it, which is normal not "scanning". Surface the actual schedule so
+  // the user knows more is coming rather than wondering if it's broken.
   const pendingDrops = (catalystData?.drops ?? [])
     .filter(d => !d.isGenerated)
     .map(d => ({ time: d.scheduledTime, label: d.label }))
     .slice(0, 4);
 
-  const heating = (sector?.heating ?? []).slice(0, 1);
-  const cooling = (sector?.cooling ?? []).slice(0, 1);
-  // The /api/ai/bargain-radar endpoint returns `picks` (already pre-filtered
-  // server-side to buyable candidates). No client-side verdict filter needed.
-  const buyables = (bargain?.picks ?? []).slice(0, 2);
-  // Buzz scanner returns `buzzing` (active) + `earlierToday`. Show top 5 active.
-  const trending = (buzz?.buzzing ?? []).slice(0, 5);
+  if (feed.length === 0) {
+    return (
+      <div style={{ paddingBottom: 24 }}>
+        <EmptyFeed catalystData={catalystData} pendingDrops={pendingDrops} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingBottom: 24 }}>
-      {/* TOP CATALYSTS */}
-      <Section title="TOP CATALYSTS" onSeeAll={() => onSeeAll('ondeck')} hasContent={topCatalysts.length > 0}>
-        {topCatalysts.length === 0 ? (
-          catalystData?.isWeekend ? (
-            <Empty text="Markets closed — no live catalysts. Catalyst Watch runs Monday through Friday." />
-          ) : pendingDrops.length > 0 ? (
-            <div style={{ padding: '8px 16px 12px' }}>
-              <p style={{ fontSize: 11, color: 'var(--muted)', margin: '0 0 6px 0', lineHeight: 1.5 }}>
-                Today's catalysts haven't dropped yet. Outpost runs scans on a schedule — first one populates here as soon as it's done.
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                {pendingDrops.map((d, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 5,
-                      padding: '4px 8px', background: 'var(--raised)',
-                      border: '0.5px solid var(--border)', borderRadius: 4,
-                      fontSize: 10,
-                    }}
-                  >
-                    <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{d.time}</span>
-                    {d.label && <span style={{ color: 'var(--faint)' }}>{d.label}</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <Empty text="No catalysts to surface today. Try again tomorrow." />
-          )
-        ) : (
-          topCatalysts.map((c, i) => (
-            <Row key={`cat-${c.ticker}-${i}`} onClick={() => onSeeAll('ondeck')}>
-              <RowHeader
-                ticker={c.ticker}
-                changePct={c.changePct}
-                tag={(c.catalystLabel || 'catalyst').toLowerCase()}
-                dropTime={c.dropTime}
-              />
-              <RowDetail text={c.detail || c.newsSource || `Big move on ${c.ticker} today.`} />
-            </Row>
-          ))
-        )}
-      </Section>
-
-      {/* HOT SECTORS */}
-      <Section title="HOT SECTORS" onSeeAll={() => onSeeAll('radar')} hasContent={heating.length + cooling.length > 0}>
-        {heating.length === 0 && cooling.length === 0 ? (
-          <Empty text="Sector radar still warming up. Check back shortly." />
-        ) : (
-          <>
-            {heating.map((s, i) => (
-              <Row key={`heat-${i}`} onClick={() => onSeeAll('radar')}>
-                <SectorRowHeader name={s.name} ticker={s.ticker} signal={s.signal} direction="up" relStrength={s.relativeStrength} />
-                <RowDetail text={s.thesis} />
-              </Row>
-            ))}
-            {cooling.map((s, i) => (
-              <Row key={`cool-${i}`} onClick={() => onSeeAll('radar')}>
-                <SectorRowHeader name={s.name} ticker={s.ticker} signal={s.signal} direction="down" relStrength={s.relativeStrength} />
-                <RowDetail text={s.thesis} />
-              </Row>
-            ))}
-          </>
-        )}
-      </Section>
-
-      {/* BARGAIN PICKS */}
-      <Section title="BARGAIN PICKS" onSeeAll={() => onSeeAll('bargain')} hasContent={buyables.length > 0}>
-        {buyables.length === 0 ? (
-          <Empty text="No buyable dips in today's scan. Comes back overnight." />
-        ) : (
-          buyables.map((b, i) => (
-            <Row key={`bargain-${i}`} onClick={() => onSeeAll('bargain')}>
-              <BargainRowHeader ticker={b.ticker} drawdown={b.pctOffHigh != null ? -b.pctOffHigh : null} />
-              <RowDetail text={b.thesis} />
-            </Row>
-          ))
-        )}
-      </Section>
-
-      {/* TRENDING — compact chip footer, not a primary surface */}
-      <Section title="TRENDING" onSeeAll={() => onSeeAll('buzz')} hasContent={trending.length > 0}>
-        {trending.length === 0 ? (
-          <Empty text="Buzz scanner refreshing." />
-        ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 16px 12px' }}>
-            {trending.map(t => (
-              <span
-                key={t.ticker}
-                onClick={() => onSeeAll('buzz')}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '4px 8px', background: 'var(--raised)',
-                  border: '0.5px solid var(--border)', borderRadius: 4,
-                  fontSize: 10, cursor: 'pointer',
-                }}
-              >
-                <b style={{ fontWeight: 700, color: 'var(--text)' }}>{t.ticker}</b>
-                {t.changePct != null && (
-                  <>
-                    <span style={{ color: 'var(--faint)' }}>·</span>
-                    <span style={{ color: t.changePct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
-                      {t.changePct >= 0 ? '+' : ''}{t.changePct.toFixed(1)}%
-                    </span>
-                  </>
-                )}
-                {t.watchlistCount != null && (
-                  <>
-                    <span style={{ color: 'var(--faint)' }}>·</span>
-                    <span style={{ color: 'var(--muted)' }}>{t.watchlistCount.toLocaleString()} watchers</span>
-                  </>
-                )}
-              </span>
-            ))}
-          </div>
-        )}
-      </Section>
-    </div>
-  );
-}
-
-// ───────────── helpers ─────────────
-
-function Section({ title, onSeeAll, hasContent, children }) {
-  return (
-    <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <div style={{ padding: '14px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1.2px' }}>{title}</span>
-        {hasContent && (
-          <button
-            onClick={onSeeAll}
-            style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 9, fontFamily: 'inherit', letterSpacing: '0.3px' }}
-          >
-            See all →
-          </button>
-        )}
+      <div style={{ padding: '14px 16px 8px' }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1.2px' }}>
+          STRONGEST SIGNALS FIRST
+        </span>
       </div>
-      <div>{children}</div>
+
+      {feed.map(item => (
+        <FeedRow key={item.id} item={item} onClick={() => onSeeAll(item.deepLink)} />
+      ))}
+
+      {/* If catalysts are still pending, tell the user when they land instead of
+          silently dropping that source from the feed. */}
+      {!hasCatalystRow && pendingDrops.length > 0 && (
+        <PendingDropsHint drops={pendingDrops} />
+      )}
     </div>
   );
 }
 
-function Row({ onClick, children }) {
+// ───────────── feed row ─────────────
+
+function FeedRow({ item, onClick }) {
+  const accent = ACCENT[item.accent] || 'var(--muted)';
+  const accentDim = ACCENT_DIM[item.accent] || 'var(--raised)';
+  const accentBorder = ACCENT_BORDER[item.accent] || 'var(--border)';
+
+  const headline = item.ticker || item.title;
+  const subtitle = item.ticker && item.title && !GENERIC_TITLES.has(item.title.toLowerCase())
+    ? item.title
+    : null;
+
+  const pctColor = item.pct >= 0 ? 'var(--green)' : 'var(--red)';
+  const dropTime = item.meta?.dropTime;
+
   return (
     <div
       onClick={onClick}
       style={{
-        display: 'flex', alignItems: 'flex-start', padding: '9px 16px',
-        gap: 10, cursor: 'pointer',
-        borderTop: '1px solid var(--border)',
-        transition: 'background 0.15s',
+        display: 'flex', alignItems: 'stretch', cursor: 'pointer',
+        borderTop: '1px solid var(--border)', transition: 'background 0.15s',
       }}
       onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-      <span style={{ color: 'var(--faint)', fontSize: 13 }}>›</span>
+      {/* type-colored accent bar */}
+      <div style={{ width: 3, background: accent, flexShrink: 0 }} />
+
+      <div style={{ flex: 1, minWidth: 0, padding: '10px 14px' }}>
+        {/* line 1: headline + move + type pill */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: subtitle || item.detail ? 3 : 0 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{headline}</span>
+          {item.pct != null && (
+            <span style={{ fontSize: 10.5, color: pctColor, fontWeight: 700 }}>
+              {item.pct >= 0 ? '+' : ''}{item.pct.toFixed(1)}%
+            </span>
+          )}
+          <span style={{
+            fontSize: 8, fontWeight: 700, padding: '1.5px 5px', borderRadius: 3,
+            background: accentDim, color: accent, border: `0.5px solid ${accentBorder}`,
+            letterSpacing: '0.4px',
+          }}>{item.signal}</span>
+          {dropTime && (
+            <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 'auto' }}>{dropTime} ET</span>
+          )}
+        </div>
+
+        {subtitle && (
+          <p style={{ fontSize: 11, color: 'var(--muted)', margin: '0 0 2px 0', lineHeight: 1.4 }}>
+            {subtitle}
+          </p>
+        )}
+        {item.detail && (
+          <p style={{ fontSize: 11, color: 'var(--faint)', margin: 0, lineHeight: 1.4 }}>
+            {item.detail}
+          </p>
+        )}
+      </div>
+
+      <span style={{ color: 'var(--faint)', fontSize: 13, alignSelf: 'center', paddingRight: 12 }}>›</span>
     </div>
   );
 }
 
-function RowHeader({ ticker, changePct, tag, dropTime }) {
-  const color = changePct >= 0 ? 'var(--green)' : 'var(--red)';
+// ───────────── empty + pending states ─────────────
+
+function PendingDropsHint({ drops }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{ticker}</span>
-      {changePct != null && (
-        <span style={{ fontSize: 10, color, fontWeight: 700 }}>
-          {changePct >= 0 ? '+' : ''}{changePct.toFixed(1)}%
-        </span>
-      )}
-      {tag && <span style={{ fontSize: 9, color: 'var(--faint)' }}>{tag}</span>}
-      {dropTime && (
-        <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 'auto' }}>
-          {dropTime} ET
-        </span>
-      )}
+    <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+      <p style={{ fontSize: 10.5, color: 'var(--muted)', margin: '0 0 6px 0', lineHeight: 1.5 }}>
+        More catalysts land on a schedule today:
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {drops.map((d, i) => (
+          <span key={i} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '4px 8px', background: 'var(--raised)',
+            border: '0.5px solid var(--border)', borderRadius: 4, fontSize: 10,
+          }}>
+            <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{d.time}</span>
+            {d.label && <span style={{ color: 'var(--faint)' }}>{d.label}</span>}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
 
-function SectorRowHeader({ name, ticker, signal, direction, relStrength }) {
-  const color = direction === 'up' ? 'var(--green)' : 'var(--red)';
-  const signalLabel = signal?.toUpperCase() || 'SIGNAL';
-  const bg = direction === 'up' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
-  const border = direction === 'up' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)';
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{name || ticker}</span>
-      {relStrength != null && (
-        <span style={{ fontSize: 10, color, fontWeight: 700 }}>
-          {relStrength >= 0 ? '+' : ''}{relStrength.toFixed(1)}%
-        </span>
-      )}
-      <span style={{
-        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-        background: bg, color, border: `0.5px solid ${border}`, letterSpacing: '0.4px',
-      }}>{signalLabel}</span>
-    </div>
-  );
-}
-
-function BargainRowHeader({ ticker, drawdown }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{ticker}</span>
-      {drawdown != null && (
-        <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700 }}>
-          {drawdown >= 0 ? '+' : ''}{drawdown.toFixed(0)}%
-        </span>
-      )}
-      <span style={{
-        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-        background: 'rgba(34,197,94,0.15)', color: 'var(--green)',
-        border: '0.5px solid rgba(34,197,94,0.3)', letterSpacing: '0.4px',
-      }}>BUYABLE</span>
-    </div>
-  );
-}
-
-function RowDetail({ text }) {
-  if (!text) return null;
-  return <p style={{ fontSize: 11, color: 'var(--muted)', margin: 0, lineHeight: 1.4 }}>{text}</p>;
+function EmptyFeed({ catalystData, pendingDrops }) {
+  if (catalystData?.isWeekend) {
+    return (
+      <Empty text="Markets are closed, so there's nothing live to surface. Discover refreshes Monday through Friday." />
+    );
+  }
+  if (pendingDrops.length > 0) {
+    return (
+      <div style={{ padding: '16px' }}>
+        <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 10px 0', lineHeight: 1.5 }}>
+          Today's signals haven't landed yet. Outpost scans on a schedule, and the feed fills in as each one finishes.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {pendingDrops.map((d, i) => (
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '4px 8px', background: 'var(--raised)',
+              border: '0.5px solid var(--border)', borderRadius: 4, fontSize: 10,
+            }}>
+              <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{d.time}</span>
+              {d.label && <span style={{ color: 'var(--faint)' }}>{d.label}</span>}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return <Empty text="Nothing strong enough to surface right now. Check back shortly." />;
 }
 
 function Empty({ text }) {
   return (
-    <p style={{ fontSize: 11, color: 'var(--faint)', padding: '8px 16px 12px', fontStyle: 'italic', margin: 0 }}>
+    <p style={{ fontSize: 12, color: 'var(--faint)', padding: '16px', fontStyle: 'italic', margin: 0, lineHeight: 1.5 }}>
       {text}
     </p>
   );
