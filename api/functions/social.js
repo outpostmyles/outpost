@@ -394,7 +394,7 @@ router.patch('/watchlist/:id', requireAuth, rateLimit(15), async (req, res) => {
     if (req.body.notes !== undefined) updates.notes = (req.body.notes || '').slice(0, 500) || null;
     if (req.body.alertPrice !== undefined) updates.alert_price = req.body.alertPrice ? parseFloat(req.body.alertPrice) : null;
 
-    await supabase.from('watchlist').update(updates).eq('id', req.params.id);
+    await supabase.from('watchlist').update(updates).eq('id', req.params.id).eq('user_id', req.user.id);
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Server error' });
@@ -405,7 +405,7 @@ router.delete('/watchlist/:id', requireAuth, rateLimit(15), async (req, res) => 
   try {
     const { data: item } = await supabase.from('watchlist').select('id').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
     if (!item) return res.status(404).json({ error: 'Item not found' });
-    await supabase.from('watchlist').delete().eq('id', req.params.id);
+    await supabase.from('watchlist').delete().eq('id', req.params.id).eq('user_id', req.user.id);
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Server error' });
