@@ -60,12 +60,12 @@ export default function DailyRound({ onTabSwitch, showToast }) {
           {doneToday ? 'Run again' : 'Start'}
         </button>
       </div>
-      {open && <RoundFlow onClose={() => setOpen(false)} onComplete={complete} showToast={showToast} />}
+      {open && <RoundFlow onClose={() => setOpen(false)} onComplete={complete} showToast={showToast} onTabSwitch={onTabSwitch} />}
     </div>
   );
 }
 
-function RoundFlow({ onClose, onComplete, showToast }) {
+function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [round, setRound] = useState(null);
   const [standing, setStanding] = useState({ todayChange: 0, totalPnl: 0, pulse: '' });
@@ -100,6 +100,14 @@ function RoundFlow({ onClose, onComplete, showToast }) {
 
   function next() { if (last) onComplete(); else setI(i + 1); }
 
+  // Tapping an item hands it to the agent with a contextual question and closes
+  // the round. Acting on something is a fine way to end the round early.
+  function act(message) {
+    try { window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message } })); } catch {}
+    onTabSwitch?.('agent');
+    onClose();
+  }
+
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 16px', overflowY: 'auto' }}
@@ -123,9 +131,9 @@ function RoundFlow({ onClose, onComplete, showToast }) {
             </div>
           ) : (
             <>
-              {current === 'safety' && <SafetyStep safety={round.safety} />}
+              {current === 'safety' && <SafetyStep safety={round.safety} onAct={act} />}
               {current === 'standing' && <StandingStep standing={standing} />}
-              {current === 'opportunity' && <OpportunityStep items={round.opportunity} />}
+              {current === 'opportunity' && <OpportunityStep items={round.opportunity} onAct={act} />}
               {current === 'sharpen' && <SharpenStep sharpen={round.sharpen} showToast={showToast} />}
               {current === 'close' && <CloseStep round={round} />}
               <button onClick={next} className="btn btn-blue btn-full" style={{ marginTop: 22 }}>
@@ -155,18 +163,36 @@ function StepLabel({ label }) {
   );
 }
 
-function ItemRow({ it, accent }) {
+// Contextual question to hand the agent when a round item is tapped.
+function promptForItem(it) {
+  const t = it.ticker || 'this';
+  if (it.type === 'alert') {
+    if (it.subtype === 'stop_broken') return `${t} just broke the stop I set. Walk me through whether to cut it or hold.`;
+    if (it.subtype === 'target_hit') return `${t} hit my price target. Should I take profits, trim, or let it run?`;
+    if (it.subtype === 'deep_drawdown' || it.subtype === 'moderate_drawdown') return `${t} is down hard. Is my reason for holding it still intact?`;
+    return `What should I do about ${t} right now?`;
+  }
+  return `Give me a quick read on ${t}. It came up in my daily round and I want to know if it's worth a look.`;
+}
+
+function ItemRow({ it, accent, onTap }) {
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `2px solid ${accent}`, borderRadius: 6, padding: '10px 12px' }}>
-      <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-        {it.ticker || ''}{it.title ? `: ${it.title}` : ''}
-      </p>
-      {it.detail && <p style={{ fontSize: 11, color: 'var(--muted)', margin: '3px 0 0', lineHeight: 1.5 }}>{it.detail}</p>}
+    <div
+      onClick={onTap || undefined}
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `2px solid ${accent}`, borderRadius: 6, padding: '10px 12px', cursor: onTap ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 8 }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', margin: 0 }}>
+          {it.ticker || ''}{it.title ? `: ${it.title}` : ''}
+        </p>
+        {it.detail && <p style={{ fontSize: 11, color: 'var(--muted)', margin: '3px 0 0', lineHeight: 1.5 }}>{it.detail}</p>}
+      </div>
+      {onTap && <span style={{ fontSize: 16, color: 'var(--faint)', flexShrink: 0 }}>›</span>}
     </div>
   );
 }
 
-function SafetyStep({ safety }) {
+function SafetyStep({ safety, onAct }) {
   return (
     <>
       <StepLabel label="Are you safe?" />
@@ -184,7 +210,7 @@ function SafetyStep({ safety }) {
             {safety.items.length === 1 ? 'One holding' : `${safety.items.length} holdings`} need a look:
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {safety.items.map((it, idx) => <ItemRow key={idx} it={it} accent="var(--amber)" />)}
+            {safety.items.map((it, idx) => <ItemRow key={idx} it={it} accent="var(--amber)" onTap={onAct ? () => onAct(promptForItem(it)) : null} />)}
           </div>
         </>
       )}
@@ -209,7 +235,7 @@ function StandingStep({ standing }) {
   );
 }
 
-function OpportunityStep({ items }) {
+function OpportunityStep({ items, onAct }) {
   return (
     <>
       <StepLabel label="Anything you're missing?" />
@@ -223,7 +249,7 @@ function OpportunityStep({ items }) {
             {items.length === 1 ? 'One idea' : `${items.length} ideas`} worth a look, no rush:
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {items.map((it, idx) => <ItemRow key={idx} it={it} accent="var(--green)" />)}
+            {items.map((it, idx) => <ItemRow key={idx} it={it} accent="var(--green)" onTap={onAct ? () => onAct(promptForItem(it)) : null} />)}
           </div>
         </>
       )}
