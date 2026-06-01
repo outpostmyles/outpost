@@ -20,30 +20,13 @@ import { isMarketHours } from '../utils/marketHours.js';
 import { Resend } from 'resend';
 import { config } from '../config.js';
 import { evaluatePlanAlerts, planAlertKey } from './planAlerts.js';
+import { shouldFire } from './alertRules.js';
 
 const resend = config.resendKey ? new Resend(config.resendKey) : null;
 const FROM_ADDRESS = 'Outpost <noreply@outpostapp.co>';
 
-/**
- * Decide whether an alert should fire given a live price snapshot.
- */
-function shouldFire(alert, priceData) {
-  if (!priceData?.price) return false;
-  const price = priceData.price;
-  const changePct = priceData.changePercent;
-  const threshold = parseFloat(alert.threshold);
-
-  if (alert.direction === 'above') return price >= threshold;
-  if (alert.direction === 'below') return price <= threshold;
-  if (alert.direction === 'percent_change') {
-    // Positive threshold (e.g. +5) fires when daily change >= threshold.
-    // Negative threshold (e.g. -5) fires when daily change <= threshold.
-    if (changePct == null) return false;
-    if (threshold >= 0) return changePct >= threshold;
-    return changePct <= threshold;
-  }
-  return false;
-}
+// shouldFire (the firing decision) moved to ./alertRules.js, imported above, so
+// it can be unit-tested without the price pool, Supabase, or Resend.
 
 /**
  * Build the email body for a triggered alert.
