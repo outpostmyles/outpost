@@ -5,6 +5,7 @@ import { assessPositionHealth } from '../../lib/positionHealth.js';
 import { assessPortfolioRisk } from '../../lib/portfolioRisk.js';
 import { buildStressTests } from '../../lib/stressTest.js';
 import { sectorExposure } from '../../lib/sectorExposure.js';
+import { sectorGaps } from '../../lib/sectorGaps.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
@@ -2512,6 +2513,10 @@ function SectorMixCard() {
   }, []);
   if (!exposure || exposure.sectors.length === 0) return null;
   const top = exposure.sectors.slice(0, 6);
+  // Gap-fill nudge: only when it actually matters (concentrated or thin book),
+  // never nag an already-diversified holder about niche sectors.
+  const gaps = sectorGaps(exposure.sectors);
+  const showGaps = gaps.gaps.length > 0 && (exposure.concentrated || exposure.sectors.length <= 3);
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
       <button
@@ -2540,6 +2545,11 @@ function SectorMixCard() {
           {exposure.concentrated && (
             <p style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, marginTop: 4 }}>
               {exposure.top.pct}% of your book is in {exposure.top.sector}. One sector turning can swing the whole thing.
+            </p>
+          )}
+          {showGaps && (
+            <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginTop: exposure.concentrated ? 6 : 4 }}>
+              Light or missing: {gaps.gaps.join(', ')}. Ask Outpost for a name to round it out.
             </p>
           )}
         </div>
