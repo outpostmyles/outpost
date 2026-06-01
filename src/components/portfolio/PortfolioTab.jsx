@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { assessPositionHealth } from '../../lib/positionHealth.js';
 import { assessPortfolioRisk } from '../../lib/portfolioRisk.js';
+import { buildStressTests } from '../../lib/stressTest.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
@@ -2459,6 +2460,43 @@ function FirstReadSheet({ ticker, onClose }) {
   );
 }
 
+// Stress test: what a drop would actually cost you, in dollars. Collapsed by
+// default so it informs without crowding. Honest about its assumption (holdings
+// moving with the market) since we don't model per-stock beta yet.
+function StressTestCard({ positions }) {
+  const [open, setOpen] = useState(false);
+  const scenarios = buildStressTests(positions);
+  if (scenarios.length === 0) return null;
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', fontFamily: 'inherit' }}
+      >
+        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', textTransform: 'uppercase' }}>If the market turns</span>
+        <span style={{ fontSize: 11, color: 'var(--faint)' }}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+          {scenarios.map(s => (
+            <div key={s.key} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontSize: 12, color: 'var(--text)', margin: 0 }}>{s.label}</p>
+                <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0', lineHeight: 1.4 }}>{s.note}</p>
+              </div>
+              <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                <p style={{ fontSize: 13, color: 'var(--red)', fontWeight: 700, margin: 0 }}>-${Math.abs(s.impact).toLocaleString()}</p>
+                <p style={{ fontSize: 9, color: 'var(--faint)', margin: 0 }}>{s.pct}%</p>
+              </div>
+            </div>
+          ))}
+          <p style={{ fontSize: 9, color: 'var(--faint)', lineHeight: 1.5, marginTop: 2 }}>Rough estimates. Markets do not move in straight lines, and this assumes your holdings track the market.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PortfolioSubTab({ marketOpen, showToast }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2621,6 +2659,9 @@ function PortfolioSubTab({ marketOpen, showToast }) {
             onRefresh={load}
             showToast={showToast}
           />
+
+          {/* Stress test — what a drop would cost you, in dollars. Collapsed. */}
+          <StressTestCard positions={positions} />
 
 
           {/* Inline growth chart — collapsible, only if we have snapshots */}
