@@ -176,7 +176,7 @@ export default function AppShell() {
       {/* Content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {activeTab === 'home' && <HomeTab marketStatus={marketStatus} sentiment={sentiment} onSentimentLoad={setSentiment} onTabSwitch={switchTab} showToast={showToast} />}
-        {activeTab === 'portfolio' && <PortfolioTab marketOpen={marketStatus.isOpen} showToast={showToast} />}
+        {activeTab === 'portfolio' && <PortfolioTab marketOpen={marketStatus.isOpen} showToast={showToast} onTabSwitch={switchTab} />}
         {activeTab === 'social' && <SocialTab showToast={showToast} />}
         {/* Agent stays mounted so in-flight responses aren't lost */}
         <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>

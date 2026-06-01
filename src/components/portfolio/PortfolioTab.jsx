@@ -2501,7 +2501,7 @@ function StressTestCard({ positions }) {
 
 // Sector mix: where the book leans. Catches the quiet concentration the
 // single-name band misses, "you're 70% in one sector." Collapsed by default.
-function SectorMixCard() {
+function SectorMixCard({ onTabSwitch }) {
   const [open, setOpen] = useState(false);
   const [exposure, setExposure] = useState(null);
   useEffect(() => {
@@ -2548,9 +2548,28 @@ function SectorMixCard() {
             </p>
           )}
           {showGaps && (
-            <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginTop: exposure.concentrated ? 6 : 4 }}>
-              Light or missing: {gaps.gaps.join(', ')}. Ask Outpost for a name to round it out.
-            </p>
+            <div style={{ marginTop: exposure.concentrated ? 8 : 4 }}>
+              <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 6 }}>
+                Light or missing. Tap one and Outpost will find a name to round it out:
+              </p>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {gaps.gaps.map(sec => (
+                  <button
+                    key={sec}
+                    onClick={() => {
+                      try {
+                        window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: `Find me one quality ${sec} name to diversify into. I have little or no exposure to ${sec} right now and want to round out my book.` } }));
+                      } catch {}
+                      onTabSwitch?.('agent');
+                    }}
+                    className="btn btn-muted"
+                    style={{ fontSize: 10, padding: '4px 10px' }}
+                  >
+                    {sec}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -2558,7 +2577,7 @@ function SectorMixCard() {
   );
 }
 
-function PortfolioSubTab({ marketOpen, showToast }) {
+function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null); // 'add' | 'import' | 'menu' | 'closed' | 'theses' | null
@@ -2725,7 +2744,7 @@ function PortfolioSubTab({ marketOpen, showToast }) {
           <StressTestCard positions={positions} />
 
           {/* Sector mix — where the book leans, flags a dominant sector. */}
-          <SectorMixCard />
+          <SectorMixCard onTabSwitch={onTabSwitch} />
 
 
           {/* Inline growth chart — collapsible, only if we have snapshots */}
@@ -3424,7 +3443,7 @@ function PnLSubTab() {
   );
 }
 
-export default function PortfolioTab({ marketOpen, showToast }) {
+export default function PortfolioTab({ marketOpen, showToast, onTabSwitch }) {
   // Single scrollable view — sub-tabs removed in the retail-focus redesign.
   // Closed trades live behind the action menu (⋯ → "View closed trades").
   // The growth chart inlines on this same view once 7+ snapshots exist.
@@ -3433,7 +3452,7 @@ export default function PortfolioTab({ marketOpen, showToast }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="scrollable" style={{ flex: 1 }}>
-        <PortfolioSubTab marketOpen={marketOpen} showToast={showToast} />
+        <PortfolioSubTab marketOpen={marketOpen} showToast={showToast} onTabSwitch={onTabSwitch} />
       </div>
     </div>
   );
