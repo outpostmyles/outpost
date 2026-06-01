@@ -4,6 +4,7 @@ import { cachedFetch } from '../../lib/cache.js';
 import { assessPositionHealth } from '../../lib/positionHealth.js';
 import { assessPortfolioRisk } from '../../lib/portfolioRisk.js';
 import { buildStressTests } from '../../lib/stressTest.js';
+import { sectorExposure } from '../../lib/sectorExposure.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
@@ -2497,6 +2498,56 @@ function StressTestCard({ positions }) {
   );
 }
 
+// Sector mix: where the book leans. Catches the quiet concentration the
+// single-name band misses, "you're 70% in one sector." Collapsed by default.
+function SectorMixCard() {
+  const [open, setOpen] = useState(false);
+  const [exposure, setExposure] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.portfolio.sectors()
+      .then(d => { if (!cancelled) setExposure(sectorExposure(d?.holdings || [])); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  if (!exposure || exposure.sectors.length === 0) return null;
+  const top = exposure.sectors.slice(0, 6);
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', fontFamily: 'inherit' }}
+      >
+        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', textTransform: 'uppercase' }}>Sector mix</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {exposure.concentrated && <span style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700 }}>{exposure.top.sector} {exposure.top.pct}%</span>}
+          <span style={{ fontSize: 11, color: 'var(--faint)' }}>{open ? '▾' : '▸'}</span>
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {top.map(s => (
+            <div key={s.sector}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                <span style={{ color: 'var(--text)' }}>{s.sector}</span>
+                <span style={{ color: 'var(--muted)' }}>{s.pct}%</span>
+              </div>
+              <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: 'var(--blue)', borderRadius: 3 }} />
+              </div>
+            </div>
+          ))}
+          {exposure.concentrated && (
+            <p style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, marginTop: 4 }}>
+              {exposure.top.pct}% of your book is in {exposure.top.sector}. One sector turning can swing the whole thing.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PortfolioSubTab({ marketOpen, showToast }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2662,6 +2713,9 @@ function PortfolioSubTab({ marketOpen, showToast }) {
 
           {/* Stress test — what a drop would cost you, in dollars. Collapsed. */}
           <StressTestCard positions={positions} />
+
+          {/* Sector mix — where the book leans, flags a dominant sector. */}
+          <SectorMixCard />
 
 
           {/* Inline growth chart — collapsible, only if we have snapshots */}
