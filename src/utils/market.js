@@ -1,22 +1,22 @@
 export function fmt(val, decimals = 2) {
-  if (val == null || isNaN(val)) return '—';
+  if (val == null || !isFinite(val)) return '—';
   return parseFloat(val).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 export function fmtPct(val) {
-  if (val == null || isNaN(val)) return '—';
+  if (val == null || !isFinite(val)) return '—';
   const n = parseFloat(val);
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 }
 
 export function fmtDollar(val) {
-  if (val == null || isNaN(val)) return '—';
+  if (val == null || !isFinite(val)) return '—';
   const n = parseFloat(val);
   return `${n >= 0 ? '+' : '-'}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function colorFor(val) {
-  if (val == null || isNaN(val)) return 'var(--muted)';
+  if (val == null || !isFinite(val)) return 'var(--muted)';
   return parseFloat(val) >= 0 ? 'var(--green)' : 'var(--red)';
 }
 
