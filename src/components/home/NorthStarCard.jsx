@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { goalProgress } from '../../lib/goalProgress.js';
+import { projectGoal } from '../../lib/goalProjection.js';
 
 // The North Star: the portfolio value that means financial freedom to this
 // user. Orients the app around their destination, not just today's balance.
@@ -18,12 +19,15 @@ export default function NorthStarCard({ currentValue }) {
   const [amount, setAmount] = useState('');
   const [label, setLabel] = useState('');
   const [saving, setSaving] = useState(false);
+  const [snapshots, setSnapshots] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
-    api.portfolio.getGoal()
-      .then(d => { if (!cancelled) setGoal(d?.goal || null); })
-      .catch(() => { if (!cancelled) setGoal(null); });
+    Promise.allSettled([api.portfolio.getGoal(), api.portfolio.snapshots()]).then(([gR, sR]) => {
+      if (cancelled) return;
+      setGoal(gR.status === 'fulfilled' ? (gR.value?.goal || null) : null);
+      setSnapshots(sR.status === 'fulfilled' ? (sR.value?.snapshots || []) : []);
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -48,6 +52,7 @@ export default function NorthStarCard({ currentValue }) {
   if (goal === undefined) return null; // loading: render nothing to avoid flicker
 
   const prog = goal ? goalProgress(currentValue, goal.amount) : null;
+  const proj = goal ? projectGoal({ snapshots, current: currentValue, target: goal.amount }) : null;
 
   return (
     <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -86,6 +91,18 @@ export default function NorthStarCard({ currentValue }) {
             {!prog.reached && <p style={{ fontSize: 10, color: 'var(--muted)', margin: 0, whiteSpace: 'nowrap' }}>{fmtMoney(prog.remaining)} to go</p>}
           </div>
           {goal.label && <p style={{ fontSize: 10, color: 'var(--faint)', margin: '4px 0 0', fontStyle: 'italic' }}>{goal.label}</p>}
+          {proj?.onTrack && proj.yearsAway != null && !prog.reached && (
+            <p style={{ fontSize: 10, color: 'var(--faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
+              {proj.yearsAway <= 40
+                ? `On your recent pace, about ${proj.yearsAway} ${proj.yearsAway === 1 ? 'year' : 'years'} to go. Markets vary, but every round adds up.`
+                : 'A long way at this pace, but it compounds. Keep stacking.'}
+            </p>
+          )}
+          {proj && proj.enoughData && proj.onTrack === false && !prog.reached && (
+            <p style={{ fontSize: 10, color: 'var(--faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
+              Flat lately. The journey isn't a straight line.
+            </p>
+          )}
         </>
       )}
     </div>
