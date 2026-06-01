@@ -11,6 +11,7 @@ import JournalTab from '../journal/JournalTab.jsx';
 import SettingsPage from '../settings/SettingsPage.jsx';
 import InstallPrompt from './InstallPrompt.jsx';
 import FounderDashboard from '../admin/FounderDashboard.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 
 const TABS = [
   { id: 'home', label: 'HOME', icon: HomeIcon },
@@ -175,16 +176,24 @@ export default function AppShell() {
 
       {/* Content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {activeTab === 'home' && <HomeTab marketStatus={marketStatus} sentiment={sentiment} onSentimentLoad={setSentiment} onTabSwitch={switchTab} showToast={showToast} />}
-        {activeTab === 'portfolio' && <PortfolioTab marketOpen={marketStatus.isOpen} showToast={showToast} onTabSwitch={switchTab} />}
-        {activeTab === 'social' && <SocialTab showToast={showToast} />}
-        {/* Agent stays mounted so in-flight responses aren't lost */}
-        <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <AgentTab user={user} showToast={showToast} />
-        </div>
-        {activeTab === 'journal' && <JournalTab showToast={showToast} onTabSwitch={switchTab} />}
-        {activeTab === 'settings' && <SettingsPage user={user} onLogout={logout} showToast={showToast} onOpenAdmin={() => switchTab('admin')} />}
-        {activeTab === 'admin' && <FounderDashboard onBack={() => switchTab('settings')} />}
+        {/* Agent stays mounted so in-flight responses aren't lost, so it gets its
+            own boundary: a crash here can't take down the rest of the app. */}
+        <ErrorBoundary variant="inline">
+          <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <AgentTab user={user} showToast={showToast} />
+          </div>
+        </ErrorBoundary>
+        {/* The other tabs share one boundary, keyed by tab so switching away and
+            back remounts it and clears a crashed view. One bad card degrades its
+            own tab, not the whole shell, the nav stays alive. */}
+        <ErrorBoundary variant="inline" key={activeTab}>
+          {activeTab === 'home' && <HomeTab marketStatus={marketStatus} sentiment={sentiment} onSentimentLoad={setSentiment} onTabSwitch={switchTab} showToast={showToast} />}
+          {activeTab === 'portfolio' && <PortfolioTab marketOpen={marketStatus.isOpen} showToast={showToast} onTabSwitch={switchTab} />}
+          {activeTab === 'social' && <SocialTab showToast={showToast} />}
+          {activeTab === 'journal' && <JournalTab showToast={showToast} onTabSwitch={switchTab} />}
+          {activeTab === 'settings' && <SettingsPage user={user} onLogout={logout} showToast={showToast} onOpenAdmin={() => switchTab('admin')} />}
+          {activeTab === 'admin' && <FounderDashboard onBack={() => switchTab('settings')} />}
+        </ErrorBoundary>
       </div>
 
       {/* Bottom nav */}
