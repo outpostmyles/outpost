@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
+import { assessPositionHealth } from '../../lib/positionHealth.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
@@ -1774,6 +1775,29 @@ function noteTimeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+// Position health: the reflective verdict on whether a holding still earns its
+// place. Shown under the thesis on the expanded card. Distinct from the
+// attention badge, this is thesis-aware and frames the holding against the
+// trader's journey, not just today's price.
+const HEALTH_STYLE = {
+  on_track:   { label: 'ON TRACK',   color: 'var(--green)', bg: 'rgba(34,197,94,0.1)',  border: 'rgba(34,197,94,0.25)' },
+  watch:      { label: 'WATCH',      color: 'var(--amber)', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.25)' },
+  reconsider: { label: 'RECONSIDER', color: 'var(--red)',   bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.25)' },
+};
+function HealthRead({ pos }) {
+  const h = assessPositionHealth(pos);
+  const s = HEALTH_STYLE[h.status] || HEALTH_STYLE.watch;
+  return (
+    <div style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 8, padding: '10px 12px', margin: '6px 0 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.8px', color: s.color }}>{s.label}</span>
+        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>POSITION HEALTH</span>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.55, margin: 0 }}>{h.reason}</p>
+    </div>
+  );
+}
+
 function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   // Modes:
   //   'collapsed' — compact card showing price + today + P&L
@@ -2009,6 +2033,10 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               onEdit={() => setMode('edit')}
               onReconfirmed={onRefresh}
             />
+
+            {/* POSITION HEALTH — the honest verdict on whether this holding
+                still earns its place, read after re-reading the thesis. */}
+            <HealthRead pos={pos} />
 
             {/* TODAY'S DRIVER. The fresh context after the thesis. Why did
                 this stock move today, in one line. Sits below the thesis so
