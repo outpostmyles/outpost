@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { buildCoaching } from '../../lib/coaching.js';
+import { buildGrowthArc } from '../../lib/growthArc.js';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
 import { filterNotes } from '../../lib/journalSearch.js';
@@ -269,6 +270,7 @@ function PatternsView() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [adherence, setAdherence] = useState(null);
+  const [closed, setClosed] = useState([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -277,12 +279,13 @@ function PatternsView() {
     // Attribution drives the scorecard + behavior cuts; plan adherence adds the
     // honored/broke-stop and early-exit signals. Both feed the coach. Adherence
     // is best-effort: if it fails, the coach just leans on attribution.
-    Promise.allSettled([api.portfolio.attribution(), api.portfolio.planAdherence()])
-      .then(([attrR, adhR]) => {
+    Promise.allSettled([api.portfolio.attribution(), api.portfolio.planAdherence(), api.portfolio.closedTrades()])
+      .then(([attrR, adhR, closedR]) => {
         if (cancelled) return;
         if (attrR.status === 'fulfilled') { setData(attrR.value); setError(''); }
         else setError(attrR.reason?.error || 'Could not load patterns');
         setAdherence(adhR.status === 'fulfilled' ? adhR.value : null);
+        setClosed(closedR.status === 'fulfilled' ? (closedR.value?.trades || []) : []);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -317,6 +320,7 @@ function PatternsView() {
 
   const { patterns, totalTrades, execution, scorecard } = data;
   const coaching = buildCoaching({ attribution: data, adherence });
+  const growth = buildGrowthArc(closed);
   const rows = [
     { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
     { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
@@ -328,6 +332,7 @@ function PatternsView() {
     <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px' }}>
       {coaching.hasEnough && (coaching.fix || coaching.strength) && <CoachCard coaching={coaching} />}
       {scorecard && <ScorecardSummary s={scorecard} />}
+      {growth.hasEnough && growth.lines.length > 0 && <GrowthArcCard lines={growth.lines} />}
 
       <div style={{ marginBottom: 16 }}>
         <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 4 }}>Your patterns</p>
@@ -362,6 +367,23 @@ function PatternsView() {
 // Top-line track record. Sits above the behavior cuts and answers the first
 // question any trader asks: am I actually making money, and do I win more than
 // I lose. The hold-time line is the behavioral tell most traders never see.
+// Your growth arc: an honest then-vs-now read on how you've grown, so progress
+// is visible. Only shows when there's something real to say.
+function GrowthArcCard({ lines }) {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', margin: '0 0 10px' }}>How you've grown</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {lines.map(l => (
+          <div key={l.metric} style={{ borderLeft: `2px solid ${l.improved ? 'var(--green)' : 'var(--amber)'}`, paddingLeft: 10 }}>
+            <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.55, margin: 0 }}>{l.text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // The coach's read: the one thing to work on, the one thing to keep doing.
 // Synthesized from the same closed-trade data the cards below break down.
 function CoachCard({ coaching }) {
