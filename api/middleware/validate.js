@@ -7,7 +7,9 @@ export function sanitizeTicker(ticker) {
 
 export function sanitizeNumber(val, min = null, max = null) {
   const n = parseFloat(val);
-  if (isNaN(n)) return null;
+  // Reject NaN AND Infinity. parseFloat('Infinity') and any overflow (1e400)
+  // yield Infinity, which is not NaN but must never reach a numeric DB column.
+  if (!Number.isFinite(n)) return null;
   if (min !== null && n < min) return null;
   if (max !== null && n > max) return null;
   return n;
