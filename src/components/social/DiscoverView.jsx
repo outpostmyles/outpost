@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { buildDiscoverFeed } from './discoverRanker.js';
+import { personalizeDiscover } from './personalizeDiscover.js';
 
 /**
  * DISCOVER — one ranked feed.
@@ -52,6 +53,8 @@ export default function DiscoverView({ catalystData, onSeeAll, showToast }) {
   const [sector, setSector] = useState(null);
   const [bargain, setBargain] = useState(null);
   const [buzz, setBuzz] = useState(null);
+  const [held, setHeld] = useState([]);   // tickers the user owns (drop from feed)
+  const [watch, setWatch] = useState([]); // tickers they watch (float to the top)
 
   useEffect(() => {
     let cancelled = false;
@@ -64,10 +67,20 @@ export default function DiscoverView({ catalystData, onSeeAll, showToast }) {
     cachedFetch('discover_buzz', () => api.social.buzz(), 10 * 60000)
       .then(d => { if (!cancelled) setBuzz(d); })
       .catch(() => {});
+    // Personalization inputs: what they own (drop) and what they watch (boost).
+    cachedFetch('discover_held', () => api.portfolio.value(), 5 * 60000)
+      .then(d => { if (!cancelled) setHeld((d?.positions ?? []).map(p => p.ticker)); })
+      .catch(() => {});
+    cachedFetch('discover_watch', () => api.social.watchlist(), 5 * 60000)
+      .then(d => { if (!cancelled) setWatch((d?.items ?? []).map(w => w.ticker)); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
-  const feed = buildDiscoverFeed({ catalystData, sector, bargain, buzz }, 12);
+  const feed = personalizeDiscover(
+    buildDiscoverFeed({ catalystData, sector, bargain, buzz }, 12),
+    { held, watch },
+  );
   const hasCatalystRow = feed.some(i => i.type === 'catalyst');
 
   // Catalysts run on a schedule. If a drop hasn't fired yet there's nothing to
@@ -149,6 +162,13 @@ function FeedRow({ item, onClick }) {
             background: accentDim, color: accent, border: `0.5px solid ${accentBorder}`,
             letterSpacing: '0.4px',
           }}>{item.signal}</span>
+          {item.forYou && (
+            <span style={{
+              fontSize: 8, fontWeight: 700, padding: '1.5px 5px', borderRadius: 3,
+              background: 'rgba(34,197,94,0.12)', color: 'var(--green)', border: '0.5px solid rgba(34,197,94,0.3)',
+              letterSpacing: '0.4px',
+            }}>WATCHLIST</span>
+          )}
           {dropTime && (
             <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 'auto' }}>{dropTime} ET</span>
           )}
