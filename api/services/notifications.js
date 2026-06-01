@@ -23,6 +23,7 @@ import { getDigestForUser } from './proactiveDigest.js';
 import { getPerformanceAttribution } from './performanceAttribution.js';
 import { getPlanAdherence } from './planAdherence.js';
 import { todayStr } from '../utils/marketHours.js';
+import { goalProgress } from '../../src/lib/goalProgress.js';
 
 const resend = config.resendKey ? new Resend(config.resendKey) : null;
 const FROM_ADDRESS = 'Outpost <noreply@outpostapp.co>';
@@ -55,7 +56,7 @@ const SHELL_CLOSE = `
  * Build the daily digest email HTML.
  * Returns { subject, html, text } or null if nothing to send.
  */
-export function buildDailyDigestEmail({ displayName, digest }) {
+export function buildDailyDigestEmail({ displayName, digest, northStar }) {
   if (!digest || !digest.available || digest.quiet || !digest.digest) return null;
 
   const greeting = displayName ? `Hey ${escapeHtml(displayName)},` : 'Good morning,';
@@ -68,9 +69,18 @@ export function buildDailyDigestEmail({ displayName, digest }) {
     <li style="margin-bottom:6px;color:rgba(255,255,255,0.7);font-size:13px;line-height:1.55">${escapeHtml(s.detail)}</li>
   `).join('');
 
+  // North Star line: the most personal way to open a morning note, your journey
+  // to your own freedom number. Shown only when a goal is set.
+  const northStarBlock = northStar
+    ? (northStar.reached
+        ? `<p style="margin:0 0 16px 0;font-size:13px;color:#10b981;font-weight:700">You're at your freedom number. Worth pausing on that.</p>`
+        : `<p style="margin:0 0 16px 0;font-size:13px;color:#3b82f6">You're ${northStar.pct}% of the way to your freedom number${northStar.label ? ` (${escapeHtml(northStar.label)})` : ''}.</p>`)
+    : '';
+
   const html = `${SHELL_OPEN}
     <p style="margin:0 0 6px 0;font-size:11px;color:rgba(255,255,255,0.4);letter-spacing:0.5px;text-transform:uppercase">${dateStr}</p>
     <h2 style="margin:0 0 16px 0;font-size:18px;color:#f1f1f3">${greeting}</h2>
+    ${northStarBlock}
     <p style="margin:0 0 20px 0;font-size:14px;line-height:1.7;color:#f1f1f3">${escapeHtml(digest.digest)}</p>
     ${signalRows ? `
     <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:16px;margin-top:16px">
@@ -80,7 +90,8 @@ export function buildDailyDigestEmail({ displayName, digest }) {
     <a href="${APP_URL}" style="display:inline-block;margin-top:24px;background:#3b82f6;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;font-weight:700;font-size:13px;letter-spacing:0.5px">OPEN OUTPOST</a>
   ${SHELL_CLOSE}`;
 
-  const text = `${greeting}\n\n${digest.digest}\n\n${(digest.signals || []).slice(0, 4).map(s => `- ${s.detail}`).join('\n')}\n\nOpen Outpost: ${APP_URL}`;
+  const nsText = northStar ? (northStar.reached ? `You're at your freedom number.\n\n` : `You're ${northStar.pct}% to your freedom number.\n\n`) : '';
+  const text = `${greeting}\n\n${nsText}${digest.digest}\n\n${(digest.signals || []).slice(0, 4).map(s => `- ${s.detail}`).join('\n')}\n\nOpen Outpost: ${APP_URL}`;
 
   // Subject derived from the most actionable signal (high-priority first), else generic
   const lead = (digest.signals || []).find(s => s.priority === 'high');
@@ -364,6 +375,27 @@ async function sendOne({ to, subject, html, text }) {
  * Sends to users opted-in (email_daily_digest=true) who logged in within 7 days.
  * Skips users on quiet days (no signals).
  */
+// The user's North Star progress for the morning note: their freedom number and
+// how far along they are. Reads the goal (agent_memory) and the latest daily
+// snapshot for value. Cheap and best-effort; returns null if no goal is set.
+async function northStarForDigest(userId) {
+  try {
+    const { data: goalRow } = await supabase.from('agent_memory')
+      .select('content').eq('user_id', userId).eq('memory_type', 'goal')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!goalRow?.content) return null;
+    const g = JSON.parse(goalRow.content);
+    const target = Number(g?.amount);
+    if (!(target > 0)) return null;
+    const { data: snap } = await supabase.from('portfolio_snapshots')
+      .select('total_value').eq('user_id', userId)
+      .order('date', { ascending: false }).limit(1).maybeSingle();
+    const p = goalProgress(Number(snap?.total_value) || 0, target);
+    if (!p) return null;
+    return { pct: p.pct, reached: p.reached, label: g.label || '' };
+  } catch { return null; }
+}
+
 export async function sendAllDailyDigestEmails() {
   if (!resend) {
     console.warn('[Notifications] Resend not configured — skipping daily digest emails');
@@ -382,8 +414,8 @@ export async function sendAllDailyDigestEmails() {
 
   const results = await withLimit(users, async (u) => {
     try {
-      const digest = await getDigestForUser(u.id, false);
-      const built = buildDailyDigestEmail({ displayName: u.display_name, digest });
+      const [digest, northStar] = await Promise.all([getDigestForUser(u.id, false), northStarForDigest(u.id)]);
+      const built = buildDailyDigestEmail({ displayName: u.display_name, digest, northStar });
       if (!built) return { skipped: true, reason: 'quiet_day_or_no_data' };
       const r = await sendOne({ to: u.email, ...built });
       return r;
