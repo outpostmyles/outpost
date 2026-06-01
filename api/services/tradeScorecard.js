@@ -19,7 +19,7 @@ function num(v) {
 }
 
 export function computeScorecard(trades) {
-  const all = (trades || []).filter(Boolean);
+  const all = (Array.isArray(trades) ? trades : []).filter(Boolean);
   const totalTrades = all.length;
   if (totalTrades === 0) return null;
 

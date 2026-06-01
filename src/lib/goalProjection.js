@@ -9,15 +9,16 @@
 //
 // Pure so the math is unit-testable.
 
-export function projectGoal({ snapshots = [], current, target, nowMs = Date.now() } = {}) {
+export function projectGoal(input) {
+  const { snapshots, current, target, nowMs = Date.now() } = input || {};
   const t = Number(target);
   if (!Number.isFinite(t) || t <= 0) return { enoughData: false };
 
   const cur = Number(current);
   if (Number.isFinite(cur) && cur >= t) return { enoughData: true, reached: true };
 
-  const pts = (snapshots || [])
-    .map(s => ({ ms: Date.parse(s.date || s.created_at), value: Number(s.total_value ?? s.value) }))
+  const pts = (Array.isArray(snapshots) ? snapshots : [])
+    .map(s => ({ ms: Date.parse(s?.date || s?.created_at), value: Number(s?.total_value ?? s?.value) }))
     .filter(p => Number.isFinite(p.ms) && Number.isFinite(p.value) && p.value > 0)
     .sort((a, b) => a.ms - b.ms);
   if (pts.length < 2) return { enoughData: false };

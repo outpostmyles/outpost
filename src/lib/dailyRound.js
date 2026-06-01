@@ -29,8 +29,8 @@ function hasReflection(t) {
 function chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs) {
   // 1. A trade closed recently with no reflection logged: lock in the lesson
   //    while it's fresh. Highest priority, this is where getting better happens.
-  const skip = new Set((reflectedIds || []).map(String));
-  const recentUnreflected = (closedTrades || [])
+  const skip = new Set((Array.isArray(reflectedIds) ? reflectedIds : []).map(String));
+  const recentUnreflected = (Array.isArray(closedTrades) ? closedTrades : [])
     .filter(t => t && t.id != null && t.ticker && !skip.has(String(t.id)) && !hasReflection(t))
     .filter(t => {
       const closed = t.closed_at ? Date.parse(t.closed_at) : NaN;
@@ -48,7 +48,7 @@ function chooseSharpen(positions, attribution, adherence, closedTrades, reflecte
   }
 
   // 2. A holding with no written thesis.
-  const noThesis = (positions || []).find(p => p && p.ticker && !clean(p.entry_thesis));
+  const noThesis = (Array.isArray(positions) ? positions : []).find(p => p && p.ticker && !clean(p.entry_thesis));
   if (noThesis) {
     return {
       kind: 'thesis',
@@ -68,9 +68,10 @@ function chooseSharpen(positions, attribution, adherence, closedTrades, reflecte
   return { kind: 'none', prompt: '' };
 }
 
-export function buildRound({ todayItems = [], positions = [], attribution = null, adherence = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = {}) {
-  const items = (todayItems || []).filter(Boolean);
-  const held = new Set((positions || []).filter(Boolean).map(p => upper(p.ticker)));
+export function buildRound(input) {
+  const { todayItems = [], positions = [], attribution = null, adherence = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = input || {};
+  const items = (Array.isArray(todayItems) ? todayItems : []).filter(Boolean);
+  const held = new Set((Array.isArray(positions) ? positions : []).filter(Boolean).map(p => upper(p.ticker)));
 
   // Safety: the "needs a decision" items. Alerts are exactly these (stop broken,
   // target hit, deep/moderate drawdown).
@@ -87,7 +88,7 @@ export function buildRound({ todayItems = [], positions = [], attribution = null
     safety: {
       items: safetyItems,
       allClear: safetyItems.length === 0,
-      checked: (positions || []).filter(Boolean).length,
+      checked: (Array.isArray(positions) ? positions : []).filter(Boolean).length,
     },
     opportunity,
     sharpen: chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs),

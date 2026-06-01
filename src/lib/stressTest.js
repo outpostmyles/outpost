@@ -16,8 +16,9 @@ function valueOf(p) {
   return (px != null && sh != null && px > 0 && sh > 0) ? px * sh : 0;
 }
 
-export function buildStressTests(positions = [], { portfolioBeta = 1 } = {}) {
-  const rows = (positions || [])
+export function buildStressTests(positions = [], opts) {
+  const { portfolioBeta = 1 } = opts || {};
+  const rows = (Array.isArray(positions) ? positions : [])
     .filter(Boolean)
     .map(p => ({ ticker: String(p.ticker || '').toUpperCase(), value: valueOf(p) }))
     .filter(r => r.ticker && r.value > 0);

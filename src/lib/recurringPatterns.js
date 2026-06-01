@@ -9,7 +9,7 @@ const NEGATIVE = new Set(['broke_stop', 'early_exit']);
 
 export function detectRecurring(byTrade = []) {
   const groups = {}; // category -> { count, months: Set<YYYY-MM> }
-  for (const t of byTrade || []) {
+  for (const t of (Array.isArray(byTrade) ? byTrade : [])) {
     if (!t || !NEGATIVE.has(t.category)) continue;
     const month = t.closedAt ? String(t.closedAt).slice(0, 7) : null; // YYYY-MM
     if (!month || month.length < 7) continue;

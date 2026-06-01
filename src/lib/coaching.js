@@ -13,7 +13,8 @@ import { detectRecurring } from './recurringPatterns.js';
 
 function r0(n) { const x = Number(n); return Number.isFinite(x) ? Math.round(x) : null; }
 
-export function buildCoaching({ attribution = null, adherence = null } = {}) {
+export function buildCoaching(input) {
+  const { attribution = null, adherence = null } = input || {};
   const sc = attribution?.scorecard || null;
   const thesis = attribution?.patterns?.thesis || null;
   const sum = adherence?.summary || null;

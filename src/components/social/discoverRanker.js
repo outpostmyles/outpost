@@ -39,7 +39,8 @@ const PRIORITY = {
  *     priority:  computed score (used only for sorting, not displayed)
  *   }
  */
-export function buildDiscoverFeed({ catalystData, sector, bargain, buzz } = {}, limit = 10) {
+export function buildDiscoverFeed(input, limit = 10) {
+  const { catalystData, sector, bargain, buzz } = input || {};
   const items = [];
 
   // ─── Catalysts ──────────────────────────────────────────────────────────

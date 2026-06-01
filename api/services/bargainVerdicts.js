@@ -25,7 +25,7 @@ export function applyBuyableVerdicts(candidates, parsed) {
   }
 
   const survivors = [];
-  for (const c of candidates || []) {
+  for (const c of (Array.isArray(candidates) ? candidates : [])) {
     const v = byTicker[String(c?.ticker || '').toUpperCase()];
     if (!v) continue;                       // no verdict for this name -> drop
     if (v.verdict === 'buyable') {

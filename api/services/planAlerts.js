@@ -19,7 +19,7 @@ function num(v) {
 // or stop broken (price <= stop). A position can contribute both.
 export function evaluatePlanAlerts(positions, priceMap) {
   const hits = [];
-  for (const p of positions || []) {
+  for (const p of (Array.isArray(positions) ? positions : [])) {
     if (!p) continue;
     const price = num(priceMap?.[p.ticker]?.price);
     if (price == null) continue;

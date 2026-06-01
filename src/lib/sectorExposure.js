@@ -7,7 +7,7 @@
 // the heaviest sector, and whether the book is sector-concentrated.
 
 export function sectorExposure(holdings = []) {
-  const rows = (holdings || [])
+  const rows = (Array.isArray(holdings) ? holdings : [])
     .filter(h => h && h.sector && Number(h.value) > 0)
     .map(h => ({ sector: String(h.sector), value: Number(h.value) }));
   const total = rows.reduce((s, r) => s + r.value, 0);

@@ -9,10 +9,11 @@
 // matches how people expect to narrow a search by adding words.
 
 export function filterNotes(notes, query) {
-  const q = (query || '').trim().toLowerCase();
-  if (!q) return notes || [];
+  const list = Array.isArray(notes) ? notes : [];
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return list;
   const terms = q.split(/\s+/).filter(Boolean);
-  return (notes || []).filter(n => {
+  return list.filter(n => {
     const hay = `${n?.title || ''} ${n?.preview || ''}`.toLowerCase();
     return terms.every(t => hay.includes(t));
   });

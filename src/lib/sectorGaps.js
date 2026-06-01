@@ -22,8 +22,9 @@ const CANONICAL = [
   'Utilities',
 ];
 
-export function sectorGaps(sectors = [], { lightPct = 5, max = 3 } = {}) {
-  const have = new Map((sectors || []).filter(Boolean).map(s => [String(s.sector), Number(s.pct) || 0]));
+export function sectorGaps(sectors = [], opts) {
+  const { lightPct = 5, max = 3 } = opts || {};
+  const have = new Map((Array.isArray(sectors) ? sectors : []).filter(Boolean).map(s => [String(s.sector), Number(s.pct) || 0]));
   const classified = [...have.values()].reduce((a, b) => a + b, 0);
   // Nothing classified yet (no positions, or all 'Unknown'): no gaps to suggest.
   if (classified <= 0) return { absent: [], light: [], gaps: [] };

@@ -8,8 +8,9 @@
 // Pure. Needs a real history (10+ closed trades) before it says anything, since
 // a growth claim on a handful of trades is just noise.
 
-export function buildGrowthArc(closedTrades = [], { minTrades = 10 } = {}) {
-  const trades = (closedTrades || [])
+export function buildGrowthArc(closedTrades = [], opts) {
+  const { minTrades = 10 } = opts || {};
+  const trades = (Array.isArray(closedTrades) ? closedTrades : [])
     .filter(t => t && t.closed_at)
     .map(t => ({
       ms: Date.parse(t.closed_at),

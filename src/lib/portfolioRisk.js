@@ -15,7 +15,7 @@ function valueOf(p) {
 }
 
 export function assessPortfolioRisk(positions = []) {
-  const rows = (positions || [])
+  const rows = (Array.isArray(positions) ? positions : [])
     .filter(Boolean)
     .map(p => ({ ticker: String(p.ticker || '').toUpperCase(), value: valueOf(p) }))
     .filter(r => r.ticker && r.value > 0);

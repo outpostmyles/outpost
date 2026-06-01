@@ -30,7 +30,8 @@ function num(v) {
 // Conservative on purpose: it takes a genuine stressor (a broken stop, a hard
 // daily drop, a deeply underwater book, spiking volatility, or extreme fear) to
 // flip into "storm". Everything else stays "calm" so we don't cry wolf.
-export function assessRegister({ pnlPercent, dayMovePercent, vix, fearGreed, brokenStop } = {}) {
+export function assessRegister(input) {
+  const { pnlPercent, dayMovePercent, vix, fearGreed, brokenStop } = input || {};
   const reasons = [];
   if (brokenStop) reasons.push('a position broke its stop');
   const day = num(dayMovePercent);

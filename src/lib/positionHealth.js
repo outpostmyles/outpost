@@ -10,7 +10,8 @@
 function num(v) { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; }
 function clean(s) { return (s == null ? '' : String(s)).trim(); }
 
-export function assessPositionHealth(pos = {}) {
+export function assessPositionHealth(pos) {
+  pos = pos || {};
   const price = num(pos.price ?? pos.currentPrice);
   const cost = num(pos.avg_cost);
   const stop = num(pos.stop_loss);

@@ -8,12 +8,13 @@
 // (sector, fundamentals, setup type) the feed does not carry yet, so we don't
 // fake it. Pure so the re-ranking is unit-testable.
 
-export function personalizeDiscover(items = [], { held = [], watch = [] } = {}) {
-  const heldSet = new Set((held || []).map(t => String(t).toUpperCase()));
-  const watchSet = new Set((watch || []).map(t => String(t).toUpperCase()));
+export function personalizeDiscover(items = [], opts) {
+  const { held = [], watch = [] } = opts || {};
+  const heldSet = new Set((Array.isArray(held) ? held : []).map(t => String(t).toUpperCase()));
+  const watchSet = new Set((Array.isArray(watch) ? watch : []).map(t => String(t).toUpperCase()));
 
   const out = [];
-  for (const it of items || []) {
+  for (const it of (Array.isArray(items) ? items : [])) {
     if (!it) continue;
     const tk = it.ticker ? String(it.ticker).toUpperCase() : null;
     if (tk && heldSet.has(tk)) continue; // already own it: not a discovery
