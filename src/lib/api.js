@@ -129,6 +129,9 @@ export const api = {
     // "Outpost noticed" passive observations. Up to 3, ranked by priority.
     // Pure deterministic logic on the backend (no AI call).
     notices: () => get('/api/portfolio/notices'),
+    // North Star — the user's financial-freedom target portfolio value.
+    getGoal: () => get('/api/portfolio/goal'),
+    setGoal: (body) => post('/api/portfolio/goal', body),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

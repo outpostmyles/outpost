@@ -1460,4 +1460,50 @@ router.get('/performance-attribution', requireAuth, rateLimit(10), async (req, r
   }
 });
 
+// GET /api/portfolio/goal — the user's North Star (financial-freedom target
+// portfolio value). Stored as a singleton in agent_memory, no migration needed.
+router.get('/goal', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const { data } = await supabase.from('agent_memory')
+      .select('content, created_at')
+      .eq('user_id', req.user.id)
+      .eq('memory_type', 'goal')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let goal = null;
+    if (data?.content) {
+      try {
+        const p = JSON.parse(data.content);
+        if (p && Number(p.amount) > 0) goal = { amount: Number(p.amount), label: p.label || '', setAt: data.created_at };
+      } catch {}
+    }
+    res.json({ goal });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /goal get failed:`, err.message);
+    res.json({ goal: null }); // non-critical
+  }
+});
+
+// POST /api/portfolio/goal — set or replace the North Star. Body: { amount, label? }.
+// Delete-then-insert keeps it a clean singleton.
+router.post('/goal', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const amount = sanitizeNumber(req.body?.amount, 1, 1000000000);
+    if (amount == null) return res.status(400).json({ error: 'Enter a target amount' });
+    const label = sanitizeString(req.body?.label, 80) || '';
+    await supabase.from('agent_memory').delete().eq('user_id', req.user.id).eq('memory_type', 'goal');
+    await supabase.from('agent_memory').insert({
+      user_id: req.user.id,
+      memory_type: 'goal',
+      content: JSON.stringify({ amount, label }),
+      created_at: new Date().toISOString(),
+    });
+    res.json({ ok: true, goal: { amount, label } });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /goal set failed:`, err.message);
+    res.status(500).json({ error: 'Could not save your goal' });
+  }
+});
+
 export default router;
