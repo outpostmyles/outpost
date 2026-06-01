@@ -324,6 +324,25 @@ export async function buildAgentContext(userId, user) {
     alertsStr = '\n\nACTIVE ALERTS (bring these up proactively — the trader needs to know):\n' + activeAlerts.join('\n');
   }
 
+  // North Star — the trader's freedom number, so the agent can frame guidance
+  // around protecting and advancing it, not just the trade in front of them.
+  let northStar = '';
+  try {
+    const { data: goalRow } = await supabase.from('agent_memory')
+      .select('content').eq('user_id', userId).eq('memory_type', 'goal')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (goalRow?.content) {
+      const g = JSON.parse(goalRow.content);
+      const target = Number(g?.amount);
+      if (target > 0) {
+        const pm = getPrices(rawPos.map(p => p.ticker));
+        const totalValue = rawPos.reduce((s, p) => s + (pm[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0);
+        const pct = Math.max(0, Math.min(100, Math.round((totalValue / target) * 100)));
+        northStar = `\n\nNORTH STAR (the trader's stated freedom goal): $${target.toLocaleString()}${g.label ? ` ("${safeUserText(g.label, 80)}")` : ''}. They are about ${pct}% of the way there. When a decision is material, frame it in terms of protecting and advancing this goal. Never reframe or invent a different goal for them.`;
+      }
+    }
+  } catch {}
+
   return {
     ...base,
     currentDate: dateStr,
@@ -339,6 +358,7 @@ export async function buildAgentContext(userId, user) {
     sectorRadar: sectorRadarStr,
     planAdherence: planAdherenceStr,
     performanceAttribution: attributionStr,
+    northStar,
   };
 }
 
