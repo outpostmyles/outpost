@@ -20,6 +20,7 @@ export default function NorthStarCard({ currentValue }) {
   const [label, setLabel] = useState('');
   const [saving, setSaving] = useState(false);
   const [snapshots, setSnapshots] = useState([]);
+  const [err, setErr] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -39,13 +40,15 @@ export default function NorthStarCard({ currentValue }) {
 
   async function save() {
     const amt = parseFloat(amount);
-    if (!isFinite(amt) || amt <= 0) return;
-    setSaving(true);
+    if (!isFinite(amt) || amt <= 0) { setErr('Enter a target amount above zero.'); return; }
+    setSaving(true); setErr('');
     try {
       const d = await api.portfolio.setGoal({ amount: amt, label: label.trim() || undefined });
       setGoal(d?.goal || { amount: amt, label: label.trim() });
       setEditing(false);
-    } catch {}
+    } catch (e) {
+      setErr(e?.error || 'Could not save. If the app was just updated, restart the backend and try again.');
+    }
     setSaving(false);
   }
 
@@ -71,6 +74,7 @@ export default function NorthStarCard({ currentValue }) {
             <button onClick={() => setEditing(false)} className="btn btn-muted" style={{ flex: 1, fontSize: 11 }}>Cancel</button>
             <button onClick={save} disabled={saving || !(parseFloat(amount) > 0)} className="btn btn-blue" style={{ flex: 1, fontSize: 11 }}>{saving ? 'Saving...' : 'Set it'}</button>
           </div>
+          {err && <p style={{ fontSize: 10, color: 'var(--red)', margin: 0, lineHeight: 1.5 }}>{err}</p>}
         </div>
       ) : !goal ? (
         <>
