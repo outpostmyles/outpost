@@ -16,7 +16,7 @@ function valueOf(p) {
   return (px != null && sh != null && px > 0 && sh > 0) ? px * sh : 0;
 }
 
-export function buildStressTests(positions = []) {
+export function buildStressTests(positions = [], { portfolioBeta = 1 } = {}) {
   const rows = (positions || [])
     .filter(Boolean)
     .map(p => ({ ticker: String(p.ticker || '').toUpperCase(), value: valueOf(p) }))
@@ -28,13 +28,21 @@ export function buildStressTests(positions = []) {
   const round = (n) => Math.round(n);
   const pct1 = (n) => Math.round(n * 10) / 10;
 
+  // Market moves are scaled by the book's beta when we have it, so a more
+  // volatile book shows the bigger (honest) number. Single-name shock stays
+  // exact. Beta is an estimate, hence the soft note rather than false precision.
+  const beta = Number.isFinite(portfolioBeta) && portfolioBeta > 0 ? portfolioBeta : 1;
+  const betaNote = beta >= 1.15 ? ` Your book runs hotter than the market (beta ${beta.toFixed(1)}).`
+    : beta <= 0.85 ? ` Your book is steadier than the market (beta ${beta.toFixed(1)}).`
+    : '';
+
   return [
     {
       key: 'market_10',
       label: 'Market falls 10%',
-      impact: -round(total * 0.10),
-      pct: -10,
-      note: 'If your holdings move roughly with the market.',
+      impact: -round(total * 0.10 * beta),
+      pct: -Math.round(10 * beta),
+      note: `If the market drops and your book moves with it.${betaNote}`,
     },
     {
       key: 'top_25',
@@ -46,9 +54,9 @@ export function buildStressTests(positions = []) {
     {
       key: 'market_25',
       label: 'A hard 25% market drop',
-      impact: -round(total * 0.25),
-      pct: -25,
-      note: 'A 2022-style decline, holdings moving with the market.',
+      impact: -round(total * 0.25 * beta),
+      pct: -Math.round(25 * beta),
+      note: `A 2022-style decline.${betaNote}`,
     },
   ];
 }

@@ -45,6 +45,21 @@ test('every scenario impact is a loss (negative)', () => {
   for (const sc of s) assert.ok(sc.impact < 0);
 });
 
+test('market scenarios scale by portfolio beta; single-name shock does not', () => {
+  const s = buildStressTests([pos('A', 6000), pos('B', 4000)], { portfolioBeta: 1.5 }); // total 10000
+  const m10 = s.find(x => x.key === 'market_10');
+  assert.equal(m10.impact, -1500); // 10000 * 0.10 * 1.5
+  assert.equal(m10.pct, -15);
+  assert.match(m10.note, /hotter than the market/);
+  const top = s.find(x => x.key === 'top_25');
+  assert.equal(top.impact, -1500); // A is 6000, *0.25 = 1500, unaffected by beta
+});
+
+test('a steadier (low-beta) book shows smaller market hits', () => {
+  const s = buildStressTests([pos('A', 10000)], { portfolioBeta: 0.6 });
+  assert.equal(s.find(x => x.key === 'market_10').impact, -600); // 10000*0.10*0.6
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.fn(); console.log(`ok    ${t.name}`); pass++; }

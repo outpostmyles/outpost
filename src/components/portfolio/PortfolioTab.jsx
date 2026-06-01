@@ -2467,7 +2467,20 @@ function FirstReadSheet({ ticker, onClose }) {
 // moving with the market) since we don't model per-stock beta yet.
 function StressTestCard({ positions }) {
   const [open, setOpen] = useState(false);
-  const scenarios = buildStressTests(positions);
+  const [beta, setBeta] = useState(1);
+  useEffect(() => {
+    let cancelled = false;
+    cachedFetch('portfolio_sectors', () => api.portfolio.sectors(), 5 * 60000)
+      .then(d => {
+        if (cancelled) return;
+        const hs = (d?.holdings || []).filter(h => Number.isFinite(h.beta) && h.value > 0);
+        const tv = hs.reduce((s, h) => s + h.value, 0);
+        if (tv > 0) setBeta(hs.reduce((s, h) => s + h.value * h.beta, 0) / tv);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const scenarios = buildStressTests(positions, { portfolioBeta: beta });
   if (scenarios.length === 0) return null;
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
@@ -2506,7 +2519,7 @@ function SectorMixCard({ onTabSwitch }) {
   const [exposure, setExposure] = useState(null);
   useEffect(() => {
     let cancelled = false;
-    api.portfolio.sectors()
+    cachedFetch('portfolio_sectors', () => api.portfolio.sectors(), 5 * 60000)
       .then(d => { if (!cancelled) setExposure(sectorExposure(d?.holdings || [])); })
       .catch(() => {});
     return () => { cancelled = true; };

@@ -1520,9 +1520,13 @@ router.get('/sectors', requireAuth, rateLimit(20), async (req, res) => {
     const priceMap = tickers.length ? getPrices(tickers) : {};
     const holdings = await Promise.all(pos.map(async (p) => {
       const live = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
-      let sector = 'Unknown';
-      try { const f = await getFinancials(p.ticker); if (f?.sector) sector = f.sector; } catch {}
-      return { ticker: p.ticker, sector, value: live * (p.shares ?? 0) };
+      let sector = 'Unknown', beta = null;
+      try {
+        const f = await getFinancials(p.ticker);
+        if (f?.sector) sector = f.sector;
+        if (Number.isFinite(f?.beta) && f.beta > 0) beta = f.beta;
+      } catch {}
+      return { ticker: p.ticker, sector, value: live * (p.shares ?? 0), beta };
     }));
     res.json({ holdings });
   } catch (err) {
