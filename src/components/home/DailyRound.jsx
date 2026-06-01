@@ -12,6 +12,19 @@ import { buildRound } from '../../lib/dailyRound.js';
 const DONE_KEY = 'outpost_round_done';
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
+// Trades we've already nudged a reflection for, so the round never nags about
+// the same closed trade twice.
+const REFLECTED_KEY = 'outpost_round_reflected';
+function readReflected() {
+  try { return JSON.parse(localStorage.getItem(REFLECTED_KEY) || '[]'); } catch { return []; }
+}
+function markReflectedId(id) {
+  try {
+    const arr = readReflected();
+    if (!arr.includes(id)) { arr.push(id); localStorage.setItem(REFLECTED_KEY, JSON.stringify(arr.slice(-200))); }
+  } catch {}
+}
+
 function money(n) {
   if (n == null || isNaN(n)) return '$0';
   const sign = n > 0 ? '+' : n < 0 ? '-' : '';
@@ -74,19 +87,27 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [todayR, valueR, pulseR, attrR] = await Promise.allSettled([
+      const [todayR, valueR, pulseR, attrR, closedR] = await Promise.allSettled([
         api.ai.today(),
         api.portfolio.value(),
         api.portfolio.pulse(),
         api.portfolio.attribution(),
+        api.portfolio.closedTrades(),
       ]);
       if (cancelled) return;
       const today = todayR.status === 'fulfilled' && todayR.value ? todayR.value : { items: [] };
       const value = valueR.status === 'fulfilled' && valueR.value ? valueR.value : { positions: [] };
       const pulse = pulseR.status === 'fulfilled' ? (pulseR.value?.pulse || '') : '';
       const attribution = attrR.status === 'fulfilled' ? attrR.value : null;
+      const closedTrades = closedR.status === 'fulfilled' ? (closedR.value?.trades || []) : [];
       setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, pulse });
-      setRound(buildRound({ todayItems: today.items || [], positions: value.positions || [], attribution }));
+      setRound(buildRound({
+        todayItems: today.items || [],
+        positions: value.positions || [],
+        attribution,
+        closedTrades,
+        reflectedIds: readReflected(),
+      }));
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -134,7 +155,7 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
               {current === 'safety' && <SafetyStep safety={round.safety} onAct={act} />}
               {current === 'standing' && <StandingStep standing={standing} />}
               {current === 'opportunity' && <OpportunityStep items={round.opportunity} onAct={act} />}
-              {current === 'sharpen' && <SharpenStep sharpen={round.sharpen} showToast={showToast} />}
+              {current === 'sharpen' && <SharpenStep sharpen={round.sharpen} showToast={showToast} onAct={act} onReflected={markReflectedId} />}
               {current === 'close' && <CloseStep round={round} />}
               <button onClick={next} className="btn btn-blue btn-full" style={{ marginTop: 22 }}>
                 {last ? "Done. I'm covered." : 'Next'}
@@ -257,7 +278,7 @@ function OpportunityStep({ items, onAct }) {
   );
 }
 
-function SharpenStep({ sharpen, showToast }) {
+function SharpenStep({ sharpen, showToast, onAct, onReflected }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -279,6 +300,18 @@ function SharpenStep({ sharpen, showToast }) {
     <>
       <StepLabel label="Get a little sharper" />
       <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, margin: '0 0 12px' }}>{sharpen.prompt}</p>
+      {sharpen.kind === 'reflection' && (
+        <button
+          onClick={() => {
+            onReflected?.(sharpen.tradeId);
+            onAct?.(`I closed ${sharpen.ticker} recently. Help me lock in the lesson: what went right, what went wrong, and what I'd do differently next time.`);
+          }}
+          className="btn btn-muted btn-full"
+          style={{ fontSize: 11 }}
+        >
+          Reflect with the agent
+        </button>
+      )}
       {sharpen.kind === 'thesis' && sharpen.positionId && !saved && (
         <>
           <textarea

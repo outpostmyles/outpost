@@ -91,6 +91,61 @@ test('handles empty / missing inputs without throwing', () => {
   assert.deepEqual(buildRound({}).opportunity, []);
 });
 
+const NOW = Date.parse('2026-06-01T12:00:00Z');
+const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
+
+test('sharpen prompts a recent unreflected closed trade ahead of a missing thesis', () => {
+  const r = buildRound({
+    positions: [{ ticker: 'AMD' }], // missing thesis, but a fresh reflection wins
+    closedTrades: [{ id: 't1', ticker: 'TSLA', closed_at: daysAgo(3) }],
+    nowMs: NOW,
+  });
+  assert.equal(r.sharpen.kind, 'reflection');
+  assert.equal(r.sharpen.ticker, 'TSLA');
+  assert.equal(r.sharpen.tradeId, 't1');
+});
+
+test('a closed trade that already has a reflection is not prompted', () => {
+  const r = buildRound({
+    positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
+    closedTrades: [{ id: 't1', ticker: 'TSLA', closed_at: daysAgo(2), reflection_lesson: 'sized too big' }],
+    nowMs: NOW,
+  });
+  assert.equal(r.sharpen.kind, 'none');
+});
+
+test('a closed trade beyond the recency window is not prompted', () => {
+  const r = buildRound({
+    positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
+    closedTrades: [{ id: 't1', ticker: 'TSLA', closed_at: daysAgo(30) }],
+    nowMs: NOW,
+  });
+  assert.equal(r.sharpen.kind, 'none');
+});
+
+test('reflectedIds suppresses an already-prompted trade (no nagging)', () => {
+  const r = buildRound({
+    positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
+    closedTrades: [{ id: 't1', ticker: 'TSLA', closed_at: daysAgo(1) }],
+    reflectedIds: ['t1'],
+    nowMs: NOW,
+  });
+  assert.equal(r.sharpen.kind, 'none');
+});
+
+test('the most recently closed unreflected trade is chosen', () => {
+  const r = buildRound({
+    positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
+    closedTrades: [
+      { id: 'old', ticker: 'F', closed_at: daysAgo(8) },
+      { id: 'new', ticker: 'GME', closed_at: daysAgo(1) },
+    ],
+    nowMs: NOW,
+  });
+  assert.equal(r.sharpen.kind, 'reflection');
+  assert.equal(r.sharpen.ticker, 'GME');
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.fn(); console.log(`ok    ${t.name}`); pass++; }

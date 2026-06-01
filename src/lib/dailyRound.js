@@ -19,7 +19,33 @@ function upper(s) { return clean(s).toUpperCase(); }
 // valuable, lowest-effort ask first (a missing thesis feeds the edge stats),
 // then a genuine insight from their own record, then nothing at all. We never
 // invent a task just to have one.
-function chooseSharpen(positions, attribution) {
+const DAY_MS = 86400000;
+function hasReflection(t) {
+  return !!(clean(t.reflection_lesson) || clean(t.reflection_what_happened) || clean(t.exit_reflection));
+}
+
+function chooseSharpen(positions, attribution, closedTrades, reflectedIds, nowMs) {
+  // 1. A trade closed recently with no reflection logged: lock in the lesson
+  //    while it's fresh. Highest priority, this is where getting better happens.
+  const skip = new Set((reflectedIds || []).map(String));
+  const recentUnreflected = (closedTrades || [])
+    .filter(t => t && t.id != null && t.ticker && !skip.has(String(t.id)) && !hasReflection(t))
+    .filter(t => {
+      const closed = t.closed_at ? Date.parse(t.closed_at) : NaN;
+      return Number.isFinite(closed) && nowMs - closed >= 0 && nowMs - closed <= 10 * DAY_MS;
+    })
+    .sort((a, b) => Date.parse(b.closed_at) - Date.parse(a.closed_at));
+  if (recentUnreflected[0]) {
+    const t = recentUnreflected[0];
+    return {
+      kind: 'reflection',
+      ticker: upper(t.ticker),
+      tradeId: t.id,
+      prompt: `You closed ${upper(t.ticker)} recently and never wrote down what you learned. Lock in the lesson while it's fresh?`,
+    };
+  }
+
+  // 2. A holding with no written thesis.
   const noThesis = (positions || []).find(p => p && p.ticker && !clean(p.entry_thesis));
   if (noThesis) {
     return {
@@ -53,7 +79,7 @@ function chooseSharpen(positions, attribution) {
   return { kind: 'none', prompt: '' };
 }
 
-export function buildRound({ todayItems = [], positions = [], attribution = null } = {}) {
+export function buildRound({ todayItems = [], positions = [], attribution = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = {}) {
   const items = (todayItems || []).filter(Boolean);
   const held = new Set((positions || []).filter(Boolean).map(p => upper(p.ticker)));
 
@@ -75,6 +101,6 @@ export function buildRound({ todayItems = [], positions = [], attribution = null
       checked: (positions || []).filter(Boolean).length,
     },
     opportunity,
-    sharpen: chooseSharpen(positions, attribution),
+    sharpen: chooseSharpen(positions, attribution, closedTrades, reflectedIds, nowMs),
   };
 }
