@@ -191,7 +191,8 @@ async function takeSnapshots() {
 async function resetCredits() {
   const today = new Date().getDate();
   const { data: users } = await supabase.from('user_profiles').select('id,plan,billing_date').eq('billing_date', today);
-  const CREDITS = { free: 50, starter: 500, pro: 2500, elite: 10000 };
+  // MIRRORED in api/functions/auth.js PLAN_CREDITS, keep both in sync.
+  const CREDITS = { free: 50, starter: 500, pro: 2500, elite: 10000, unlimited: 999_999_999 };
   for (const user of users ?? []) {
     await supabase.from('user_profiles').update({ credits_remaining: CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
   }
