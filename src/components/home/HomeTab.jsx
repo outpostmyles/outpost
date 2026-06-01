@@ -10,6 +10,7 @@ import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
 import DeployCashFlow from './DeployCashFlow.jsx';
 import DailyRound from './DailyRound.jsx';
+import NorthStarCard from './NorthStarCard.jsx';
 
 // "Outpost noticed" card. Surfaces up to 3 passive observations the user
 // might miss otherwise. Closes without reflections. Aged positions without
@@ -440,6 +441,12 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           {/* PULSE — one personal sentence. Lives near the top so it's an early
               felt moment when the user opens the app. */}
           <PulseCard refreshKey={lastUpdated?.getTime() ?? 0} />
+
+          {/* NORTH STAR — the freedom number and progress toward it. Shown once
+              there's a book to grow; orients the app around the destination. */}
+          {(data.portfolio?.positions?.length ?? 0) >= 1 && (
+            <NorthStarCard currentValue={data.portfolio?.totalValue ?? 0} />
+          )}
 
           {/* OUTPOST NOTICED — passive observations. Shown only when there
               are non-dismissed notices to surface. Renders nothing in the

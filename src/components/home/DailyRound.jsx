@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { buildRound } from '../../lib/dailyRound.js';
+import { goalProgress } from '../../lib/goalProgress.js';
 
 // The Daily Round: a short, guided, completable pass that does the all-day
 // watching for the user and ends on "you're covered". See docs/daily-round.md.
@@ -81,18 +82,20 @@ export default function DailyRound({ onTabSwitch, showToast }) {
 function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [round, setRound] = useState(null);
-  const [standing, setStanding] = useState({ todayChange: 0, totalPnl: 0, pulse: '' });
+  const [standing, setStanding] = useState({ todayChange: 0, totalPnl: 0, totalValue: 0, pulse: '' });
+  const [goal, setGoal] = useState(null);
   const [i, setI] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [todayR, valueR, pulseR, attrR, closedR] = await Promise.allSettled([
+      const [todayR, valueR, pulseR, attrR, closedR, goalR] = await Promise.allSettled([
         api.ai.today(),
         api.portfolio.value(),
         api.portfolio.pulse(),
         api.portfolio.attribution(),
         api.portfolio.closedTrades(),
+        api.portfolio.getGoal(),
       ]);
       if (cancelled) return;
       const today = todayR.status === 'fulfilled' && todayR.value ? todayR.value : { items: [] };
@@ -100,7 +103,8 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
       const pulse = pulseR.status === 'fulfilled' ? (pulseR.value?.pulse || '') : '';
       const attribution = attrR.status === 'fulfilled' ? attrR.value : null;
       const closedTrades = closedR.status === 'fulfilled' ? (closedR.value?.trades || []) : [];
-      setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, pulse });
+      setGoal(goalR.status === 'fulfilled' ? (goalR.value?.goal || null) : null);
+      setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, totalValue: value.totalValue ?? 0, pulse });
       setRound(buildRound({
         todayItems: today.items || [],
         positions: value.positions || [],
@@ -156,7 +160,7 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
               {current === 'standing' && <StandingStep standing={standing} />}
               {current === 'opportunity' && <OpportunityStep items={round.opportunity} onAct={act} />}
               {current === 'sharpen' && <SharpenStep sharpen={round.sharpen} showToast={showToast} onAct={act} onReflected={markReflectedId} />}
-              {current === 'close' && <CloseStep round={round} />}
+              {current === 'close' && <CloseStep round={round} goal={goal} currentValue={standing.totalValue} />}
               <button onClick={next} className="btn btn-blue btn-full" style={{ marginTop: 22 }}>
                 {last ? "Done. I'm covered." : 'Next'}
               </button>
@@ -336,9 +340,10 @@ function SharpenStep({ sharpen, showToast, onAct, onReflected }) {
   );
 }
 
-function CloseStep({ round }) {
+function CloseStep({ round, goal, currentValue }) {
   const safe = round.safety.allClear;
   const oppCount = round.opportunity.length;
+  const prog = goal ? goalProgress(currentValue, goal.amount) : null;
   return (
     <div style={{ textAlign: 'center', padding: '10px 0' }}>
       <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.2px', textTransform: 'uppercase', margin: 0 }}>You're done</p>
@@ -348,6 +353,16 @@ function CloseStep({ round }) {
         {safe ? 'Your holdings are watched, nothing needs a decision.' : 'You looked at what needed your eyes.'}
         {oppCount > 0 ? ` ${oppCount === 1 ? 'One idea' : `${oppCount} ideas`} noted for when you want them.` : ''} You're covered. Go live your day.
       </p>
+      {prog && !prog.reached && (
+        <p style={{ fontSize: 11, color: 'var(--blue)', lineHeight: 1.6, margin: '12px auto 0', maxWidth: 320 }}>
+          {prog.pct}% of the way to your freedom number. Today was a step.
+        </p>
+      )}
+      {prog && prog.reached && (
+        <p style={{ fontSize: 11, color: 'var(--green)', lineHeight: 1.6, margin: '12px auto 0', maxWidth: 320 }}>
+          You're at your freedom number. Worth pausing on that.
+        </p>
+      )}
     </div>
   );
 }
