@@ -25,6 +25,7 @@ function chooseSharpen(positions, attribution) {
     return {
       kind: 'thesis',
       ticker: upper(noThesis.ticker),
+      positionId: noThesis.id ?? null,
       prompt: `You hold ${upper(noThesis.ticker)} but never wrote down why. One line, what's the thesis?`,
     };
   }

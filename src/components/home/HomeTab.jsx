@@ -9,6 +9,7 @@ import ActivationChecklist from './ActivationChecklist.jsx';
 import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
 import DeployCashFlow from './DeployCashFlow.jsx';
+import DailyRound from './DailyRound.jsx';
 
 // "Outpost noticed" card. Surfaces up to 3 passive observations the user
 // might miss otherwise. Closes without reflections. Aged positions without
@@ -428,10 +429,12 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
             </div>
           )}
 
-          {/* PULSE — one personal sentence. Lives ABOVE everything else so it's
-              the first felt moment when the user opens the app. The reason it's
-              not Deploy Cash anymore: Deploy Cash only matters if you have
-              cash to deploy. Pulse always matters. */}
+          {/* THE DAILY ROUND — the primary daily action, sits at the very top.
+              A guided pass that does the watching for you and ends on "covered". */}
+          <DailyRound onTabSwitch={onTabSwitch} showToast={showToast} />
+
+          {/* PULSE — one personal sentence. Lives near the top so it's an early
+              felt moment when the user opens the app. */}
           <PulseCard refreshKey={lastUpdated?.getTime() ?? 0} />
 
           {/* OUTPOST NOTICED — passive observations. Shown only when there
