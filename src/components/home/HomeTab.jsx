@@ -430,8 +430,12 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           )}
 
           {/* THE DAILY ROUND — the primary daily action, sits at the very top.
-              A guided pass that does the watching for you and ends on "covered". */}
-          <DailyRound onTabSwitch={onTabSwitch} showToast={showToast} />
+              A guided pass that does the watching for you and ends on "covered".
+              Only shown once there's a holding to watch; before that the
+              activation checklist drives getting set up. */}
+          {(data.portfolio?.positions?.length ?? 0) >= 1 && (
+            <DailyRound onTabSwitch={onTabSwitch} showToast={showToast} />
+          )}
 
           {/* PULSE — one personal sentence. Lives near the top so it's an early
               felt moment when the user opens the app. */}
