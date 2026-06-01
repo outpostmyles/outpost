@@ -7,13 +7,16 @@
 const store = new Map();
 const MAX_CACHE_SIZE = 500; // Prevent unbounded memory growth
 
-// Cleanup expired entries every 5 minutes
-setInterval(() => {
+// Cleanup expired entries every 5 minutes. unref the timer so this background
+// sweep never on its own keeps the process alive: matters for the jobs runner,
+// graceful shutdown, and any one-off script that imports this module.
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of store) {
     if (now > entry.expiresAt) store.delete(key);
   }
 }, 5 * 60 * 1000);
+cleanupTimer.unref?.();
 
 export function memGet(key) {
   const entry = store.get(key);
