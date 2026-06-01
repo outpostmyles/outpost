@@ -9,6 +9,8 @@
 //   adherence   = { summary: { stopBreachCount, earlyExitCount, heldPastCount,
 //                              honoredStopCount, tradesWithPlan, ... } }
 
+import { detectRecurring } from './recurringPatterns.js';
+
 function r0(n) { const x = Number(n); return Number.isFinite(x) ? Math.round(x) : null; }
 
 export function buildCoaching({ attribution = null, adherence = null } = {}) {
@@ -19,9 +21,13 @@ export function buildCoaching({ attribution = null, adherence = null } = {}) {
   const enough = (sc?.totalTrades ?? 0) >= 5 || (sum?.tradesWithPlan ?? 0) >= 3;
   if (!enough) return { hasEnough: false, fix: null, strength: null };
 
-  // The one thing to fix, hardest-hitting first.
+  // The one thing to fix, hardest-hitting first. A behavior that recurs across
+  // months outranks everything else: it is a habit, not a slip.
+  const recurring = detectRecurring(adherence?.byTrade);
   let fix = null;
-  if (sum && sum.stopBreachCount >= 2) {
+  if (recurring) {
+    fix = recurring.message;
+  } else if (sum && sum.stopBreachCount >= 2) {
     fix = `You broke your own stop on ${sum.stopBreachCount} of ${sum.tradesWithPlan} planned trades. A stop only protects you if you actually take it.`;
   } else if (thesis && thesis.lift != null && thesis.lift >= 15 && thesis.with?.winRate != null && thesis.without?.winRate != null) {
     fix = `You win ${r0(thesis.with.winRate)}% of trades with a written thesis and ${r0(thesis.without.winRate)}% without one. Write the thesis on every entry.`;

@@ -59,6 +59,21 @@ test('a clean disciplined trader can have a strength and no fix', () => {
   assert.match(c.strength, /let winners run/i);
 });
 
+test('a recurring habit outranks a one-off count as the fix', () => {
+  const c = buildCoaching({
+    adherence: {
+      summary: { tradesWithPlan: 6, stopBreachCount: 3 },
+      byTrade: [
+        { category: 'broke_stop', closedAt: '2026-01-10' },
+        { category: 'broke_stop', closedAt: '2026-02-10' },
+        { category: 'broke_stop', closedAt: '2026-03-10' },
+      ],
+    },
+  });
+  assert.match(c.fix, /habit/i);
+  assert.match(c.fix, /months/);
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.fn(); console.log(`ok    ${t.name}`); pass++; }
