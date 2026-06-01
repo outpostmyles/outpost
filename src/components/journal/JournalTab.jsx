@@ -10,6 +10,7 @@
 // returns to Timeline, not Notes.
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api } from '../../lib/api.js';
+import { buildCoaching } from '../../lib/coaching.js';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
 import { filterNotes } from '../../lib/journalSearch.js';
@@ -267,14 +268,22 @@ export default function JournalTab({ showToast, onTabSwitch }) {
 function PatternsView() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [adherence, setAdherence] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.portfolio.attribution()
-      .then(d => { if (!cancelled) { setData(d); setError(''); } })
-      .catch(e => { if (!cancelled) setError(e?.error || 'Could not load patterns'); })
+    // Attribution drives the scorecard + behavior cuts; plan adherence adds the
+    // honored/broke-stop and early-exit signals. Both feed the coach. Adherence
+    // is best-effort: if it fails, the coach just leans on attribution.
+    Promise.allSettled([api.portfolio.attribution(), api.portfolio.planAdherence()])
+      .then(([attrR, adhR]) => {
+        if (cancelled) return;
+        if (attrR.status === 'fulfilled') { setData(attrR.value); setError(''); }
+        else setError(attrR.reason?.error || 'Could not load patterns');
+        setAdherence(adhR.status === 'fulfilled' ? adhR.value : null);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -307,6 +316,7 @@ function PatternsView() {
   }
 
   const { patterns, totalTrades, execution, scorecard } = data;
+  const coaching = buildCoaching({ attribution: data, adherence });
   const rows = [
     { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
     { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
@@ -316,6 +326,7 @@ function PatternsView() {
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px' }}>
+      {coaching.hasEnough && (coaching.fix || coaching.strength) && <CoachCard coaching={coaching} />}
       {scorecard && <ScorecardSummary s={scorecard} />}
 
       <div style={{ marginBottom: 16 }}>
@@ -351,6 +362,28 @@ function PatternsView() {
 // Top-line track record. Sits above the behavior cuts and answers the first
 // question any trader asks: am I actually making money, and do I win more than
 // I lose. The hold-time line is the behavioral tell most traders never see.
+// The coach's read: the one thing to work on, the one thing to keep doing.
+// Synthesized from the same closed-trade data the cards below break down.
+function CoachCard({ coaching }) {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', margin: '0 0 10px' }}>Your coach</p>
+      {coaching.fix && (
+        <div style={{ borderLeft: '2px solid var(--amber)', paddingLeft: 10, marginBottom: coaching.strength ? 12 : 0 }}>
+          <p style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', margin: '0 0 3px' }}>WORK ON THIS</p>
+          <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{coaching.fix}</p>
+        </div>
+      )}
+      {coaching.strength && (
+        <div style={{ borderLeft: '2px solid var(--green)', paddingLeft: 10 }}>
+          <p style={{ fontSize: 9, color: 'var(--green)', fontWeight: 700, letterSpacing: '0.5px', margin: '0 0 3px' }}>KEEP DOING</p>
+          <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{coaching.strength}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScorecardSummary({ s }) {
   if (!s) return null;
 
