@@ -10,6 +10,8 @@
 // Standing (P&L + pulse) and the close screen are pure presentation, handled in
 // the UI. This module is the decision logic, kept pure so it is unit-testable.
 
+import { buildCoaching } from './coaching.js';
+
 const OPPORTUNITY_TYPES = new Set(['bargain', 'catalyst', 'heat', 'watch']);
 
 function clean(s) { return (s == null ? '' : String(s)).trim(); }
@@ -24,7 +26,7 @@ function hasReflection(t) {
   return !!(clean(t.reflection_lesson) || clean(t.reflection_what_happened) || clean(t.exit_reflection));
 }
 
-function chooseSharpen(positions, attribution, closedTrades, reflectedIds, nowMs) {
+function chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs) {
   // 1. A trade closed recently with no reflection logged: lock in the lesson
   //    while it's fresh. Highest priority, this is where getting better happens.
   const skip = new Set((reflectedIds || []).map(String));
@@ -56,30 +58,17 @@ function chooseSharpen(positions, attribution, closedTrades, reflectedIds, nowMs
     };
   }
 
-  const thesis = attribution?.patterns?.thesis;
-  const lift = thesis?.lift;
-  const withR = thesis?.with?.winRate;
-  const withoutR = thesis?.without?.winRate;
-  if (lift != null && Math.abs(lift) >= 10 && withR != null && withoutR != null) {
-    return {
-      kind: 'insight',
-      prompt: `You win ${Math.round(withR)}% of trades when you write a thesis first, ${Math.round(withoutR)}% when you don't. Worth remembering today.`,
-    };
-  }
-
-  const sc = attribution?.scorecard;
-  if (sc && sc.avgHoldWinners != null && sc.avgHoldLosers != null
-      && sc.wins >= 2 && sc.losses >= 2 && sc.avgHoldLosers > sc.avgHoldWinners * 1.3) {
-    return {
-      kind: 'insight',
-      prompt: `You hold losers about ${sc.avgHoldLosers} days but winners only ${sc.avgHoldWinners}. The plan beats the hope.`,
-    };
-  }
-
+  // 3. Otherwise the coach's read on their behavior (broke stops, early exits,
+  //    thesis edge, hold-time skew), synthesized once in buildCoaching so the
+  //    round and the Patterns coach card always say the same thing. We surface
+  //    the fix first, then a strength, so a quiet round still ends on a nudge.
+  const coaching = buildCoaching({ attribution, adherence });
+  if (coaching.fix) return { kind: 'insight', prompt: coaching.fix };
+  if (coaching.strength) return { kind: 'insight', prompt: coaching.strength };
   return { kind: 'none', prompt: '' };
 }
 
-export function buildRound({ todayItems = [], positions = [], attribution = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = {}) {
+export function buildRound({ todayItems = [], positions = [], attribution = null, adherence = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = {}) {
   const items = (todayItems || []).filter(Boolean);
   const held = new Set((positions || []).filter(Boolean).map(p => upper(p.ticker)));
 
@@ -101,6 +90,6 @@ export function buildRound({ todayItems = [], positions = [], attribution = null
       checked: (positions || []).filter(Boolean).length,
     },
     opportunity,
-    sharpen: chooseSharpen(positions, attribution, closedTrades, reflectedIds, nowMs),
+    sharpen: chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs),
   };
 }

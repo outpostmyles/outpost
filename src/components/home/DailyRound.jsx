@@ -89,13 +89,14 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [todayR, valueR, pulseR, attrR, closedR, goalR] = await Promise.allSettled([
+      const [todayR, valueR, pulseR, attrR, closedR, goalR, adhR] = await Promise.allSettled([
         api.ai.today(),
         api.portfolio.value(),
         api.portfolio.pulse(),
         api.portfolio.attribution(),
         api.portfolio.closedTrades(),
         api.portfolio.getGoal(),
+        api.portfolio.planAdherence(),
       ]);
       if (cancelled) return;
       const today = todayR.status === 'fulfilled' && todayR.value ? todayR.value : { items: [] };
@@ -103,12 +104,14 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
       const pulse = pulseR.status === 'fulfilled' ? (pulseR.value?.pulse || '') : '';
       const attribution = attrR.status === 'fulfilled' ? attrR.value : null;
       const closedTrades = closedR.status === 'fulfilled' ? (closedR.value?.trades || []) : [];
+      const adherence = adhR.status === 'fulfilled' ? adhR.value : null;
       setGoal(goalR.status === 'fulfilled' ? (goalR.value?.goal || null) : null);
       setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, totalValue: value.totalValue ?? 0, pulse });
       setRound(buildRound({
         todayItems: today.items || [],
         positions: value.positions || [],
         attribution,
+        adherence,
         closedTrades,
         reflectedIds: readReflected(),
       }));

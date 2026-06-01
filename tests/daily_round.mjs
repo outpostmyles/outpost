@@ -57,7 +57,7 @@ test('sharpen falls back to the thesis win-rate insight', () => {
   const r = buildRound({
     todayItems: [],
     positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
-    attribution: { patterns: { thesis: { lift: 25, with: { winRate: 70 }, without: { winRate: 45 } } } },
+    attribution: { scorecard: { totalTrades: 10 }, patterns: { thesis: { lift: 25, with: { winRate: 70 }, without: { winRate: 45 } } } },
   });
   assert.equal(r.sharpen.kind, 'insight');
   assert.ok(r.sharpen.prompt.includes('70%'));
@@ -68,7 +68,7 @@ test('sharpen falls back to the hold-time tell when no thesis lift', () => {
   const r = buildRound({
     todayItems: [],
     positions: [{ ticker: 'NVDA', entry_thesis: 'x' }],
-    attribution: { scorecard: { wins: 5, losses: 3, avgHoldWinners: 10, avgHoldLosers: 40 } },
+    attribution: { scorecard: { totalTrades: 8, wins: 5, losses: 3, avgHoldWinners: 10, avgHoldLosers: 40 } },
   });
   assert.equal(r.sharpen.kind, 'insight');
   assert.ok(/losers/.test(r.sharpen.prompt));
