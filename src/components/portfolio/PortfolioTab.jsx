@@ -717,7 +717,7 @@ function SkipThesisModal({ kind, onWrite, onSkip }) {
   );
 }
 
-function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
+function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFirstPosition, onAdded }) {
   // Phase 4 — when opened via a Deploy Cash pick, prefill the form with
   // the chosen recommendation's ticker/shares/cost/reasoning. The user can
   // edit any field before saving.
@@ -826,11 +826,15 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed }) {
           executed_position_id: result.position.id,
         }).catch(() => {}); // non-blocking
       }
-      showToast(`${form.ticker.toUpperCase()} added to portfolio`, 'success');
+      const addedTicker = (form.ticker || '').toUpperCase().trim();
+      showToast(`${addedTicker} added to portfolio`, 'success');
       setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
       onPrefillConsumed?.();
       onDone();
+      // First position ever: surface an instant AI read so a brand-new user
+      // feels the app working in seconds instead of hunting three taps deep.
+      if (isFirstPosition) onAdded?.(addedTicker);
       onClose();
     } catch (e) { setError(e.error || 'Failed to add position'); setSaving(false); }
   }
@@ -2375,6 +2379,57 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
   );
 }
 
+// First-run aha: the instant AI read shown right after a user's very first
+// position is added, so the app proves itself in seconds instead of making them
+// hunt for the read three taps deep. Degrades quietly if the account isn't
+// entitled or the call fails, so it never breaks the first moment.
+function FirstReadSheet({ ticker, onClose }) {
+  const [read, setRead] = useState(null);
+  const [disc, setDisc] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.ai.analysis(ticker, false, false);
+        if (cancelled) return;
+        if (d?.analysis) { setRead(d.analysis); setDisc(d.disclaimer || ''); }
+        else setFailed(true);
+      } catch {
+        if (!cancelled) setFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ticker]);
+
+  return (
+    <Modal title={`Your first read: ${ticker}`} onClose={onClose}>
+      {loading && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 0' }}>
+          <Spinner />
+          <p style={{ fontSize: 12, color: 'var(--muted)' }}>Reading {ticker} for you...</p>
+        </div>
+      )}
+      {!loading && read && (
+        <>
+          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.65, marginBottom: 12 }}>{renderPlainText(read)}</p>
+          {disc && <p style={{ fontSize: 9, color: 'var(--faint)', lineHeight: 1.5, marginBottom: 14 }}>{disc}</p>}
+        </>
+      )}
+      {!loading && failed && (
+        <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: '6px 0 14px' }}>
+          {ticker} is in your portfolio. Open its card any time and tap Get AI Read for the full take.
+        </p>
+      )}
+      <button onClick={onClose} className="btn btn-blue btn-full">Done</button>
+    </Modal>
+  );
+}
+
 function PortfolioSubTab({ marketOpen, showToast }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2384,6 +2439,8 @@ function PortfolioSubTab({ marketOpen, showToast }) {
   // card dispatches 'deploy_cash_pick' + switches to Portfolio. We catch
   // the event here and open AddModal with the recommendation pre-filled.
   const [addPrefill, setAddPrefill] = useState(null);
+  // First-ever position triggers a one-time instant AI read (first-run aha).
+  const [firstRead, setFirstRead] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2534,8 +2591,11 @@ function PortfolioSubTab({ marketOpen, showToast }) {
           showToast={showToast}
           prefill={addPrefill}
           onPrefillConsumed={() => setAddPrefill(null)}
+          isFirstPosition={positions.length === 0}
+          onAdded={(t) => setFirstRead(t)}
         />
       )}
+      {firstRead && <FirstReadSheet ticker={firstRead} onClose={() => setFirstRead(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
       {modal === 'menu' && (
         <PortfolioMenuDrawer
