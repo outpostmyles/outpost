@@ -132,6 +132,8 @@ export const api = {
     // North Star — the user's financial-freedom target portfolio value.
     getGoal: () => get('/api/portfolio/goal'),
     setGoal: (body) => post('/api/portfolio/goal', body),
+    // Sector-enriched holdings (the root for sector exposure + smarter Discovery).
+    sectors: () => get('/api/portfolio/sectors'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

@@ -1506,4 +1506,29 @@ router.post('/goal', requireAuth, rateLimit(20), async (req, res) => {
   }
 });
 
+// GET /api/portfolio/sectors — sector-enriched holdings for the book. Looks up
+// each holding's sector (cached via getFinancials) and pairs it with live value.
+// The root that lets the frontend compute sector exposure and lets Discovery
+// reason about which sectors a name would fill. Best-effort: a name we can't
+// classify comes back 'Unknown' rather than failing the whole call.
+router.get('/sectors', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const { data: positions } = await supabase.from('positions')
+      .select('ticker, shares, avg_cost').eq('user_id', req.user.id);
+    const pos = positions ?? [];
+    const tickers = pos.map(p => p.ticker);
+    const priceMap = tickers.length ? getPrices(tickers) : {};
+    const holdings = await Promise.all(pos.map(async (p) => {
+      const live = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
+      let sector = 'Unknown';
+      try { const f = await getFinancials(p.ticker); if (f?.sector) sector = f.sector; } catch {}
+      return { ticker: p.ticker, sector, value: live * (p.shares ?? 0) };
+    }));
+    res.json({ holdings });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /sectors failed:`, err.message);
+    res.json({ holdings: [] }); // non-critical
+  }
+});
+
 export default router;
