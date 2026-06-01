@@ -7,6 +7,7 @@ import { sanitizeString, isDisplayNameAllowed, isValidEmail, isStrongEnoughPassw
 import { Resend } from 'resend';
 import { config } from '../config.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { PLAN_CREDITS } from '../constants/planCredits.js';
 
 const router = express.Router();
 const resend = new Resend(config.resendKey);
@@ -31,11 +32,8 @@ function generateToken() {
   return { raw, hashed };
 }
 
-// Monthly credit grant per plan. 'unlimited' is the beta tier: a balance so
-// large it never depletes in practice. Gates pass because it's non-free, the
-// agent is already free on any paid plan, and the 300/day AI ceiling stays as
-// the cost guard. MIRRORED in api/jobs/runner.js resetCredits, keep in sync.
-const PLAN_CREDITS = { free: 50, starter: 500, pro: 2500, elite: 10000, unlimited: 999_999_999 };
+// PLAN_CREDITS lives in ../constants/planCredits.js (imported above), shared
+// with the monthly reset in runner.js so the two can never drift.
 
 router.post('/signup', rateLimit(5), async (req, res) => {
   try {

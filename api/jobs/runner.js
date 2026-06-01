@@ -13,6 +13,7 @@ import { getPrices, initPricePool } from '../services/pricePool.js';
 import { resetDailyCounters } from '../services/analytics.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
+import { PLAN_CREDITS } from '../constants/planCredits.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const PLAIN_TEXT_RULE = 'CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes.';
@@ -191,10 +192,8 @@ async function takeSnapshots() {
 async function resetCredits() {
   const today = new Date().getDate();
   const { data: users } = await supabase.from('user_profiles').select('id,plan,billing_date').eq('billing_date', today);
-  // MIRRORED in api/functions/auth.js PLAN_CREDITS, keep both in sync.
-  const CREDITS = { free: 50, starter: 500, pro: 2500, elite: 10000, unlimited: 999_999_999 };
   for (const user of users ?? []) {
-    await supabase.from('user_profiles').update({ credits_remaining: CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
+    await supabase.from('user_profiles').update({ credits_remaining: PLAN_CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
   }
   if (users?.length) console.log(`[Jobs] Reset credits for ${users.length} users`);
 }

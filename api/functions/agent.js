@@ -1304,7 +1304,7 @@ router.delete('/memories/:id', requireAuth, rateLimit(15), async (req, res) => {
     // Verify ownership
     const { data: mem } = await supabase.from('agent_memory').select('id').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
     if (!mem) return res.status(404).json({ error: 'Memory not found' });
-    await supabase.from('agent_memory').delete().eq('id', req.params.id);
+    await supabase.from('agent_memory').delete().eq('id', req.params.id).eq('user_id', req.user.id);
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: 'Failed to delete memory' });

@@ -967,6 +967,7 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
         const { data: existing } = await supabase.from('positions')
           .select('entry_thesis,thesis_written_at')
           .eq('id', req.params.id)
+          .eq('user_id', req.user.id)
           .maybeSingle();
         if (!existing?.entry_thesis && !existing?.thesis_written_at) {
           updates.thesis_written_at = new Date().toISOString();

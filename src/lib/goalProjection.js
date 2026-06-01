@@ -25,7 +25,7 @@ export function projectGoal({ snapshots = [], current, target, nowMs = Date.now(
   const first = pts[0];
   const lastPt = pts[pts.length - 1];
   const spanDays = (lastPt.ms - first.ms) / 86400000;
-  if (spanDays < 21) return { enoughData: false }; // need ~3 weeks before projecting
+  if (!Number.isFinite(spanDays) || spanDays < 21) return { enoughData: false }; // need ~3 weeks before projecting
 
   const perDay = (lastPt.value - first.value) / spanDays;
   const perMonth = Math.round(perDay * 30);
