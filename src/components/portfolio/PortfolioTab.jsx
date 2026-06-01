@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { assessPositionHealth } from '../../lib/positionHealth.js';
+import { assessPortfolioRisk } from '../../lib/portfolioRisk.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
@@ -2519,6 +2520,9 @@ function PortfolioSubTab({ marketOpen, showToast }) {
       pct: ((p.currentPrice - p.avg_cost) / p.avg_cost) * 100,
     }));
 
+  // Portfolio-level concentration risk (one name too big, top-heavy, too thin).
+  const risk = assessPortfolioRisk(positions);
+
   if (loading) return <div style={{ padding: 16 }}><SkeletonCard /><SkeletonCard /></div>;
 
   return (
@@ -2583,6 +2587,17 @@ function PortfolioSubTab({ marketOpen, showToast }) {
                   </span>
                 ))}
                 {drawdowns.length > 3 && <span style={{ color: 'var(--faint)' }}>· +{drawdowns.length - 3} more</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Concentration band — portfolio-level risk. Fires only on a real
+              flag (one name too big, top-heavy, or too thin to absorb a miss). */}
+          {risk.flags.length > 0 && (
+            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: risk.level === 'high' ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ color: risk.level === 'high' ? 'var(--red)' : 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>CONCENTRATION</span>
+                <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>{risk.flags[0].message}</span>
               </div>
             </div>
           )}
