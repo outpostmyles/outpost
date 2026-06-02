@@ -7,7 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node --watch api/server.js",
-    "jobs": "node api/jobs/runner.js"
+    "jobs": "node api/jobs/runner.js",
+    "test": "node tests/run-all.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.0",
