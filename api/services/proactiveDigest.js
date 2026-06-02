@@ -158,6 +158,25 @@ export function detectSignals({ positions = [], watchlist = [], adherenceSummary
 // in-app proactive opener so it sees exactly the same signals the morning digest
 // would. (Mirrors the fetch in generateDigestForUser; kept separate so the
 // production digest path is left untouched.)
+// A saved screen that turned up new names the user has not seen becomes a
+// low-priority opener nudge, so the agent can walk them through it. Returns one
+// signal (the screen with the most new names) or null. This is the pull side of
+// living screens: the screen works overnight, and the agent reaches out about it.
+async function buildScreenerSignal(userId) {
+  try {
+    const { data: screens } = await supabase.from('screeners').select('name, query, results').eq('user_id', userId);
+    const withNew = (screens ?? []).map(s => {
+      const tickers = (Array.isArray(s.results) ? s.results : []).filter(r => r.isNew).map(r => r.ticker).filter(Boolean);
+      return { name: s.name || s.query, tickers };
+    }).filter(s => s.tickers.length > 0).sort((a, b) => b.tickers.length - a.tickers.length);
+    if (!withNew.length) return null;
+    const s = withNew[0];
+    const n = s.tickers.length;
+    const names = s.tickers.slice(0, 3).join(', ');
+    return { kind: 'screener_new', priority: 1, detail: `Your "${s.name}" screen turned up ${n} new name${n === 1 ? '' : 's'} since you last looked: ${names}` };
+  } catch { return null; }
+}
+
 export async function gatherSignalsForUser(userId) {
   const [posRes, watchRes] = await Promise.allSettled([
     supabase.from('positions').select('*').eq('user_id', userId),
@@ -165,7 +184,12 @@ export async function gatherSignalsForUser(userId) {
   ]);
   const rawPositions = posRes.status === 'fulfilled' ? (posRes.value.data ?? []) : [];
   const watchlistRows = watchRes.status === 'fulfilled' ? (watchRes.value.data ?? []) : [];
-  if (rawPositions.length === 0) return { signals: [], hasPositions: false };
+
+  const screenerSignal = await buildScreenerSignal(userId);
+
+  if (rawPositions.length === 0) {
+    return { signals: screenerSignal ? [screenerSignal] : [], hasPositions: false };
+  }
 
   const tickers = rawPositions.map(p => p.ticker);
   const priceMap = getPrices(tickers);
@@ -182,7 +206,9 @@ export async function gatherSignalsForUser(userId) {
     if (raw) adherenceSummary = raw.replace(/^PLAN ADHERENCE PATTERNS[^:]*: /, '').replace(/\.$/, '');
   } catch {}
 
-  return { signals: detectSignals({ positions, watchlist, adherenceSummary }), hasPositions: true };
+  const signals = detectSignals({ positions, watchlist, adherenceSummary });
+  if (screenerSignal) signals.push(screenerSignal); // lowest priority: a position alert always wins the opener
+  return { signals, hasPositions: true };
 }
 
 export async function generateDigestForUser(userId) {

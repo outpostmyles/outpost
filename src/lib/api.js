@@ -152,6 +152,8 @@ export const api = {
     list: () => get('/api/screeners'),
     create: (body) => post('/api/screeners', body),
     run: (id) => post(`/api/screeners/${id}/run`),
+    refine: (id, body) => post(`/api/screeners/${id}/refine`, body),
+    seen: (id) => post(`/api/screeners/${id}/seen`),
     remove: (id) => del(`/api/screeners/${id}`),
   },
   social: {

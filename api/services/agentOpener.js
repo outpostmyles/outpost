@@ -17,6 +17,7 @@ const INVITES = {
   concentration_warn: 'Want to look at trimming it down?',
   watchlist_alert: 'Want to pressure-test the entry before it gets there?',
   adherence_pattern: 'Want to look at how to break that pattern?',
+  screener_new: 'Want me to run through the new names with you?',
 };
 
 /**

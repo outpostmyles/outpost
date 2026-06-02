@@ -23,6 +23,8 @@ import { sanitizeString } from '../middleware/validate.js';
 import { lookupStock } from '../services/agentTools.js';
 import { getFinancials } from '../services/fmp.js';
 import { applyScreenerVerdicts } from '../services/screenerVerdicts.js';
+import { markScreenerNewcomers } from '../services/screenerDiff.js';
+import { applyPriceBound } from '../services/screenerConstraints.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -123,7 +125,8 @@ export async function runScreenerQuery(query) {
         `Each line shows the real company name in parentheses and, in brackets, its real sector and industry from market data, alongside live numbers. Rely on those facts, do not guess a company's business from its ticker symbol or its price.\n` +
         `Decide which GENUINELY fit, using two different bars:\n` +
         `- Sector or theme: HARD bar. If the query names a business, sector, or theme, the bracketed sector and industry must actually match it. A company whose real industry is something else (for example a chemicals or lighting company for "semiconductors") is a mismatch, so drop it no matter how well its price fits.\n` +
-        `- Soft qualifiers like "low price", "cheap", "small", "beaten down", "high growth": REASONABLE bar. Read them sensibly against the live data and the sector. Do not drop a true sector match just because a soft word is fuzzy.\n` +
+        `- Explicit numeric limits the user stated, like a dollar price ("under $200") or a market cap: HARD bar. Enforce them exactly against the live numbers shown. A stock priced $269 does NOT fit "under $200".\n` +
+        `- Soft, vague qualifiers like "low price", "cheap", "small", "beaten down", "high growth": REASONABLE bar. Read them sensibly against the live data and the sector. Do not drop a true sector match just because a soft word is fuzzy.\n` +
         `Drop real mismatches and stretches, but keep the genuine fits, aiming for the 5 to 10 strongest rather than an empty list. For each kept name write ONE specific sentence on why it fits, naming its actual business plus the live data, never a generic line. Order strongest fit first. ` +
         `Return ONLY JSON, no prose: {"results":[{"ticker":"NVDA","fits":true,"thesis":"..."}]}` }],
     });
@@ -142,7 +145,70 @@ export async function runScreenerQuery(query) {
     }
   }
   for (const c of enriched) if (!ordered.includes(c)) ordered.push(c);
-  return { results: applyScreenerVerdicts(ordered, parsed) };
+  // Fail closed on the AI vetting, then deterministically enforce any explicit
+  // dollar price bound the user typed (Claude is not perfectly reliable on a
+  // stated ceiling, and the live price is right here to check against).
+  return { results: applyPriceBound(query, applyScreenerVerdicts(ordered, parsed)) };
+}
+
+// Mark every stored result as already seen (no NEW badge).
+function clearNew(results) {
+  return (Array.isArray(results) ? results : []).map(r => ({ ...r, isNew: false }));
+}
+
+/**
+ * Run a screener's query, diff the fresh results against what was there before,
+ * and persist. This is what makes a screen "living": when the nightly job runs
+ * it, names that just showed up get flagged isNew so the user sees what changed
+ * while they were away, and that flag sticks across runs until they actually
+ * open the screen. silent=true means the user is looking right now (creating or
+ * hitting rescan themselves), so nothing is flagged as new.
+ */
+export async function persistScreenerRun(screener, { silent = false } = {}) {
+  const { results: fresh } = await runScreenerQuery(screener.query);
+  const marked = markScreenerNewcomers(screener.results, fresh, { silent });
+  const last_run_at = new Date().toISOString();
+  await supabase.from('screeners').update({ results: marked, last_run_at })
+    .eq('id', screener.id).eq('user_id', screener.user_id);
+  return { results: marked, last_run_at };
+}
+
+// Fold a plain-English refinement into the existing query as one clean sentence,
+// so the screen the user owns reads naturally and future runs honor the change.
+async function mergeQuery(base, refinement) {
+  try {
+    const msg = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 100,
+      messages: [{ role: 'user', content:
+        `A user has a stock screen described as: "${base}".\nThey want to refine it with: "${refinement}".\n` +
+        `Rewrite it as ONE clear, natural screen description that combines both. Keep it short, no quotes, no preamble. Return only the new description.` }],
+    });
+    const text = (msg.content?.[0]?.text || '').trim().replace(/^["']|["']$/g, '').split('\n')[0];
+    return sanitizeString(text, 300) || sanitizeString(`${base}. ${refinement}`, 300);
+  } catch {
+    return sanitizeString(`${base}. ${refinement}`, 300);
+  }
+}
+
+/**
+ * Nightly job: re-run every screener for recently active users so each saved
+ * screen stays alive and surfaces what is new since the user last looked. Bounded
+ * to recently active accounts so we are not spending AI on dormant ones.
+ */
+export async function runDailyScreeners() {
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: users } = await supabase.from('user_profiles').select('id').gt('last_login', since);
+  if (!users?.length) return;
+  let ran = 0;
+  for (const u of users) {
+    const { data: screens } = await supabase.from('screeners').select('*').eq('user_id', u.id);
+    for (const s of screens ?? []) {
+      try { await persistScreenerRun(s, { silent: false }); ran++; }
+      catch (e) { console.error('[Screener] daily run failed for', s.id, e.message); }
+    }
+  }
+  console.log(`[Jobs] Re-ran ${ran} screeners across ${users.length} active users`);
 }
 
 // ---- routes ----
@@ -172,9 +238,7 @@ router.post('/', requireAuth, rateLimit(10), async (req, res) => {
     const { data: created, error } = await supabase.from('screeners').insert({ user_id: req.user.id, name, query }).select().single();
     if (error) return res.status(500).json({ error: 'Failed to create screener' });
 
-    const { results } = await runScreenerQuery(query);
-    const last_run_at = new Date().toISOString();
-    await supabase.from('screeners').update({ results, last_run_at }).eq('id', created.id).eq('user_id', req.user.id);
+    const { results, last_run_at } = await persistScreenerRun(created, { silent: true });
     res.json({ screener: { ...created, results, last_run_at } });
   } catch (e) {
     console.error('[Screener] create failed:', e.message);
@@ -187,13 +251,43 @@ router.post('/:id/run', requireAuth, rateLimit(10), async (req, res) => {
   try {
     const { data: s } = await supabase.from('screeners').select('*').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
     if (!s) return res.status(404).json({ error: 'Screener not found' });
-    const { results } = await runScreenerQuery(s.query);
-    const last_run_at = new Date().toISOString();
-    await supabase.from('screeners').update({ results, last_run_at }).eq('id', s.id).eq('user_id', req.user.id);
+    const { results, last_run_at } = await persistScreenerRun(s, { silent: true });
     res.json({ screener: { ...s, results, last_run_at } });
   } catch (e) {
     console.error('[Screener] run failed:', e.message);
     res.status(500).json({ error: 'Screener run failed' });
+  }
+});
+
+// POST /:id/seen — the user opened this screen, so clear the NEW flags
+router.post('/:id/seen', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const { data: s } = await supabase.from('screeners').select('id, results').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+    if (s && (Array.isArray(s.results) ? s.results : []).some(r => r.isNew)) {
+      await supabase.from('screeners').update({ results: clearNew(s.results) }).eq('id', s.id).eq('user_id', req.user.id);
+    }
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: true });
+  }
+});
+
+// POST /:id/refine — shape the screen in plain English, then re-run it
+router.post('/:id/refine', requireAuth, rateLimit(10), async (req, res) => {
+  try {
+    const refinement = sanitizeString(req.body.refinement, 200);
+    if (!refinement) return res.status(400).json({ error: 'Tell the screener how to refine it' });
+    const { data: s } = await supabase.from('screeners').select('*').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+    if (!s) return res.status(404).json({ error: 'Screener not found' });
+
+    const newQuery = await mergeQuery(s.query, refinement);
+    const name = newQuery.slice(0, 60);
+    await supabase.from('screeners').update({ query: newQuery, name }).eq('id', s.id).eq('user_id', req.user.id);
+    const { results, last_run_at } = await persistScreenerRun({ ...s, query: newQuery }, { silent: true });
+    res.json({ screener: { ...s, query: newQuery, name, results, last_run_at } });
+  } catch (e) {
+    console.error('[Screener] refine failed:', e.message);
+    res.status(500).json({ error: 'Refine failed' });
   }
 });
 

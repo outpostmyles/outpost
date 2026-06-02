@@ -1,6 +1,7 @@
 import '../config.js';
 import { backgroundScan } from '../functions/social.js';
 import { runBargainScan } from '../functions/bargainRadar.js';
+import { runDailyScreeners } from '../functions/screeners.js';
 import { generateAllExplainers } from '../functions/portfolioExplainer.js';
 import { generateAllDigests } from '../services/proactiveDigest.js';
 import { sendAllDailyDigestEmails, sendAllWeeklySummaryEmails } from '../services/notifications.js';
@@ -247,6 +248,12 @@ scheduleAt(17, 0, async () => {
   if (!isWeekday()) return;
   try { await runBargainScan(); } catch (err) { console.error('[Jobs] Bargain scan failed:', err.message); }
 }, 'Bargain Radar scan');
+// Living screens: re-run each saved screener after the close so it surfaces what
+// is new since the user last looked. Weekday only, for fresh end-of-day prices.
+scheduleAt(18, 30, async () => {
+  if (!isWeekday()) return;
+  try { await runDailyScreeners(); } catch (err) { console.error('[Jobs] Screener refresh failed:', err.message); }
+}, 'Screener refresh');
 scheduleAt(0, 1, resetCredits, 'Credit resets');
 scheduleAt(0, 0, resetDailyCounters, 'Analytics daily reset');
 resetCredits();

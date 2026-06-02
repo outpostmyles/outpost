@@ -39,6 +39,13 @@ test('uses the top (first) signal in the sorted list', () => {
   assert.match(o, /honor the stop or hold\?$/);
 });
 
+test('a new-names screener signal invites the user to run through them', () => {
+  const detail = 'Your "AI infrastructure stocks" screen turned up 2 new names since you last looked: NVDA, SMCI';
+  const o = buildAgentOpener([{ kind: 'screener_new', detail, priority: 1 }]);
+  assert.match(o, /^Your "AI infrastructure stocks" screen turned up 2 new names/);
+  assert.match(o, /run through the new names with you\?$/);
+});
+
 test('unknown signal kind falls back to a generic invite', () => {
   const o = buildAgentOpener([{ kind: 'something_new', detail: 'Heads up on XYZ.', priority: 'low' }]);
   assert.equal(o, 'Heads up on XYZ. Want to think it through together?');

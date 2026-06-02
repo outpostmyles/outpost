@@ -24,10 +24,23 @@ export default function ScreenersView({ showToast }) {
   const [creating, setCreating] = useState(false);
   const [runningId, setRunningId] = useState(null);
   const [selectedId, setSelectedId] = useState(null); // null = list, id = workspace
+  const [refineText, setRefineText] = useState('');
+  const [refining, setRefining] = useState(false);
 
   useEffect(() => {
     api.screeners.list().then(d => setScreeners(d.screeners ?? [])).catch(() => setScreeners([]));
   }, []);
+
+  // Opening a screen that has new names clears the NEW flags (server + local), so
+  // the "while you were away" markers only show until you have actually looked.
+  useEffect(() => {
+    if (!selectedId) return;
+    const s = (screeners || []).find(x => x.id === selectedId);
+    if (!s || !(Array.isArray(s.results) ? s.results : []).some(r => r.isNew)) return;
+    api.screeners.seen(selectedId).catch(() => {});
+    setScreeners(list => (list || []).map(x => x.id === selectedId
+      ? { ...x, results: (x.results || []).map(r => ({ ...r, isNew: false })) } : x));
+  }, [selectedId, screeners]);
 
   async function create(q = query.trim()) {
     if (!q || creating) return;
@@ -73,6 +86,21 @@ export default function ScreenersView({ showToast }) {
     }
   }
 
+  async function refine(id) {
+    const r = refineText.trim();
+    if (!r || refining) return;
+    setRefining(true);
+    try {
+      const d = await api.screeners.refine(id, { refinement: r });
+      if (d.screener) {
+        setScreeners(s => (s || []).map(x => x.id === id ? d.screener : x));
+        setRefineText('');
+        showToast?.('Screen refined', 'success');
+      }
+    } catch (e) { showToast?.(e.error || 'Could not refine', 'error'); }
+    setRefining(false);
+  }
+
   const selected = selectedId ? (screeners || []).find(s => s.id === selectedId) : null;
 
   // ── Workspace (one screener) ──
@@ -98,15 +126,28 @@ export default function ScreenersView({ showToast }) {
           </div>
         </div>
 
-        {running ? (
+        {(running || refining) ? (
           <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', padding: '14px 16px' }}>Scanning and vetting…</p>
         ) : results.length === 0 ? (
           <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', padding: '14px 16px', lineHeight: 1.5 }}>
-            Nothing held up the vetting this run. Try a more specific query, or rescan later.
+            Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
           results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} />)
         )}
+
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+          <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 6 }}>SHAPE IT</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="input" value={refineText} onChange={e => setRefineText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); refine(selected.id); } }}
+              placeholder="Refine in plain English, e.g. only profitable, under $100" style={{ flex: 1, fontSize: 12 }} disabled={refining} />
+            <button onClick={() => refine(selected.id)} disabled={!refineText.trim() || refining} className="btn btn-muted"
+              style={{ fontSize: 10, padding: '8px 12px', whiteSpace: 'nowrap', opacity: !refineText.trim() || refining ? 0.5 : 1 }}>
+              {refining ? '…' : 'REFINE'}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -148,6 +189,7 @@ export default function ScreenersView({ showToast }) {
           <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', padding: '10px 16px 2px' }}>YOUR SCREENERS</p>
           {screeners.map(s => {
             const top = Array.isArray(s.results) ? s.results : [];
+            const newCount = top.filter(r => r.isNew).length;
             return (
               <div key={s.id} onClick={() => setSelectedId(s.id)}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 16px', borderTop: '1px solid var(--border)', cursor: 'pointer' }}
@@ -157,6 +199,9 @@ export default function ScreenersView({ showToast }) {
                   <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.query}</p>
                   <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0' }}>{top.length} match{top.length === 1 ? '' : 'es'}{s.last_run_at ? ` · ${timeAgo(s.last_run_at)}` : ''}</p>
                 </div>
+                {newCount > 0 && (
+                  <span style={{ fontSize: 8, fontWeight: 800, color: 'var(--green)', background: 'rgba(34,197,94,0.14)', border: '0.5px solid rgba(34,197,94,0.4)', borderRadius: 3, padding: '2px 5px', whiteSpace: 'nowrap' }}>{newCount} NEW</span>
+                )}
                 {top.length > 0 && (
                   <div style={{ display: 'flex', gap: 3 }}>
                     {top.slice(0, 3).map(r => (
@@ -179,6 +224,7 @@ function ResultRow({ r, onAsk, onWatch }) {
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {r.isNew && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: 'var(--green)', background: 'rgba(34,197,94,0.14)', border: '0.5px solid rgba(34,197,94,0.4)', borderRadius: 3, padding: '1px 4px' }}>NEW</span>}
           <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.ticker}</span>
           {r.price != null && <span style={{ fontSize: 10, color: 'var(--faint)' }}>${r.price}</span>}
           {r.changePercent != null && (
