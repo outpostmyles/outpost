@@ -107,6 +107,22 @@ test('an all-unknown comparison is honest about it', () => {
   assert.match(r.reason, /could not classify/i);
 });
 
+test('a name you already own does not win best fit over an addable one', () => {
+  const r = compareForBook([
+    dossier('SMCI', 'owned', 'Technology', null),
+    dossier('CRWV', 'concentrated', 'Technology', null),
+  ]);
+  assert.equal(r.bestTicker, 'CRWV'); // you would not "add" a name you already hold
+});
+
+test('comparing only names you own reads as a check-in', () => {
+  const r = compareForBook([
+    dossier('SMCI', 'owned', 'Technology', null),
+    dossier('NVDA', 'owned', 'Technology', null),
+  ]);
+  assert.match(r.reason, /already own all|check-in/i);
+});
+
 test('compare returns null with fewer than two names', () => {
   assert.equal(compareForBook([dossier('AMD', 'new', 'Technology', 20)]), null);
   assert.equal(compareForBook([]), null);

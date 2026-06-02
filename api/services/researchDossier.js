@@ -74,10 +74,11 @@ export function forYourBook({ ticker, sector, beta, holdings = [] }) {
 export function compareForBook(dossiers) {
   const list = (Array.isArray(dossiers) ? dossiers : []).filter(d => d && d.ticker);
   if (list.length < 2) return null;
-  // Only names we can actually classify are rankable. An unclassified name must
-  // NOT win by default just because we lack data on it (that was the bug where a
-  // name with an unknown sector beat a known one), so it sinks below all others.
-  const fitScore = { new: 2, fits: 1, concentrated: -2, owned: -1 };
+  // "Best fit" means the best NEW addition, so only names you could add are
+  // rankable. A name you already own, or one we cannot classify, is not a candidate
+  // for best fit and sinks below the rest (this is also what stopped an unclassified
+  // name from winning by default).
+  const fitScore = { new: 2, fits: 1, concentrated: -2 };
   const ranked = list.map(d => {
     const fb = d.forYourBook || {};
     const assessable = fb.sectorFit in fitScore;
@@ -89,15 +90,14 @@ export function compareForBook(dossiers) {
 
   const best = ranked[0];
   let reason;
-  if (best.score <= -1000) {
-    reason = `We could not classify these well enough to call one the best fit. Open each to judge it on the business.`;
-  } else if (best.sectorFit === 'new') {
-    reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`;
-  } else if (best.sectorFit === 'fits') {
-    reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`;
+  if (best.score > -1000) {
+    if (best.sectorFit === 'new') reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`;
+    else if (best.sectorFit === 'fits') reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`;
+    else reason = `None of these is a clean add for your book. ${best.ticker} is the least redundant, but they all lean into areas you already hold.`;
+  } else if (ranked.every(r => r.sectorFit === 'owned')) {
+    reason = `You already own all of these, so this is a check-in on names you hold, not a new pick.`;
   } else {
-    // best is concentrated or owned: nothing here is a clean add, so say so
-    reason = `None of these is a clean add for your book. ${best.ticker} is the least redundant, but they all lean into areas you already hold.`;
+    reason = `We could not classify these well enough to call one the best fit. Open each to judge it on the business.`;
   }
   return { bestTicker: best.ticker, reason, ranked };
 }
