@@ -12,6 +12,13 @@ import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
 import { buildAgentOpener } from '../services/agentOpener.js';
 import { gatherSignalsForUser } from '../services/proactiveDigest.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
+
+// agent_messages carries a conversation_id (added by migration). A null id is
+// the pre-conversations "Earlier" bucket, addressed by the sentinel '__legacy__'.
+// Scope a select/delete to one conversation so each thread is isolated.
+function scopeConv(query, convId) {
+  return (convId && convId !== '__legacy__') ? query.eq('conversation_id', convId) : query.is('conversation_id', null);
+}
 import { config } from '../config.js';
 import { trackAICall, trackToolCall, trackTruncation, trackError } from '../services/monitor.js';
 import { trackFeature, trackAgentUsage, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
@@ -484,12 +491,10 @@ function buildDynamicStarters(ctx) {
 
 router.get('/messages', requireAuth, rateLimit(30), async (req, res) => {
   try {
-    const { data: messages } = await supabase
-      .from('agent_messages')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: true })
-      .limit(50);
+    const convId = req.query.conversation_id;
+    let mq = supabase.from('agent_messages').select('*').eq('user_id', req.user.id);
+    if (convId) mq = (convId === '__legacy__') ? mq.is('conversation_id', null) : mq.eq('conversation_id', convId);
+    const { data: messages } = await mq.order('created_at', { ascending: true }).limit(50);
 
     if (!messages?.length) {
       const ctx = await buildAgentContext(req.user.id, req.user);
@@ -557,6 +562,46 @@ router.get('/messages', requireAuth, rateLimit(30), async (req, res) => {
   }
 });
 
+// List the user's conversations (groups of messages sharing a conversation_id).
+// Title is the first message; pre-conversations messages collapse into one
+// '__legacy__' bucket. Most-recent activity first.
+router.get('/conversations', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const { data: msgs } = await supabase.from('agent_messages')
+      .select('conversation_id, role, content, created_at')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: true })
+      .limit(2000);
+    const byConv = new Map();
+    for (const m of msgs ?? []) {
+      const key = m.conversation_id || '__legacy__';
+      let c = byConv.get(key);
+      if (!c) { c = { id: key, title: '', lastActivity: m.created_at, count: 0 }; byConv.set(key, c); }
+      c.count++;
+      c.lastActivity = m.created_at;
+      if (!c.title && m.content?.trim()) c.title = m.content.trim().slice(0, 60);
+    }
+    const conversations = [...byConv.values()]
+      .map(c => ({ ...c, title: c.title || (c.id === '__legacy__' ? 'Earlier conversation' : 'New conversation') }))
+      .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+    res.json({ conversations });
+  } catch (e) {
+    console.error('[Agent] conversations list failed:', e.message);
+    res.json({ conversations: [] });
+  }
+});
+
+// Delete one conversation (all its messages), scoped to the user.
+router.delete('/conversations/:id', requireAuth, rateLimit(10), async (req, res) => {
+  try {
+    await scopeConv(supabase.from('agent_messages').delete().eq('user_id', req.user.id), req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[Agent] conversation delete failed:', e.message);
+    res.status(500).json({ error: 'Failed to delete conversation' });
+  }
+});
+
 // Proactive opener — the agent reaches out first. At most once per day, when the
 // user opens the agent, post a short conversational opener built from the day's
 // top signal so the conversation (the one thing that pulls users in) starts
@@ -582,7 +627,7 @@ router.get('/opener', requireAuth, rateLimit(30), async (req, res) => {
 
     const opener = buildAgentOpener(signals, { hasPositions });
     const { error: insErr } = await supabase.from('agent_messages')
-      .insert({ user_id: req.user.id, role: 'assistant', content: opener, created_at: new Date().toISOString() });
+      .insert({ user_id: req.user.id, role: 'assistant', content: opener, conversation_id: 'opener_' + today, created_at: new Date().toISOString() });
     if (insErr) return res.json({ posted: false, waiting: false });
 
     const memContent = JSON.stringify({ date: today, seen: false });
@@ -627,7 +672,7 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
   // unhelpful generic error AND credits were never refunded.
   let creditsToDeduct = 0;
   try {
-    const { content } = req.body;
+    const { content, conversation_id: convId } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Message content required' });
     if (content.length > 2000) return res.status(400).json({ error: 'Message too long' });
 
@@ -676,7 +721,7 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
       newBalance = u?.credits_remaining ?? 0;
     }
 
-    const userMsg = { user_id: req.user.id, role: 'user', content: content.trim(), created_at: new Date().toISOString() };
+    const userMsg = { user_id: req.user.id, role: 'user', content: content.trim(), conversation_id: convId || null, created_at: new Date().toISOString() };
     const { error: insertErr } = await supabase.from('agent_messages').insert(userMsg);
     if (insertErr) {
       console.error(`[req:${req.requestId}] [Agent] Failed to save user message:`, insertErr.message);
@@ -688,7 +733,7 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
     let messageHistory, ctx, memoryStr;
     try {
       const [historyResult, ctxResult, memoriesResult] = await Promise.allSettled([
-        supabase.from('agent_messages').select('role,content').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(20),
+        scopeConv(supabase.from('agent_messages').select('role,content').eq('user_id', req.user.id), convId).order('created_at', { ascending: false }).limit(20),
         buildAgentContext(req.user.id, req.user),
         getMemories(req.user.id),
       ]);
@@ -941,7 +986,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     }
     clearTimeout(timeout);
 
-    const assistantMsg = { user_id: req.user.id, role: 'assistant', content: reply, created_at: new Date().toISOString() };
+    const assistantMsg = { user_id: req.user.id, role: 'assistant', content: reply, conversation_id: convId || null, created_at: new Date().toISOString() };
 
     // Save message to DB — but don't lose the response if DB insert fails
     // The user paid credits for this response, so ALWAYS return it
@@ -992,7 +1037,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
 // POST /api/agent/stream — SSE streaming version of the agent
 router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, res) => {
   try {
-    const { content } = req.body;
+    const { content, conversation_id: convId } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Message content required' });
     if (content.length > 2000) return res.status(400).json({ error: 'Message too long' });
 
@@ -1043,7 +1088,7 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
     }
 
     // Save user message
-    const userMsg = { user_id: req.user.id, role: 'user', content: content.trim(), created_at: new Date().toISOString() };
+    const userMsg = { user_id: req.user.id, role: 'user', content: content.trim(), conversation_id: convId || null, created_at: new Date().toISOString() };
     const { error: insertErr } = await supabase.from('agent_messages').insert(userMsg);
     if (insertErr) {
       await refundAgentCredits(req.user.id, creditsToDeduct, 'stream_message_insert_failed', req.requestId);
@@ -1071,7 +1116,7 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
     let messageHistory, ctx, memoryStr;
     try {
       const [historyResult, ctxResult, memoriesResult] = await Promise.allSettled([
-        supabase.from('agent_messages').select('role,content').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(20),
+        scopeConv(supabase.from('agent_messages').select('role,content').eq('user_id', req.user.id), convId).order('created_at', { ascending: false }).limit(20),
         buildAgentContext(req.user.id, req.user),
         getMemories(req.user.id),
       ]);
@@ -1296,7 +1341,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     }
 
     // Save assistant message
-    const assistantMsg = { user_id: req.user.id, role: 'assistant', content: fullReply, created_at: new Date().toISOString() };
+    const assistantMsg = { user_id: req.user.id, role: 'assistant', content: fullReply, conversation_id: convId || null, created_at: new Date().toISOString() };
     try { await supabase.from('agent_messages').insert(assistantMsg); } catch {}
 
     // Extract memories (non-blocking)

@@ -96,6 +96,19 @@ async function main() {
   const timeline = await api('GET', '/api/journal/timeline', { token: aTok });
   check('timeline loads with a thesis position (no 500)', timeline.status === 200 && Array.isArray(timeline.json?.events) && timeline.json.events.some(e => e.ticker === 'SPY'));
 
+  // 3d. Conversations: the opener posted to its OWN conversation, so it should be
+  // listed, message-scoped, and deletable, the spine of multi-chat.
+  const convs = await api('GET', '/api/agent/conversations', { token: aTok });
+  const openerConv = (convs.json?.conversations || []).find(c => String(c.id).startsWith('opener_'));
+  check('opener created its own conversation', !!openerConv);
+  if (openerConv) {
+    const cm = await api('GET', `/api/agent/messages?conversation_id=${openerConv.id}`, { token: aTok });
+    check('messages are scoped to their conversation', (cm.json?.messages || []).length >= 1 && (cm.json.messages || []).every(m => m.conversation_id === openerConv.id));
+    await api('DELETE', `/api/agent/conversations/${openerConv.id}`, { token: aTok });
+    const convs2 = await api('GET', '/api/agent/conversations', { token: aTok });
+    check('deleting a conversation removes it', !(convs2.json?.conversations || []).some(c => c.id === openerConv.id));
+  }
+
   // 4. ISOLATION (read): B must not see A's position
   const bVal = await api('GET', '/api/portfolio/value', { token: bTok });
   check("ISOLATION: B cannot SEE A's position", !(bVal.json?.positions ?? []).some(p => p.id === posId));
