@@ -218,6 +218,10 @@ async function fetchActivePositions({ userId, ticker, dateFrom, dateTo, limit })
 
   const out = [];
   for (const p of data ?? []) {
+    // The same open date positionToOpenEvent uses internally. Needed below for
+    // the same-day thesis check; without it that line threw ReferenceError and
+    // took down the whole timeline for any position that had a written thesis.
+    const openDate = p.purchased_at || p.created_at;
     const openEvent = positionToOpenEvent(p);
     if (openEvent) {
       if ((!dateFrom || openEvent.date >= dateFrom) && (!dateTo || openEvent.date <= dateTo)) {
@@ -464,8 +468,15 @@ export async function getUserHistory(options) {
   if (sources.includes('deploy_cash')) tasks.push(fetchDeployCashSessions({ userId, ticker, dateFrom, dateTo, limit: perSourceLimit }));
   else tasks.push(Promise.resolve([]));
 
-  const results = await Promise.all(tasks);
-  let merged = results.flat();
+  // allSettled, not all: a single failing source (a bad row, a transient DB
+  // error, a future bug in one fetcher) must degrade that one source to empty,
+  // never blank the entire timeline. The timeline is the user's story; show
+  // what we can.
+  const settled = await Promise.allSettled(tasks);
+  for (const r of settled) {
+    if (r.status === 'rejected') console.error('[historyAggregator] a timeline source failed:', r.reason?.message ?? r.reason);
+  }
+  let merged = settled.filter(r => r.status === 'fulfilled').flatMap(r => r.value ?? []);
 
   // Drop event types the caller didn't ask for (active-position helper returns both opens and theses)
   merged = merged.filter(e => sources.includes(e.source));

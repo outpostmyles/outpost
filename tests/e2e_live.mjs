@@ -70,7 +70,7 @@ async function main() {
   if (!aTok || !bTok) { console.log('Cannot continue without both tokens.'); return; }
 
   // 2. A adds a position (SPY validates against the real price feed)
-  const add = await api('POST', '/api/portfolio/positions', { token: aTok, body: { ticker: 'SPY', shares: 1, avgCost: 100 } });
+  const add = await api('POST', '/api/portfolio/positions', { token: aTok, body: { ticker: 'SPY', shares: 1, avgCost: 100, entryThesis: 'E2E: tracking SPY for the smoke test' } });
   check('A can add a position', add.status === 200 && !!add.json?.position?.id);
   const posId = add.json?.position?.id;
   if (add.status !== 200) console.log(`      (add error: ${JSON.stringify(add.json)})`);
@@ -90,6 +90,11 @@ async function main() {
   await api('POST', '/api/agent/opener/seen', { token: aTok });
   const seen = await api('GET', '/api/agent/opener', { token: aTok });
   check('marking it seen clears the dot', seen.json?.waiting === false);
+
+  // 3c. Timeline regression guard: A's position has a thesis, which used to hit
+  // a ReferenceError in the aggregator and blank the whole timeline.
+  const timeline = await api('GET', '/api/journal/timeline', { token: aTok });
+  check('timeline loads with a thesis position (no 500)', timeline.status === 200 && Array.isArray(timeline.json?.events) && timeline.json.events.some(e => e.ticker === 'SPY'));
 
   // 4. ISOLATION (read): B must not see A's position
   const bVal = await api('GET', '/api/portfolio/value', { token: bTok });
