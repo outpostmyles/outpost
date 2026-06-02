@@ -2140,8 +2140,13 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
 
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
 
-            {/* Action row — Edit secondary, Close destructive on the right */}
+            {/* Action row — Ask the agent (primary, the high-value path), Edit, Close */}
             <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: `How's my ${pos.ticker} position looking right now? Walk me through whether to hold, add, or trim it, given my plan.` } }))}
+                className="btn btn-blue"
+                style={{ flex: 1, fontSize: 10, padding: '7px 0' }}
+              >ASK OUTPOST</button>
               <button onClick={() => setMode('edit')} className="btn btn-muted" style={{ flex: 1, fontSize: 10, padding: '7px 0' }}>EDIT</button>
               <button
                 onClick={() => { setSellPrice(pos.currentPrice ? String(pos.currentPrice) : ''); setMode('close'); }}
