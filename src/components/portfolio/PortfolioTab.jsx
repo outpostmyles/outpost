@@ -2111,29 +2111,11 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               </div>
             )}
 
-            {/* Free news — fetched once when card expands */}
-            <div style={{ marginBottom: 10 }}>
-              <p style={{ fontSize: 9, color: 'var(--faint)', fontWeight: 700, letterSpacing: '0.6px', marginBottom: 5 }}>NEWS</p>
-              {newsLoading && <p style={{ fontSize: 10, color: 'var(--faint)' }}>Loading headlines…</p>}
-              {news !== null && news.length === 0 && (
-                <p style={{ fontSize: 10, color: 'var(--faint)', fontStyle: 'italic' }}>No recent company-specific headlines.</p>
-              )}
-              {news !== null && news.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {news.map((a, i) => (
-                    <a
-                      key={i}
-                      href={a.articleUrl || a.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ fontSize: 10, color: 'var(--muted)', textDecoration: 'none', lineHeight: 1.45, padding: '2px 0' }}
-                    >
-                      <span style={{ color: 'var(--faint)', marginRight: 4 }}>•</span>{a.title}
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* The standalone NEWS list was removed. It showed an empty "no
+                headlines" line on most quiet stocks (reads as broken) and was
+                redundant: TODAY'S DRIVER above already shows the day's headline
+                when there is one, and GET AI READ pulls and analyzes news on
+                demand. The lazy news fetch still powers TODAY'S DRIVER. */}
 
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
 
