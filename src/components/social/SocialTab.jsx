@@ -6,6 +6,7 @@ import { TickerIcon, EmptyState, Spinner, DisclaimerBadge } from '../shared/UI.j
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
 import BargainRadarCard from '../home/BargainRadarCard.jsx';
 import DiscoverView from './DiscoverView.jsx';
+import ScreenersView from './ScreenersView.jsx';
 
 // ============ FLAME RATING ============
 function FlameRating({ rating }) {
@@ -683,7 +684,7 @@ export default function SocialTab({ showToast }) {
   // sections ('ondeck', 'radar', 'bargain', 'buzz') are reachable via the
   // "See all →" links inside DiscoverView. They render with a "← Discover"
   // back-link when accessed that way.
-  const [activeSection, setActiveSection] = useState('discover');
+  const [activeSection, setActiveSection] = useState('screeners');
   const [countdown, setCountdown] = useState(30);
   const timerRef = useRef(null);
 
@@ -765,6 +766,7 @@ export default function SocialTab({ showToast }) {
         {/* Top-level tabs collapsed from 5 to 2. Deep-dive sections still
             exist internally — reachable from DiscoverView's "See all →" links. */}
         {[
+          { key: 'screeners', label: 'SCREENERS' },
           { key: 'discover', label: 'DISCOVER' },
           { key: 'watchlist', label: 'WATCHLIST' },
         ].map(t => {
@@ -784,7 +786,12 @@ export default function SocialTab({ showToast }) {
 
       <div className="scrollable" style={{ flex: 1 }}>
 
-        {/* ============ DISCOVER (default) ============ */}
+        {/* ============ SCREENERS (default) ============ */}
+        {activeSection === 'screeners' && (
+          <ScreenersView showToast={showToast} />
+        )}
+
+        {/* ============ DISCOVER ============ */}
         {activeSection === 'discover' && (
           <DiscoverView
             catalystData={catalystData}
