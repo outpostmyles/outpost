@@ -127,7 +127,7 @@ router.delete('/account', requireAuth, rateLimit(2), async (req, res) => {
       'positions', 'watchlist', 'futures_trades', 'portfolio_snapshots',
       'portfolio_analyses', 'agent_messages', 'ai_feedback', 'feedback',
       'closed_trades', 'agent_memory', 'journal_notes', 'journal_entries',
-      'journal_sections', 'price_alerts', 'password_reset_tokens',
+      'journal_sections', 'price_alerts', 'password_reset_tokens', 'screeners',
     ];
     for (const table of tables) {
       await supabase.from(table).delete().eq('user_id', req.user.id);

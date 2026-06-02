@@ -148,6 +148,12 @@ export const api = {
     update: (id, body) => patch(`/api/alerts/${id}`, body),
     remove: (id) => del(`/api/alerts/${id}`),
   },
+  screeners: {
+    list: () => get('/api/screeners'),
+    create: (body) => post('/api/screeners', body),
+    run: (id) => post(`/api/screeners/${id}/run`),
+    remove: (id) => del(`/api/screeners/${id}`),
+  },
   social: {
     buzz: () => get('/api/social/buzz'),
     scan: (category = 'all') => get(`/api/social/scan?category=${category}`),
