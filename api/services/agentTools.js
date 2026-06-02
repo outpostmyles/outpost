@@ -4,7 +4,8 @@
  */
 import { config } from '../config.js';
 import { memGet, memSet } from './memoryCache.js';
-import { getFinancials, getRatios, getAnalystRating } from './fmp.js';
+import { getFinancials, getAnalystRating } from './fmp.js';
+import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
 import { getEarningsForTicker, getEarningsForTickers, getEarningsCalendar } from '../utils/finnhub.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { getTaxInsights } from './taxInsights.js';
@@ -720,8 +721,8 @@ async function getFundamentals({ ticker }) {
   ticker = ticker.toUpperCase().trim();
 
   const [profile, ratios, earnings, analyst] = await Promise.allSettled([
-    getFinancials(ticker),
-    getRatios(ticker),
+    getFinancialsResilient(ticker),
+    getRatiosResilient(ticker),
     getEarningsForTicker(ticker),
     getAnalystRating(ticker),
   ]);

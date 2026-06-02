@@ -8,7 +8,8 @@
 // rest). forYourBook is the pure, personalized read and is unit-tested on its own.
 import { supabase } from '../db.js';
 import { lookupStock, getStockNews } from './agentTools.js';
-import { getFinancials, getRatios, getAnalystRating } from './fmp.js';
+import { getAnalystRating } from './fmp.js';
+import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
 import { getPrices } from './pricePool.js';
 import { resolveSector, staticSector } from './sectorMap.js';
 
@@ -73,23 +74,30 @@ export function forYourBook({ ticker, sector, beta, holdings = [] }) {
 export function compareForBook(dossiers) {
   const list = (Array.isArray(dossiers) ? dossiers : []).filter(d => d && d.ticker);
   if (list.length < 2) return null;
-  const fitScore = { new: 2, fits: 1, unknown: 0, owned: -1, concentrated: -2 };
+  // Only names we can actually classify are rankable. An unclassified name must
+  // NOT win by default just because we lack data on it (that was the bug where a
+  // name with an unknown sector beat a known one), so it sinks below all others.
+  const fitScore = { new: 2, fits: 1, concentrated: -2, owned: -1 };
   const ranked = list.map(d => {
     const fb = d.forYourBook || {};
-    let score = fitScore[fb.sectorFit] ?? 0;
+    const assessable = fb.sectorFit in fitScore;
+    let score = assessable ? fitScore[fb.sectorFit] : -1000;
     const pe = d.fundamentals?.pe;
-    if (Number.isFinite(pe) && pe > 0 && pe < 25) score += 0.3; // small value nudge, breaks ties
+    if (assessable && Number.isFinite(pe) && pe > 0 && pe < 25) score += 0.3; // value nudge breaks ties
     return { ticker: d.ticker, sector: fb.sector, sectorFit: fb.sectorFit, score };
   }).sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
   let reason;
-  switch (best.sectorFit) {
-    case 'new': reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`; break;
-    case 'fits': reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`; break;
-    case 'concentrated': reason = `These all lean into areas you already hold. ${best.ticker} is the least redundant of them.`; break;
-    case 'owned': reason = `You already own ${best.ticker}, so of these it is the most familiar fit.`; break;
-    default: reason = `${best.ticker} looks like the cleanest fit for your book of these.`;
+  if (best.score <= -1000) {
+    reason = `We could not classify these well enough to call one the best fit. Open each to judge it on the business.`;
+  } else if (best.sectorFit === 'new') {
+    reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`;
+  } else if (best.sectorFit === 'fits') {
+    reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`;
+  } else {
+    // best is concentrated or owned: nothing here is a clean add, so say so
+    reason = `None of these is a clean add for your book. ${best.ticker} is the least redundant, but they all lean into areas you already hold.`;
   }
   return { bestTicker: best.ticker, reason, ranked };
 }
@@ -105,8 +113,8 @@ export async function buildDossier(ticker, userId) {
 
   const [lookupR, finR, ratiosR, analystR, newsR, posR, statusR] = await Promise.allSettled([
     lookupStock({ ticker: T }),
-    getFinancials(T),
-    getRatios(T),
+    getFinancialsResilient(T),
+    getRatiosResilient(T),
     getAnalystRating(T),
     getStockNews({ ticker: T, limit: 3 }),
     supabase.from('positions').select('ticker, shares, avg_cost').eq('user_id', userId),
@@ -159,6 +167,7 @@ export async function buildDossier(ticker, userId) {
       yearLow,
     },
     rangePosition,
+    fundamentalsAsOf: fin?._asOf || null, // set when fundamentals are last-known (FMP throttled), null when live
     analyst: analyst ? {
       consensus: analyst.consensus,
       buy: analyst.buy, hold: analyst.hold, sell: analyst.sell,

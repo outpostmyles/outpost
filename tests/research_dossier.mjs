@@ -90,6 +90,23 @@ test('compare prefers rounding out over doubling down', () => {
   assert.equal(r.bestTicker, 'GS');
 });
 
+test('an unclassified name does not beat a classified one', () => {
+  const r = compareForBook([
+    dossier('SMCI', 'concentrated', 'Technology', null),
+    dossier('MARA', 'unknown', 'Unknown', null),
+  ]);
+  assert.equal(r.bestTicker, 'SMCI'); // known-concentrated beats unknown, instead of unknown winning by default
+  assert.match(r.reason, /least redundant|clean add/i);
+});
+
+test('an all-unknown comparison is honest about it', () => {
+  const r = compareForBook([
+    dossier('AAA', 'unknown', 'Unknown', null),
+    dossier('BBB', 'unknown', 'Unknown', null),
+  ]);
+  assert.match(r.reason, /could not classify/i);
+});
+
 test('compare returns null with fewer than two names', () => {
   assert.equal(compareForBook([dossier('AMD', 'new', 'Technology', 20)]), null);
   assert.equal(compareForBook([]), null);

@@ -21,7 +21,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { sanitizeString } from '../middleware/validate.js';
 import { lookupStock } from '../services/agentTools.js';
-import { getFinancials } from '../services/fmp.js';
+import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { applyScreenerVerdicts } from '../services/screenerVerdicts.js';
 import { markScreenerNewcomers } from '../services/screenerDiff.js';
 import { applyPriceBound } from '../services/screenerConstraints.js';
@@ -90,7 +90,7 @@ export async function runScreenerQuery(query) {
       const look = await lookupStock({ ticker });
       if (!look || look.error || !look.price) return null;
       let fin = null;
-      try { fin = await getFinancials(ticker); } catch {}
+      try { fin = await getFinancialsResilient(ticker); } catch {}
       return {
         ticker,
         name: fin?.companyName ?? null,

@@ -16,6 +16,14 @@ test('covers the holdings that were showing Unknown', () => {
   assert.equal(staticSector('POET'), 'Technology');
 });
 
+test('covers the screener/compare names that were showing Unknown', () => {
+  assert.equal(staticSector('GTLB'), 'Technology');
+  assert.equal(staticSector('CPRT'), 'Industrials');
+  assert.equal(staticSector('MARA'), 'Financial Services'); // the compare best-fit bug
+  assert.equal(staticSector('MNDY'), 'Technology');
+  assert.equal(staticSector('ALAB'), 'Technology');
+});
+
 test('uses FMP-style sector names (so live + fallback blend)', () => {
   assert.equal(staticSector('NVDA'), 'Technology');
   assert.equal(staticSector('JPM'), 'Financial Services');

@@ -396,6 +396,11 @@ function DossierView({ ticker, dossier, loading, error, status, onStatus, onBack
                   <Metric label="Beta" value={f.beta != null ? Number(f.beta).toFixed(2) : null} />
                 </div>
                 {d.rangePosition != null && <RangeBar pos={d.rangePosition} low={f.yearLow} high={f.yearHigh} />}
+                {d.fundamentalsAsOf && (
+                  <p style={{ fontSize: 9, color: 'var(--faint)', margin: '8px 0 0' }}>
+                    Fundamentals as of {new Date(d.fundamentalsAsOf).toLocaleDateString()}, live data is catching up.
+                  </p>
+                )}
               </>
             ) : (
               <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', margin: 0 }}>Live fundamentals are catching up. Reload in a moment.</p>

@@ -11,6 +11,7 @@ import { todayStr } from '../utils/marketHours.js';
 import { getUserHistory } from '../services/historyAggregator.js';
 import { getFinancials, getAnalystRating } from '../services/fmp.js';
 import { resolveSector } from '../services/sectorMap.js';
+import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock } from '../services/agentTools.js';
 import { config } from '../config.js';
@@ -1524,7 +1525,7 @@ router.get('/sectors', requireAuth, rateLimit(20), async (req, res) => {
       const live = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
       let liveSector = null, beta = null;
       try {
-        const f = await getFinancials(p.ticker);
+        const f = await getFinancialsResilient(p.ticker);
         if (f?.sector) liveSector = f.sector;
         if (Number.isFinite(f?.beta) && f.beta > 0) beta = f.beta;
       } catch {}

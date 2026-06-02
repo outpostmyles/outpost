@@ -22,6 +22,8 @@ const TICKER_SECTOR = {
   HPQ: 'Technology', HPE: 'Technology', WDAY: 'Technology', TEAM: 'Technology', ANET: 'Technology',
   UBER: 'Technology', SHOP: 'Technology', QBTS: 'Technology', CRWV: 'Technology', POET: 'Technology',
   RGTI: 'Technology', IONQ: 'Technology', SOUN: 'Technology', AI: 'Technology', BBAI: 'Technology',
+  GTLB: 'Technology', MNDY: 'Technology', SSNC: 'Technology', OKTA: 'Technology', ALAB: 'Technology',
+  U: 'Technology', ZM: 'Technology', TWLO: 'Technology', OKLO: 'Technology', APP: 'Technology',
   // Communication Services
   GOOGL: 'Communication Services', GOOG: 'Communication Services', META: 'Communication Services',
   NFLX: 'Communication Services', DIS: 'Communication Services', SNAP: 'Communication Services',
@@ -33,6 +35,7 @@ const TICKER_SECTOR = {
   AXP: 'Financial Services', V: 'Financial Services', MA: 'Financial Services', ICE: 'Financial Services',
   CME: 'Financial Services', SPGI: 'Financial Services', COIN: 'Financial Services', HOOD: 'Financial Services',
   SOFI: 'Financial Services', PYPL: 'Financial Services', 'BRK.B': 'Financial Services', KKR: 'Financial Services',
+  MARA: 'Financial Services', RIOT: 'Financial Services', CLSK: 'Financial Services', AFRM: 'Financial Services', UPST: 'Financial Services',
   // Healthcare
   UNH: 'Healthcare', JNJ: 'Healthcare', PFE: 'Healthcare', ABBV: 'Healthcare', MRK: 'Healthcare',
   LLY: 'Healthcare', TMO: 'Healthcare', ABT: 'Healthcare', BMY: 'Healthcare', AMGN: 'Healthcare',
@@ -56,7 +59,7 @@ const TICKER_SECTOR = {
   BA: 'Industrials', CAT: 'Industrials', DE: 'Industrials', UNP: 'Industrials', HON: 'Industrials',
   GE: 'Industrials', RTX: 'Industrials', LMT: 'Industrials', FDX: 'Industrials', UPS: 'Industrials',
   AXON: 'Industrials', ETN: 'Industrials', PWR: 'Industrials', PLUG: 'Industrials', RKLB: 'Industrials',
-  LUV: 'Industrials', DAL: 'Industrials', UAL: 'Industrials',
+  LUV: 'Industrials', DAL: 'Industrials', UAL: 'Industrials', CPRT: 'Industrials', ACHR: 'Industrials',
   // Basic Materials
   FCX: 'Basic Materials', NEM: 'Basic Materials', APD: 'Basic Materials', LIN: 'Basic Materials',
   SHW: 'Basic Materials',
