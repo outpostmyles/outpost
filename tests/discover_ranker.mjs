@@ -6,7 +6,7 @@
 // the ranking order, the cap, the empty-input handling, and the item shape so
 // a future refactor can't silently reshuffle what users see on top.
 import assert from 'node:assert/strict';
-import { buildDiscoverFeed } from '../src/components/social/discoverRanker.js';
+import { buildDiscoverFeed, discoverAskPrompt } from '../src/components/social/discoverRanker.js';
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
@@ -213,6 +213,19 @@ test('ids are unique across a mixed feed', () => {
   });
   const ids = out.map(i => i.id);
   assert.equal(new Set(ids).size, ids.length);
+});
+
+test('discoverAskPrompt builds a ticker-specific question per type', () => {
+  assert.match(discoverAskPrompt({ type: 'catalyst', ticker: 'nvda' }), /^NVDA is moving on a catalyst/);
+  assert.match(discoverAskPrompt({ type: 'bargain', ticker: 'AMD' }), /Is AMD a real buyable dip/);
+  assert.match(discoverAskPrompt({ type: 'trending', ticker: 'GME' }), /GME is getting a lot of attention/);
+  assert.match(discoverAskPrompt({ type: 'sector', title: 'Energy heating up' }), /^Energy heating up is on the radar/);
+});
+
+test('discoverAskPrompt falls back gracefully without a ticker or on junk', () => {
+  assert.match(discoverAskPrompt({ type: 'catalyst' }), /catalysts moving the market/);
+  assert.match(discoverAskPrompt({ type: 'mystery', ticker: 'X' }), /going on with X/);
+  assert.equal(discoverAskPrompt(null), '');
 });
 
 // ─── Run ────────────────────────────────────────────────────────────────────

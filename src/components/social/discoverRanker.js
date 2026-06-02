@@ -160,3 +160,33 @@ export function buildDiscoverFeed(input, limit = 10) {
   items.sort((a, b) => b.priority - a.priority);
   return items.slice(0, limit);
 }
+
+/**
+ * Turn a discover-feed item into a question for the agent. This is the tap-to-
+ * ask bridge: a Discover row stops being a dead-end read and becomes a one-tap
+ * conversation about that exact thing, grounded in the user's own book. Pure.
+ */
+export function discoverAskPrompt(item) {
+  if (!item) return '';
+  const t = item.ticker ? String(item.ticker).toUpperCase() : null;
+  switch (item.type) {
+    case 'catalyst':
+      return t
+        ? `${t} is moving on a catalyst today. What's driving it, and does it change anything for how I should think about it?`
+        : `What's driving the catalysts moving the market today, and is any of it relevant to me?`;
+    case 'sector':
+      return `${item.title || 'This sector'} is on the radar. Should I have exposure there, and how would it fit my current book?`;
+    case 'bargain':
+      return t
+        ? `Is ${t} a real buyable dip here, or a falling knife? Walk me through the setup and the risk.`
+        : `Walk me through the strongest buyable dip on the radar right now and whether it fits me.`;
+    case 'trending':
+      return t
+        ? `${t} is getting a lot of attention right now. Is there anything real behind it, or is it just noise?`
+        : `What's trending right now, and is any of it actually worth my attention?`;
+    default:
+      return t
+        ? `Tell me what's going on with ${t} and whether it's relevant to my portfolio.`
+        : `What's worth my attention in the market right now?`;
+  }
+}

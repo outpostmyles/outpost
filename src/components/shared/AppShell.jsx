@@ -118,6 +118,16 @@ export default function AppShell() {
     }
   }, [activeTab]);
 
+  // Tap-to-ask, universal: any surface can drop the user into the agent just by
+  // dispatching 'agent_prefill' (AgentTab's own listener fills the input). We
+  // navigate to the agent here, so a card anywhere becomes a one-tap way into
+  // the conversation without threading a callback through every component.
+  useEffect(() => {
+    const toAgent = () => setActiveTab('agent');
+    window.addEventListener('agent_prefill', toAgent);
+    return () => window.removeEventListener('agent_prefill', toAgent);
+  }, []);
+
   function switchTab(id) { setActiveTab(id); }
 
   const etTime = time.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false });

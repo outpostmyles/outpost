@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
-import { buildDiscoverFeed } from './discoverRanker.js';
+import { buildDiscoverFeed, discoverAskPrompt } from './discoverRanker.js';
 import { personalizeDiscover } from './personalizeDiscover.js';
 
 /**
@@ -134,6 +134,13 @@ function FeedRow({ item, onClick }) {
 
   const pctColor = item.pct >= 0 ? 'var(--green)' : 'var(--red)';
   const dropTime = item.meta?.dropTime;
+
+  // Tap-to-ask: drop the user into the agent with a question about this exact
+  // item. stopPropagation so it doesn't also trigger the row's deep-link.
+  const ask = (e) => {
+    e.stopPropagation();
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: discoverAskPrompt(item) } }));
+  };
 
   return (
     <div
