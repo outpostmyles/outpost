@@ -156,6 +156,9 @@ export const api = {
     seen: (id) => post(`/api/screeners/${id}/seen`),
     remove: (id) => del(`/api/screeners/${id}`),
   },
+  research: {
+    dossier: (ticker) => get(`/api/research/dossier/${encodeURIComponent(ticker)}`),
+  },
   social: {
     buzz: () => get('/api/social/buzz'),
     scan: (category = 'all') => get(`/api/social/scan?category=${category}`),

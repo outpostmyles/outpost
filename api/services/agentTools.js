@@ -644,7 +644,7 @@ async function screenStocks({ min_change_pct, max_change_pct, lookback_days = 30
   };
 }
 
-async function getStockNews({ ticker, limit = 5 }) {
+export async function getStockNews({ ticker, limit = 5 }) {
   if (!ticker || typeof ticker !== 'string') return { error: 'No ticker provided' };
   ticker = ticker.toUpperCase().trim();
   limit = Math.min(limit, 10);

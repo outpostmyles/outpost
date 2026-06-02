@@ -21,7 +21,7 @@ const SUITE = [
   'plan_adherence', 'performance_attribution', 'market_regime', 'position_status', 'integration_smoke',
   'discover_ranker', 'ticker_extract', 'journal_search', 'note_match', 'patterns_resilient',
   'today_composite', 'injection_wrap', 'notices', 'history_recall', 'agent_opener',
-  'screener_verdicts', 'screener_diff', 'screener_constraints', 'sector_map',
+  'screener_verdicts', 'screener_diff', 'screener_constraints', 'sector_map', 'research_dossier',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via

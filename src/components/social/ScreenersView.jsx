@@ -26,6 +26,10 @@ export default function ScreenersView({ showToast }) {
   const [selectedId, setSelectedId] = useState(null); // null = list, id = workspace
   const [refineText, setRefineText] = useState('');
   const [refining, setRefining] = useState(false);
+  const [dossierTicker, setDossierTicker] = useState(null);
+  const [dossier, setDossier] = useState(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+  const [dossierError, setDossierError] = useState(null);
 
   useEffect(() => {
     api.screeners.list().then(d => setScreeners(d.screeners ?? [])).catch(() => setScreeners([]));
@@ -101,6 +105,30 @@ export default function ScreenersView({ showToast }) {
     setRefining(false);
   }
 
+  async function openDossier(ticker) {
+    setDossierTicker(ticker); setDossier(null); setDossierError(null); setDossierLoading(true);
+    try {
+      const d = await api.research.dossier(ticker);
+      setDossier(d.dossier || null);
+    } catch (e) {
+      setDossierError(e.error || 'Could not load research right now');
+    }
+    setDossierLoading(false);
+  }
+  function closeDossier() { setDossierTicker(null); setDossier(null); setDossierError(null); }
+  function deepDive(d) {
+    const t = d?.ticker || dossierTicker;
+    const name = d?.name && d.name !== t ? ` (${d.name})` : '';
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message:
+      `Give me a full research read on ${t}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.` } }));
+  }
+
+  // ── Research dossier (one stock), overlays list or workspace ──
+  if (dossierTicker) {
+    return <DossierView ticker={dossierTicker} dossier={dossier} loading={dossierLoading} error={dossierError}
+      onBack={closeDossier} onWatch={() => watch(dossierTicker)} onAsk={() => deepDive(dossier)} />;
+  }
+
   const selected = selectedId ? (screeners || []).find(s => s.id === selectedId) : null;
 
   // ── Workspace (one screener) ──
@@ -133,7 +161,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
         )}
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
@@ -219,10 +247,10 @@ export default function ScreenersView({ showToast }) {
   );
 }
 
-function ResultRow({ r, onAsk, onWatch }) {
+function ResultRow({ r, onAsk, onWatch, onOpen }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div onClick={onOpen} title="Open research" style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {r.isNew && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: 'var(--green)', background: 'rgba(34,197,94,0.14)', border: '0.5px solid rgba(34,197,94,0.4)', borderRadius: 3, padding: '1px 4px' }}>NEW</span>}
           <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.ticker}</span>
@@ -232,6 +260,7 @@ function ResultRow({ r, onAsk, onWatch }) {
               {r.changePercent >= 0 ? '+' : ''}{Number(r.changePercent).toFixed(1)}%
             </span>
           )}
+          <span style={{ fontSize: 9, color: 'var(--blue)', marginLeft: 'auto' }}>RESEARCH ›</span>
         </div>
         {r.thesis && <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, margin: '3px 0 0' }}>{r.thesis}</p>}
       </div>
@@ -245,6 +274,152 @@ function ResultRow({ r, onAsk, onWatch }) {
       </div>
     </div>
   );
+}
+
+// The research dossier: one stock, everything to decide, personalized to your
+// book. The screener finds names; this is the room you research one in.
+const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
+
+function DossierView({ ticker, dossier, loading, error, onBack, onWatch, onAsk }) {
+  const d = dossier;
+  const f = d?.fundamentals || {};
+  const hasFund = f && Object.values(f).some(v => v != null);
+  return (
+    <div style={{ paddingBottom: 44 }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 10, fontFamily: 'inherit', letterSpacing: '0.4px', padding: 0, marginBottom: 9 }}>← Back</button>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{(d?.ticker) || ticker}</span>
+          {d?.price != null && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>${d.price}</span>}
+          {d?.changePercent != null && <span style={{ fontSize: 12, fontWeight: 700, color: d.changePercent >= 0 ? 'var(--green)' : 'var(--red)' }}>{d.changePercent >= 0 ? '+' : ''}{Number(d.changePercent).toFixed(2)}%</span>}
+        </div>
+        {d && <p style={{ fontSize: 10.5, color: 'var(--muted)', margin: '3px 0 0' }}>{[d.name !== d.ticker ? d.name : null, d.sector, d.industry].filter(Boolean).join(' · ')}</p>}
+      </div>
+
+      {loading ? (
+        <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', padding: '16px' }}>Pulling research…</p>
+      ) : error ? (
+        <p style={{ fontSize: 11, color: 'var(--faint)', padding: '16px', lineHeight: 1.5 }}>{error}</p>
+      ) : d ? (
+        <>
+          <DSection title="FOR YOUR BOOK" accent>
+            <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{d.forYourBook.fitNote}</p>
+            {d.forYourBook.sector && d.forYourBook.sector !== 'Unknown' && d.forYourBook.bookValue > 0 && (
+              <SectorBar pct={d.forYourBook.sectorPct} sector={d.forYourBook.sector} />
+            )}
+            {d.forYourBook.betaNote && <p style={dsNote}>{d.forYourBook.betaNote}</p>}
+            {d.forYourBook.suggestedSize && <p style={dsNote}>{d.forYourBook.suggestedSize}</p>}
+          </DSection>
+
+          {d.description && (
+            <DSection title="WHAT THEY DO">
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.55, margin: 0 }}>{d.description}</p>
+            </DSection>
+          )}
+
+          <DSection title="FUNDAMENTALS">
+            {hasFund ? (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+                  <Metric label="Market cap" value={fmtCap(f.marketCap)} />
+                  <Metric label="P/E" value={f.pe != null ? Number(f.pe).toFixed(1) : null} />
+                  <Metric label="EPS" value={f.eps != null ? `$${Number(f.eps).toFixed(2)}` : null} />
+                  <Metric label="Net margin" value={f.netMargin != null ? `${f.netMargin}%` : null} />
+                  <Metric label="Gross margin" value={f.grossMargin != null ? `${f.grossMargin}%` : null} />
+                  <Metric label="ROE" value={f.roe != null ? `${f.roe}%` : null} />
+                  <Metric label="Dividend" value={f.dividendYield ? `${f.dividendYield}%` : null} />
+                  <Metric label="Beta" value={f.beta != null ? Number(f.beta).toFixed(2) : null} />
+                </div>
+                {d.rangePosition != null && <RangeBar pos={d.rangePosition} low={f.yearLow} high={f.yearHigh} />}
+              </>
+            ) : (
+              <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', margin: 0 }}>Live fundamentals are catching up. Reload in a moment.</p>
+            )}
+          </DSection>
+
+          {d.analyst && (d.analyst.total > 0 || d.analyst.targetPrice) && (
+            <DSection title="THE STREET">
+              <p style={{ fontSize: 12, color: 'var(--text)', margin: 0 }}>
+                Consensus: <strong>{d.analyst.consensus}</strong>
+                {d.analyst.total > 0 && <span style={{ color: 'var(--faint)', fontSize: 10.5 }}>  ({d.analyst.buy} buy · {d.analyst.hold} hold · {d.analyst.sell} sell)</span>}
+              </p>
+              {d.analyst.targetPrice && <p style={dsNote}>Avg price target ${Number(d.analyst.targetPrice).toFixed(2)}{d.price ? ` (${d.analyst.targetPrice >= d.price ? '+' : ''}${Math.round((d.analyst.targetPrice / d.price - 1) * 100)}% from here)` : ''}</p>}
+            </DSection>
+          )}
+
+          {d.news?.length > 0 && (
+            <DSection title="LATEST">
+              {d.news.map((n, i) => (
+                <p key={i} style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, margin: i === 0 ? '0' : '7px 0 0' }}>
+                  {n.title} <span style={{ color: 'var(--faint)' }}>— {n.source}</span>
+                </p>
+              ))}
+            </DSection>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, padding: '14px 16px' }}>
+            <button onClick={onAsk} className="btn btn-blue" style={{ flex: 1, fontSize: 11, padding: '10px' }}>DEEP DIVE WITH OUTPOST</button>
+            <button onClick={onWatch} className="btn btn-muted" style={{ fontSize: 11, padding: '10px 14px' }}>+ WATCH</button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function DSection({ title, accent, children }) {
+  return (
+    <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: accent ? 'rgba(59,130,246,0.05)' : 'transparent' }}>
+      <p style={{ fontSize: 9, fontWeight: 800, letterSpacing: '1px', color: accent ? 'var(--blue)' : 'var(--faint)', margin: '0 0 7px' }}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  if (value == null) return null;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+      <span style={{ fontSize: 10.5, color: 'var(--faint)' }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{value}</span>
+    </div>
+  );
+}
+
+function SectorBar({ pct, sector }) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: 'var(--faint)', marginBottom: 3 }}>
+        <span>{sector}</span><span>{pct}% of your book</span>
+      </div>
+      <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: pct >= 40 ? 'var(--red)' : 'var(--blue)' }} />
+      </div>
+    </div>
+  );
+}
+
+function RangeBar({ pos, low, high }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: 'var(--faint)', marginBottom: 3 }}>
+        <span>52-wk range</span>
+        <span>{low != null ? `$${low}` : ''}{low != null && high != null ? ' to ' : ''}{high != null ? `$${high}` : ''}</span>
+      </div>
+      <div style={{ position: 'relative', height: 5, background: 'var(--raised)', borderRadius: 3 }}>
+        <div style={{ position: 'absolute', left: `${pos}%`, top: -2, transform: 'translateX(-50%)', width: 3, height: 9, background: 'var(--text)', borderRadius: 2 }} />
+      </div>
+      <p style={{ fontSize: 9.5, color: 'var(--faint)', margin: '3px 0 0' }}>{pos}% of the way up its 52-week range</p>
+    </div>
+  );
+}
+
+function fmtCap(n) {
+  if (n == null) return null;
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(0)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  return `$${n}`;
 }
 
 function timeAgo(iso) {
