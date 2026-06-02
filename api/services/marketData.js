@@ -41,14 +41,18 @@ const data = {
 
 const intervals = [];
 
-function computeRegime() {
-  const vixVal = data.vix?.value;
-  const fgVal = data.fearGreed?.value;
+// Pure regime classifier, exported for tests. vixVal / fgVal may be null or
+// undefined when that feed has not loaded yet (both missing -> 'Unknown').
+export function classifyRegime(vixVal, fgVal) {
   if (vixVal == null && fgVal == null) return 'Unknown';
   if (vixVal >= 25 && fgVal <= 30) return 'Risk Off';
   if (vixVal <= 18 && fgVal >= 60) return 'Risk On';
   if (vixVal >= 22 || fgVal <= 35) return 'Risk Off';
   return 'Neutral';
+}
+
+function computeRegime() {
+  return classifyRegime(data.vix?.value, data.fearGreed?.value);
 }
 
 function ageSeconds(fetchedAt) {
