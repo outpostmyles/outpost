@@ -48,7 +48,7 @@ const HARD_CAP_PER_SOURCE = 200; // safety — don't pull a user's entire 5000-m
  * 1-5 letter all-caps tokens. Used when no explicit ticker is on the row
  * (e.g. agent_messages, journal_notes) so we can filter Timeline by ticker.
  */
-function detectTickers(text, knownTickers) {
+export function detectTickers(text, knownTickers) {
   if (!text) return [];
   const found = new Set();
   // $-prefixed: $AAPL or $aapl
@@ -83,12 +83,13 @@ async function loadKnownTickers(userId) {
   return set;
 }
 
-function wordCount(text) {
+export function wordCount(text) {
   if (!text || typeof text !== 'string') return 0;
-  return text.trim().split(/\s+/).length;
+  const t = text.trim();
+  return t ? t.split(/\s+/).length : 0; // whitespace-only counts as 0, not 1
 }
 
-function truncate(text, max = 220) {
+export function truncate(text, max = 220) {
   if (!text) return '';
   const clean = String(text).trim().replace(/\s+/g, ' ');
   if (clean.length <= max) return clean;
@@ -499,7 +500,7 @@ export async function getUserHistory(options) {
  * applies even when this comes back as a tool result. Strips any nested
  * </user_quoted> close-tag to keep the wrapper intact.
  */
-function wrapQuote(text, max = 400) {
+export function wrapQuote(text, max = 400) {
   if (!text) return text;
   const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
   return `<user_quoted>${clean}</user_quoted>`;
