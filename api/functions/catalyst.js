@@ -173,38 +173,14 @@ async function gatherCandidates(dropId) {
       }
     }
 
-    // For ALL drops: extract tickers mentioned in breaking news headlines
-    const tickerPattern = /\b([A-Z]{2,5})\b/g;
-    const newsTickerCounts = {};
-    for (const article of news) {
-      const text = article.title + ' ' + article.summary;
-      const matches = text.match(tickerPattern) || [];
-      for (const m of matches) {
-        // Filter out common words that look like tickers
-        if (['THE','FOR','AND','NOT','BUT','CEO','CFO','IPO','FDA','SEC','ETF','GDP','CPI','FED'].includes(m)) continue;
-        newsTickerCounts[m] = (newsTickerCounts[m] || 0) + 1;
-      }
-    }
-    // Add news-mentioned tickers not already in candidates
-    const existingTickers = new Set(candidates.map(c => c.ticker));
-    const newsMentioned = Object.entries(newsTickerCounts)
-      .filter(([ticker]) => !existingTickers.has(ticker))
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-
-    for (const [ticker, count] of newsMentioned) {
-      // Find the relevant news headline
-      const relevantArticle = news.find(n => (n.title + ' ' + n.summary).includes(ticker));
-      if (relevantArticle) {
-        candidates.push({
-          ticker,
-          catalystType: 'news',
-          catalystLabel: 'BREAKING NEWS',
-          detail: relevantArticle.title,
-          strength: count >= 3 ? 2 : 1,
-        });
-      }
-    }
+    // NOTE: we deliberately do NOT mine tickers out of news headlines anymore.
+    // Treating any 2-5 uppercase token as a ticker produced garbage catalysts:
+    // real-looking symbols paired with stories that were not about that company
+    // at all ("MSC says vessel hit..." is a shipping line, not the stock MSC;
+    // "AI" matched generic AI news, not C3.ai). A caps token in a headline is
+    // not the subject of the headline, and there is no reliable regex for that.
+    // Catalysts now come only from vetted sources (the earnings calendar above),
+    // scored by Claude below. Fewer, real catalysts beat a sloppy, unvetted feed.
 
   } catch (err) {
     console.error(`[Catalyst] Candidate gathering failed for ${dropId}:`, err.message);

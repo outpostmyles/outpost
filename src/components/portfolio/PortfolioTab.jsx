@@ -1988,22 +1988,19 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
             {/* TODAY'S DRIVER. The fresh context after the thesis. Why did
                 this stock move today, in one line. Sits below the thesis so
                 the user reads their conviction first, then the news second. */}
-            <div style={{ marginBottom: 10 }}>
-              <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 3, fontWeight: 600 }}>TODAY'S DRIVER</p>
-              {newsLoading ? (
-                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, fontStyle: 'italic' }}>Checking news…</p>
-              ) : news?.length > 0 ? (
-                <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{news[0].title || news[0].headline}</p>
-              ) : Math.abs(pos.todayChangePercent ?? 0) >= 1 ? (
-                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
-                  No company-specific headlines. Moving with the broader tape.
-                </p>
-              ) : (
-                <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45 }}>
-                  Quiet day. No news, no major move.
-                </p>
-              )}
-            </div>
+            {/* Only show TODAY'S DRIVER when there's an actual headline. An empty
+                "no news" line on every quiet stock read as broken and added
+                nothing; the AI breakdown below already pulls news on demand. */}
+            {(newsLoading || news?.length > 0) && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 3, fontWeight: 600 }}>TODAY'S DRIVER</p>
+                {newsLoading ? (
+                  <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, fontStyle: 'italic' }}>Checking news…</p>
+                ) : (
+                  <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{news[0].title || news[0].headline}</p>
+                )}
+              </div>
+            )}
 
             {/* Phase 3 YOUR HISTORY. Past chats and prior closed positions in
                 the same ticker. Journal notes are split out into their own
