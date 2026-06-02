@@ -108,6 +108,7 @@ export const api = {
     editPosition: (id, body) => patch(`/api/portfolio/positions/${id}`, body),
     removePosition: (id, body) => del(`/api/portfolio/positions/${id}`, body),
     closedTrades: () => get('/api/portfolio/closed-trades'),
+    sectors: () => get('/api/portfolio/sectors'),
     snapshots: () => get('/api/portfolio/snapshots'),
     takeSnapshot: () => post('/api/portfolio/snapshot'),
     analyses: () => get('/api/portfolio/analyses'),

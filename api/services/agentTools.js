@@ -404,7 +404,7 @@ export async function lookupStock({ ticker }) {
   };
 }
 
-async function getHistoricalPrice({ ticker, from_date, to_date }) {
+export async function getHistoricalPrice({ ticker, from_date, to_date }) {
   ticker = ticker.toUpperCase().trim();
   const to = to_date || new Date().toISOString().split('T')[0];
   const cacheKey = `hist_${ticker}_${from_date}_${to}`;

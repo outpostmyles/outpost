@@ -40,6 +40,7 @@ export default function ScreenersView({ showToast }) {
   const [dossierLoading, setDossierLoading] = useState(false);
   const [dossierError, setDossierError] = useState(null);
   const [statuses, setStatuses] = useState({}); // ticker -> research status
+  const [holdings, setHoldings] = useState([]); // [{ ticker, sector, value }] for compare-to-holdings
   const [compareMode, setCompareMode] = useState(false);
   const [compareSel, setCompareSel] = useState([]);
   const [comparing, setComparing] = useState(false);
@@ -48,6 +49,7 @@ export default function ScreenersView({ showToast }) {
   useEffect(() => {
     api.screeners.list().then(d => setScreeners(d.screeners ?? [])).catch(() => setScreeners([]));
     api.research.statuses().then(d => setStatuses(d.statuses || {})).catch(() => {});
+    api.portfolio.sectors().then(d => setHoldings(d.holdings || [])).catch(() => {});
   }, []);
 
   // Opening a screen that has new names clears the NEW flags (server + local), so
@@ -143,12 +145,21 @@ export default function ScreenersView({ showToast }) {
   function toggleCompare(ticker) {
     setCompareSel(sel => sel.includes(ticker) ? sel.filter(t => t !== ticker) : (sel.length >= 3 ? sel : [...sel, ticker]));
   }
-  async function openCompare() {
-    if (compareSel.length < 2) return;
+  async function openCompare(tickers) {
+    const sel = Array.isArray(tickers) ? tickers : compareSel;
+    if (sel.length < 2) return;
     setComparing(true);
-    try { const d = await api.research.compare(compareSel); setCompareData(d); }
+    try { const d = await api.research.compare(sel); setCompareData(d); }
     catch (e) { showToast?.(e.error || 'Could not compare those', 'error'); }
     setComparing(false);
+  }
+  function compareToHoldings() {
+    const d = dossier;
+    if (!d) return;
+    const same = holdings.filter(h => h.sector === d.sector && h.ticker !== d.ticker)
+      .sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 2).map(h => h.ticker);
+    if (!same.length) { showToast?.(`You hold nothing else in ${d.sector}`, 'error'); return; }
+    openCompare([d.ticker, ...same]);
   }
   function exitCompare() { setCompareMode(false); setCompareSel([]); }
   function closeCompare() { setCompareData(null); exitCompare(); }
@@ -171,8 +182,12 @@ export default function ScreenersView({ showToast }) {
 
   // ── Research dossier (one stock), overlays list or workspace ──
   if (dossierTicker) {
+    const sameHeld = dossier?.sector && dossier.sector !== 'Unknown'
+      ? holdings.filter(h => h.sector === dossier.sector && h.ticker !== dossierTicker).map(h => h.ticker)
+      : [];
     return <DossierView ticker={dossierTicker} dossier={dossier} loading={dossierLoading} error={dossierError}
       status={dossier?.status ?? statuses[dossierTicker] ?? null} onStatus={(s) => setStatus(dossierTicker, s)}
+      sameHeld={sameHeld} onCompareHoldings={compareToHoldings}
       onBack={closeDossier} onWatch={() => watch(dossierTicker)} onAsk={() => deepDive(dossier)} />;
   }
 
@@ -207,7 +222,7 @@ export default function ScreenersView({ showToast }) {
         {compareMode && (
           <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(59,130,246,0.05)' }}>
             <span style={{ fontSize: 10, color: 'var(--muted)' }}>{compareSel.length ? `${compareSel.length} selected` : 'Tap 2 or 3 names to compare'}</span>
-            <button onClick={openCompare} disabled={compareSel.length < 2 || comparing} className="btn btn-blue" style={{ marginLeft: 'auto', fontSize: 9, padding: '5px 11px', opacity: compareSel.length < 2 || comparing ? 0.5 : 1 }}>{comparing ? '…' : 'COMPARE'}</button>
+            <button onClick={() => openCompare()} disabled={compareSel.length < 2 || comparing} className="btn btn-blue" style={{ marginLeft: 'auto', fontSize: 9, padding: '5px 11px', opacity: compareSel.length < 2 || comparing ? 0.5 : 1 }}>{comparing ? '…' : 'COMPARE'}</button>
             <button onClick={exitCompare} className="btn btn-muted" style={{ fontSize: 9, padding: '5px 9px' }}>Cancel</button>
           </div>
         )}
@@ -345,7 +360,7 @@ function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch,
 // book. The screener finds names; this is the room you research one in.
 const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
 
-function DossierView({ ticker, dossier, loading, error, status, onStatus, onBack, onWatch, onAsk }) {
+function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, onBack, onWatch, onAsk }) {
   const d = dossier;
   const f = d?.fundamentals || {};
   const hasFund = f && Object.values(f).some(v => v != null);
@@ -374,6 +389,12 @@ function DossierView({ ticker, dossier, loading, error, status, onStatus, onBack
             )}
             {d.forYourBook.betaNote && <p style={dsNote}>{d.forYourBook.betaNote}</p>}
             {d.forYourBook.suggestedSize && <p style={dsNote}>{d.forYourBook.suggestedSize}</p>}
+            {sameHeld?.length > 0 && (
+              <button onClick={onCompareHoldings}
+                style={{ marginTop: 10, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.4px', color: 'var(--blue)', background: 'rgba(59,130,246,0.1)', border: '0.5px solid rgba(59,130,246,0.35)', borderRadius: 5, padding: '7px 11px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                COMPARE TO YOUR {String(d.sector).toUpperCase()} HOLDINGS ({sameHeld.slice(0, 3).join(', ')})
+              </button>
+            )}
           </DSection>
 
           {d.description && (
@@ -515,17 +536,25 @@ function CompareView({ data, onBack, onAskAll }) {
   const ds = data?.dossiers || [];
   const best = data?.best || null;
   const cols = `1.1fr ${ds.map(() => '1fr').join(' ')}`;
-  const fitShort = { new: 'Diversifies', fits: 'Rounds out', concentrated: 'Doubles down', owned: 'Owned', unknown: '—' };
-  const rows = [
-    ['Price', d => d.price != null ? `$${d.price}` : '—'],
-    ['For your book', d => fitShort[d.forYourBook?.sectorFit] || '—'],
-    ['Sector', d => d.sector || '—'],
-    ['Market cap', d => fmtCap(d.fundamentals?.marketCap) || '—'],
-    ['P/E', d => d.fundamentals?.pe != null ? Number(d.fundamentals.pe).toFixed(1) : '—'],
-    ['Net margin', d => d.fundamentals?.netMargin != null ? `${d.fundamentals.netMargin}%` : '—'],
-    ['Beta', d => d.fundamentals?.beta != null ? Number(d.fundamentals.beta).toFixed(2) : '—'],
-    ['Analyst', d => d.analyst?.consensus || '—'],
+  const fitShort = { new: 'Diversifies', fits: 'Rounds out', concentrated: 'Doubles down', owned: 'You own it', unknown: null };
+  const fmtPct = v => v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
+  const pctColor = v => v == null ? 'var(--text)' : (v >= 0 ? 'var(--green)' : 'var(--red)');
+  // What actually matters, in order: the verdict for your book, momentum, sector,
+  // price, then fundamentals only when they exist. Rows where every name is blank
+  // are dropped, so the table is never a wall of dashes.
+  const allRows = [
+    { label: 'For your book', val: d => fitShort[d.forYourBook?.sectorFit] ?? null,
+      color: d => d.forYourBook?.sectorFit === 'concentrated' ? 'var(--red)' : (d.forYourBook?.sectorFit === 'new' || d.forYourBook?.sectorFit === 'fits') ? 'var(--green)' : 'var(--text)' },
+    { label: '1-mo', val: d => fmtPct(d.momentum1m), color: d => pctColor(d.momentum1m) },
+    { label: 'Today', val: d => fmtPct(d.changePercent), color: d => pctColor(d.changePercent) },
+    { label: 'Sector', val: d => (d.sector && d.sector !== 'Unknown') ? d.sector : null },
+    { label: 'Price', val: d => d.price != null ? `$${d.price}` : null },
+    { label: 'Market cap', val: d => fmtCap(d.fundamentals?.marketCap) },
+    { label: 'P/E', val: d => d.fundamentals?.pe != null ? Number(d.fundamentals.pe).toFixed(1) : null },
+    { label: 'Net margin', val: d => d.fundamentals?.netMargin != null ? `${d.fundamentals.netMargin}%` : null },
+    { label: 'Analyst', val: d => d.analyst?.consensus || null },
   ];
+  const rows = allRows.filter(r => ds.some(d => r.val(d) != null));
   return (
     <div style={{ paddingBottom: 44 }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -547,10 +576,13 @@ function CompareView({ data, onBack, onAskAll }) {
             <span key={d.ticker} style={{ fontSize: 12, fontWeight: 800, color: best?.bestTicker === d.ticker ? 'var(--blue)' : 'var(--text)', textAlign: 'right' }}>{d.ticker}</span>
           ))}
         </div>
-        {rows.map(([label, fn]) => (
-          <div key={label} style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 10, color: 'var(--faint)' }}>{label}</span>
-            {ds.map(d => <span key={d.ticker} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', textAlign: 'right' }}>{fn(d)}</span>)}
+        {rows.map(r => (
+          <div key={r.label} style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, color: 'var(--faint)' }}>{r.label}</span>
+            {ds.map(d => {
+              const v = r.val(d);
+              return <span key={d.ticker} style={{ fontSize: 11, fontWeight: 600, color: v == null ? 'var(--faint)' : (r.color ? r.color(d) : 'var(--text)'), textAlign: 'right' }}>{v ?? '—'}</span>;
+            })}
           </div>
         ))}
       </div>

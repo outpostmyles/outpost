@@ -7,6 +7,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sanitizeTicker } from '../middleware/validate.js';
 import { buildDossier, compareForBook } from '../services/researchDossier.js';
+import { getHistoricalPrice } from '../services/agentTools.js';
 
 const router = express.Router();
 
@@ -38,7 +39,14 @@ router.get('/compare', requireAuth, rateLimit(20), async (req, res) => {
     const dossiers = (await Promise.all(tickers.map(t => buildDossier(t, req.user.id).catch(() => null))))
       .filter(d => d && d.price != null);
     if (dossiers.length < 2) return res.status(404).json({ error: 'Could not pull enough data to compare right now' });
-    res.json({ dossiers, best: compareForBook(dossiers) });
+    // Recent momentum from Polygon (survives an FMP outage), so the compare always
+    // has a high-signal row even when fundamentals are catching up.
+    const from = new Date(Date.now() - 31 * 86400000).toISOString().split('T')[0];
+    const enriched = await Promise.all(dossiers.map(async (d) => {
+      try { const h = await getHistoricalPrice({ ticker: d.ticker, from_date: from }); return { ...d, momentum1m: (h && !h.error) ? h.change_percent : null }; }
+      catch { return { ...d, momentum1m: null }; }
+    }));
+    res.json({ dossiers: enriched, best: compareForBook(enriched) });
   } catch (e) {
     console.error(`[req:${req.requestId}] [Research] compare failed:`, e.message);
     res.status(500).json({ error: 'Compare failed, try again' });
