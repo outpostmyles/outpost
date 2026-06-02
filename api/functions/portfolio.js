@@ -10,6 +10,7 @@ import { getSnapshot, getPrevClose } from '../utils/polygon.js';
 import { todayStr } from '../utils/marketHours.js';
 import { getUserHistory } from '../services/historyAggregator.js';
 import { getFinancials, getAnalystRating } from '../services/fmp.js';
+import { resolveSector } from '../services/sectorMap.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock } from '../services/agentTools.js';
 import { config } from '../config.js';
@@ -1521,12 +1522,15 @@ router.get('/sectors', requireAuth, rateLimit(20), async (req, res) => {
     const priceMap = tickers.length ? getPrices(tickers) : {};
     const holdings = await Promise.all(pos.map(async (p) => {
       const live = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
-      let sector = 'Unknown', beta = null;
+      let liveSector = null, beta = null;
       try {
         const f = await getFinancials(p.ticker);
-        if (f?.sector) sector = f.sector;
+        if (f?.sector) liveSector = f.sector;
         if (Number.isFinite(f?.beta) && f.beta > 0) beta = f.beta;
       } catch {}
+      // FMP wins when it answers; otherwise the offline map keeps the card from
+      // collapsing to "Unknown 100%" when the provider is rate-limited or down.
+      const sector = resolveSector(p.ticker, liveSector);
       return { ticker: p.ticker, sector, value: live * (p.shares ?? 0), beta };
     }));
     res.json({ holdings });

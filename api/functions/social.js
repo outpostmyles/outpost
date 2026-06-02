@@ -9,7 +9,7 @@ import { getSnapshots } from '../utils/polygon.js';
 import { getTickerNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
 const router = express.Router();
-const WATCHLIST_LIMITS = { free: 5, starter: 20, pro: 50, elite: 100 };
+const WATCHLIST_LIMITS = { free: 5, starter: 20, pro: 50, elite: 100, unlimited: 1000 };
 const SCAN_INTERVAL = 30 * 60 * 1000; // 30 minutes
 
 // In-memory store for buzz data (resets on server restart)

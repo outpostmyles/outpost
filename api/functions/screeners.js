@@ -25,6 +25,7 @@ import { getFinancials } from '../services/fmp.js';
 import { applyScreenerVerdicts } from '../services/screenerVerdicts.js';
 import { markScreenerNewcomers } from '../services/screenerDiff.js';
 import { applyPriceBound } from '../services/screenerConstraints.js';
+import { staticSector } from '../services/sectorMap.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -93,7 +94,7 @@ export async function runScreenerQuery(query) {
       return {
         ticker,
         name: fin?.companyName ?? null,
-        sector: fin?.sector ?? null,
+        sector: fin?.sector ?? staticSector(ticker),
         industry: fin?.industry ?? null,
         price: +look.price,
         changePercent: look.changePercent ?? null,
