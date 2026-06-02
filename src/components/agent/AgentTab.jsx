@@ -202,25 +202,49 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   const [starters, setStarters] = useState(FALLBACK_STARTERS);
   const [freeTierUsage, setFreeTierUsage] = useState(null); // { used, limit }
   const [journalSave, setJournalSave] = useState(null); // { content, ticker, sourceRef } or null
+  const [convId, setConvId] = useState(null);            // current conversation
+  const [conversations, setConversations] = useState([]); // list for the switcher
+  const [showConvList, setShowConvList] = useState(false);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
-  const loadMessages = useCallback(async () => {
+  const makeConvId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `c_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
+  const refreshConversations = useCallback(async () => {
+    try { const d = await api.agent.conversations(); setConversations(d.conversations ?? []); return d.conversations ?? []; }
+    catch { return []; }
+  }, []);
+
+  const openConversation = useCallback(async (id) => {
+    setConvId(id);
+    setShowConvList(false);
+    setErr('');
     setLoading(true);
     try {
-      // Let the agent reach out first: posts a once-per-day opener built from the
-      // day's top signal (no-op if already posted today or nothing worth saying),
-      // so the fetched thread shows it at the bottom like the agent just spoke.
-      // The `waiting` flag drives the unread dot on the agent tab.
-      try { const op = await api.agent.opener(); onOpenerWaiting?.(!!op?.waiting); } catch {}
-      const d = await api.agent.messages();
+      const d = await api.agent.messages(id);
       setMessages(d.messages ?? []);
       if (d.starters?.length) setStarters(d.starters);
     } catch {}
     setLoading(false);
-  }, [onOpenerWaiting]);
+  }, []);
 
-  useEffect(() => { loadMessages(); }, [loadMessages]);
+  // On mount: let the agent reach out (posts the daily opener), then load the
+  // conversation list and open the most recent one (the opener's, if it just
+  // posted). Brand-new users get a fresh empty chat.
+  const init = useCallback(async () => {
+    setLoading(true);
+    try { const op = await api.agent.opener(); onOpenerWaiting?.(!!op?.waiting); } catch {}
+    const convs = await refreshConversations();
+    if (convs.length > 0) {
+      await openConversation(convs[0].id);
+    } else {
+      setConvId(makeConvId());
+      setMessages([]);
+      setLoading(false);
+    }
+  }, [onOpenerWaiting, refreshConversations, openConversation]);
+
+  useEffect(() => { init(); }, [init]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -234,7 +258,15 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
     function onPrefill(e) {
       const message = e?.detail?.message;
       if (typeof message === 'string' && message.trim()) {
+        // ASK from anywhere starts a FRESH conversation so it never clogs the
+        // thread the user was working in.
+        if (streamRef.current) { streamRef.current.abort(); streamRef.current = null; }
+        setConvId(makeConvId());
+        setMessages([]);
+        setErr('');
+        setShowConvList(false);
         setInput(message);
+        setTimeout(() => inputRef.current?.focus(), 0);
       }
     }
     window.addEventListener('agent_prefill', onPrefill);
@@ -269,7 +301,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
     let fullText = '';
     let hadError = false;
 
-    streamRef.current = api.agent.stream(content, {
+    streamRef.current = api.agent.stream(content, convId, {
       onText: (chunk) => {
         fullText += chunk;
         setMessages(m => m.map(msg =>
@@ -301,6 +333,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
         // Track free tier usage
         if (data.freeTier) setFreeTierUsage(data.freeTier);
         setMemoryKey(k => k + 1);
+        refreshConversations(); // a brand-new conversation's first message now shows in the list
         setSending(false);
         streamRef.current = null;
         inputRef.current?.focus();
@@ -329,18 +362,23 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
     setScanning(false);
   }
 
-  async function clearChat() {
-    try {
-      const activeStream = streamRef.current;
-      streamRef.current = null;
-      if (activeStream) activeStream.abort();
-      await api.agent.clear();
-      setMessages([]);
-      setCleared(true);
-      setSending(false);
-      await loadMessages(); // Reloads welcome + dynamic starters
-    } catch (e) {
-      console.error('[Agent] Clear failed:', e);
+  function newChat() {
+    if (streamRef.current) { streamRef.current.abort(); streamRef.current = null; }
+    setConvId(makeConvId());
+    setMessages([]);
+    setErr('');
+    setShowConvList(false);
+    setSending(false);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  async function deleteConversation(id, e) {
+    e?.stopPropagation();
+    try { await api.agent.deleteConversation(id); } catch {}
+    const convs = await refreshConversations();
+    if (id === convId) {
+      if (convs.length > 0) openConversation(convs[0].id);
+      else newChat();
     }
   }
 
@@ -360,11 +398,30 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
           <button onClick={findOpportunity} disabled={scanning} className="btn btn-amber" style={{ fontSize: 9 }}>
             {scanning ? '...' : 'SCAN'}
           </button>
-          {messages.length > 1 && (
-            <button onClick={clearChat} className="btn btn-muted" style={{ fontSize: 9 }}>CLEAR</button>
-          )}
+          <button onClick={newChat} className="btn btn-blue" style={{ fontSize: 9 }}>+ NEW</button>
+          <button onClick={() => setShowConvList(v => !v)} className="btn btn-muted" style={{ fontSize: 9 }}>
+            CHATS{conversations.length ? ` ${conversations.length}` : ''}
+          </button>
         </div>
       </div>
+
+      {/* Conversation switcher — toggled by CHATS. Tap to switch, ✕ to delete. */}
+      {showConvList && (
+        <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)', maxHeight: 280, overflowY: 'auto', flexShrink: 0 }}>
+          {conversations.length === 0 ? (
+            <p style={{ fontSize: 11, color: 'var(--faint)', padding: '12px 16px', fontStyle: 'italic', margin: 0 }}>No conversations yet. Start typing to begin one.</p>
+          ) : conversations.map(c => (
+            <div key={c.id} onClick={() => openConversation(c.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderTop: '1px solid var(--border)', cursor: 'pointer', background: c.id === convId ? 'rgba(59,130,246,0.08)' : 'transparent' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 11.5, color: 'var(--text)', fontWeight: c.id === convId ? 700 : 500, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</p>
+                <p style={{ fontSize: 9, color: 'var(--faint)', margin: '1px 0 0' }}>{c.count} message{c.count === 1 ? '' : 's'}</p>
+              </div>
+              <button onClick={(e) => deleteConversation(c.id, e)} className="btn btn-muted" style={{ fontSize: 10, padding: '3px 8px' }} title="Delete conversation">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Free tier banner — UPGRADE button suppressed until Stripe is wired (LAUNCH_PLAN Phase 0.1) */}
       {!isPaid && (

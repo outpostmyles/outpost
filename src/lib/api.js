@@ -160,10 +160,12 @@ export const api = {
     removeFromWatchlist: (id) => del(`/api/social/watchlist/${id}`),
   },
   agent: {
-    messages: () => get('/api/agent/messages'),
+    messages: (convId) => get(`/api/agent/messages${convId ? `?conversation_id=${encodeURIComponent(convId)}` : ''}`),
+    conversations: () => get('/api/agent/conversations'),
+    deleteConversation: (id) => del(`/api/agent/conversations/${encodeURIComponent(id)}`),
     opener: () => get('/api/agent/opener'),
     openerSeen: () => post('/api/agent/opener/seen'),
-    send: (content) => post('/api/agent/messages', { content }),
+    send: (content, convId) => post('/api/agent/messages', { content, conversation_id: convId }),
     clear: () => del('/api/agent/messages'),
     clearMemories: () => del('/api/agent/memories'),
     memories: () => get('/api/agent/memories'),
@@ -173,7 +175,7 @@ export const api = {
      * @param {string} content - The message to send
      * @param {object} callbacks - { onText, onStatus, onDone, onError }
      */
-    stream: (content, { onText, onStatus, onDone, onError }) => {
+    stream: (content, conversationId, { onText, onStatus, onDone, onError }) => {
       const token = getToken();
       const controller = new AbortController();
 
@@ -183,7 +185,7 @@ export const api = {
           'Authorization': token ? `Bearer ${token}` : '',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, conversation_id: conversationId }),
         signal: controller.signal,
       }).then(async (res) => {
         if (!res.ok) {
