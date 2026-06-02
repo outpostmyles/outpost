@@ -72,3 +72,20 @@ These came up repeatedly and are worth keeping:
 - **Reject non-finite numbers at boundaries** with `Number.isFinite` (or the coercing global `isFinite` when numeric strings must still pass). `Infinity` is not `NaN`, so an `isNaN` check lets it through to a DB column or the UI.
 - **Default object params don't catch `null`.** `function f({ a } = {})` still throws on `f(null)`. Destructure from `arg || {}` inside instead.
 - **Fail closed.** When verification or data is missing, surface nothing or a placeholder rather than presenting an unverified value as confident.
+
+## Live end-to-end check (not in `npm test`)
+
+`tests/e2e_live.mjs` is a manual, non-hermetic check that drives the running server against the real Supabase to prove what the hermetic suite cannot: that auth, own-data CRUD, and **cross-user isolation** hold end to end. Because RLS is off and isolation is enforced entirely in the Express layer (every user-scoped query filtered by `user_id`), this is the most important safety property in the app, and the only test that exercises it against the live database.
+
+It creates two throwaway accounts, has user B attempt to read, modify, and delete user A's position (all must fail), confirms A can manage their own, then deletes both accounts and all their data, even if a check fails. The accounts use clearly-fake `@example.com` emails.
+
+Run it before any deploy that touches auth, positions, or a user-scoped query. Signup is invite-only (the `beta_allowlist` gate), so open the gate on a throwaway server and point the test at it:
+
+```
+unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
+PORT=3099 BETA_ALLOWLIST_OPEN=true node api/server.js &   # throwaway server, real .env DB
+E2E_BASE=http://127.0.0.1:3099 node tests/e2e_live.mjs
+kill %1
+```
+
+Prefer a separate test Supabase project if you have one, so production data is never touched. Last verified: 9/9, isolation holds.
