@@ -28,7 +28,7 @@ const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL = 'claude-haiku-4-5-20251001';
 const MAX_SCREENERS = 8;
-const MAX_CANDIDATES = 12;
+const MAX_CANDIDATES = 18;
 
 // Small bounded-concurrency map so we don't fire a dozen Polygon/FMP calls at once.
 async function mapLimit(items, limit, fn) {
@@ -67,8 +67,8 @@ export async function runScreenerQuery(query) {
       max_tokens: 400,
       messages: [{ role: 'user', content:
         `A user wants to screen the US stock market for: "${query}".\n` +
-        `List up to ${MAX_CANDIDATES} real, currently US-listed common stocks that genuinely match. ` +
-        `Prefer liquid, well-known names unless the query explicitly asks for small or micro caps. ` +
+        `List up to ${MAX_CANDIDATES} real, currently US-listed common stocks that GENUINELY fit. Cast a wide net across the whole market, including less-obvious names, not just the first few that come to mind. ` +
+        `Every name must truly match the query's intent: if it names a sector or theme, the company must actually operate in that business; if it sets numeric limits like price or size, respect them. No loose or surface-level matches (do not list a cheap stock for "cheap semiconductors" unless it is actually a semiconductor company). ` +
         `Return ONLY JSON, no prose: {"tickers":["NVDA","AVGO"]}` }],
     });
     const parsed = parseJson(msg.content?.[0]?.text);
@@ -90,6 +90,9 @@ export async function runScreenerQuery(query) {
       try { fin = await getFinancials(ticker); } catch {}
       return {
         ticker,
+        name: fin?.companyName ?? null,
+        sector: fin?.sector ?? null,
+        industry: fin?.industry ?? null,
         price: +look.price,
         changePercent: look.changePercent ?? null,
         marketCap: fin?.marketCap ?? null,
@@ -105,7 +108,9 @@ export async function runScreenerQuery(query) {
     if (c.changePercent != null) bits.push(`${c.changePercent >= 0 ? '+' : ''}${Number(c.changePercent).toFixed(1)}% today`);
     if (c.marketCap) bits.push(`mcap ${fmtCap(c.marketCap)}`);
     if (c.pe) bits.push(`P/E ${c.pe}`);
-    return `${c.ticker}: ${bits.join(', ')}`;
+    const label = c.name ? `${c.ticker} (${c.name})` : c.ticker;
+    const cls = [c.sector, c.industry].filter(Boolean).join(' / ');
+    return `${label}${cls ? ` [${cls}]` : ''}: ${bits.join(', ')}`;
   }).join('\n');
 
   let parsed = null;
@@ -115,9 +120,12 @@ export async function runScreenerQuery(query) {
       max_tokens: 1000,
       messages: [{ role: 'user', content:
         `A user is screening for: "${query}".\n\nCandidates with live data:\n${lines}\n\n` +
-        `For EACH, decide if it genuinely fits the query given the live data. Be selective: drop anything that does not clearly fit. ` +
-        `For those that fit, write ONE tight sentence on why it fits the query right now. ` +
-        `Order best-fit first. Return ONLY JSON, no prose: {"results":[{"ticker":"NVDA","fits":true,"thesis":"..."}]}` }],
+        `Each line shows the real company name in parentheses and, in brackets, its real sector and industry from market data, alongside live numbers. Rely on those facts, do not guess a company's business from its ticker symbol or its price.\n` +
+        `Decide which GENUINELY fit, using two different bars:\n` +
+        `- Sector or theme: HARD bar. If the query names a business, sector, or theme, the bracketed sector and industry must actually match it. A company whose real industry is something else (for example a chemicals or lighting company for "semiconductors") is a mismatch, so drop it no matter how well its price fits.\n` +
+        `- Soft qualifiers like "low price", "cheap", "small", "beaten down", "high growth": REASONABLE bar. Read them sensibly against the live data and the sector. Do not drop a true sector match just because a soft word is fuzzy.\n` +
+        `Drop real mismatches and stretches, but keep the genuine fits, aiming for the 5 to 10 strongest rather than an empty list. For each kept name write ONE specific sentence on why it fits, naming its actual business plus the live data, never a generic line. Order strongest fit first. ` +
+        `Return ONLY JSON, no prose: {"results":[{"ticker":"NVDA","fits":true,"thesis":"..."}]}` }],
     });
     parsed = parseJson(msg.content?.[0]?.text);
   } catch (e) {

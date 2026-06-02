@@ -19,8 +19,9 @@ const tok = su.json?.token;
 console.log('signup:', su.status, tok ? 'ok' : 'FAILED');
 if (!tok) process.exit(1);
 
-console.log('creating screener "AI infrastructure stocks" (runs the live pipeline)...');
-const created = await api('POST', '/api/screeners', { token: tok, body: { query: 'AI infrastructure stocks' } });
+const Q = process.env.SCRN_Q || 'semiconductor stocks that are low in price';
+console.log(`creating screener "${Q}" (runs the live pipeline)...`);
+const created = await api('POST', '/api/screeners', { token: tok, body: { query: Q } });
 console.log('create:', created.status);
 const results = created.json?.screener?.results || [];
 console.log(`\nVETTED RESULTS (${results.length}):`);

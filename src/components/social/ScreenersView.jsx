@@ -64,6 +64,15 @@ export default function ScreenersView({ showToast }) {
     } }));
   }
 
+  async function watch(ticker) {
+    try {
+      await api.social.addToWatchlist({ ticker, companyName: ticker });
+      showToast?.(`${ticker} added to watchlist`, 'success');
+    } catch (e) {
+      showToast?.(e.error || 'Could not add to watchlist', 'error');
+    }
+  }
+
   const selected = selectedId ? (screeners || []).find(s => s.id === selectedId) : null;
 
   // ── Workspace (one screener) ──
@@ -96,7 +105,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} />)
         )}
       </div>
     );
@@ -165,7 +174,7 @@ export default function ScreenersView({ showToast }) {
   );
 }
 
-function ResultRow({ r, onAsk }) {
+function ResultRow({ r, onAsk, onWatch }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -180,9 +189,14 @@ function ResultRow({ r, onAsk }) {
         </div>
         {r.thesis && <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, margin: '3px 0 0' }}>{r.thesis}</p>}
       </div>
-      <button onClick={onAsk}
-        style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'rgba(59,130,246,0.12)', color: 'var(--blue)', border: '0.5px solid rgba(59,130,246,0.35)', whiteSpace: 'nowrap', flexShrink: 0 }}
-        title="Ask Outpost about this">ASK</button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+        <button onClick={onAsk}
+          style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'rgba(59,130,246,0.12)', color: 'var(--blue)', border: '0.5px solid rgba(59,130,246,0.35)', whiteSpace: 'nowrap' }}
+          title="Ask Outpost about this">ASK</button>
+        <button onClick={onWatch}
+          style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'var(--raised)', color: 'var(--muted)', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}
+          title="Add to watchlist">+ WATCH</button>
+      </div>
     </div>
   );
 }
