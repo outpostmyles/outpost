@@ -193,7 +193,19 @@ function FeedRow({ item, onClick }) {
         )}
       </div>
 
-      <span style={{ color: 'var(--faint)', fontSize: 13, alignSelf: 'center', paddingRight: 12 }}>›</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'center', paddingRight: 12 }}>
+        <button
+          onClick={ask}
+          title="Ask Outpost about this"
+          style={{
+            fontSize: 8, fontWeight: 700, letterSpacing: '0.5px',
+            padding: '5px 9px', borderRadius: 4, cursor: 'pointer',
+            background: 'rgba(59,130,246,0.12)', color: 'var(--blue)',
+            border: '0.5px solid rgba(59,130,246,0.35)', whiteSpace: 'nowrap',
+          }}
+        >ASK</button>
+        <span style={{ color: 'var(--faint)', fontSize: 13 }}>›</span>
+      </div>
     </div>
   );
 }
