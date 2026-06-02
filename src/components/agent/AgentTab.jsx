@@ -208,6 +208,10 @@ export default function AgentTab({ user, showToast }) {
   const loadMessages = useCallback(async () => {
     setLoading(true);
     try {
+      // Let the agent reach out first: posts a once-per-day opener built from the
+      // day's top signal (no-op if already posted today or nothing worth saying),
+      // so the fetched thread shows it at the bottom like the agent just spoke.
+      try { await api.agent.opener(); } catch {}
       const d = await api.agent.messages();
       setMessages(d.messages ?? []);
       if (d.starters?.length) setStarters(d.starters);
