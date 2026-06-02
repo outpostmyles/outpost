@@ -154,6 +154,37 @@ export function detectSignals({ positions = [], watchlist = [], adherenceSummary
 /**
  * Generate a fresh digest for one user. Uses live data + Claude Haiku.
  */
+// Gather the day's signals for a user WITHOUT generating prose. Shared by the
+// in-app proactive opener so it sees exactly the same signals the morning digest
+// would. (Mirrors the fetch in generateDigestForUser; kept separate so the
+// production digest path is left untouched.)
+export async function gatherSignalsForUser(userId) {
+  const [posRes, watchRes] = await Promise.allSettled([
+    supabase.from('positions').select('*').eq('user_id', userId),
+    supabase.from('watchlist').select('*').eq('user_id', userId),
+  ]);
+  const rawPositions = posRes.status === 'fulfilled' ? (posRes.value.data ?? []) : [];
+  const watchlistRows = watchRes.status === 'fulfilled' ? (watchRes.value.data ?? []) : [];
+  if (rawPositions.length === 0) return { signals: [], hasPositions: false };
+
+  const tickers = rawPositions.map(p => p.ticker);
+  const priceMap = getPrices(tickers);
+  const positions = rawPositions.map(p => {
+    const live = priceMap[p.ticker]?.price ?? 0;
+    return { ...p, currentPrice: live, currentValue: live * (p.shares ?? 0), todayChangePercent: priceMap[p.ticker]?.changePercent ?? 0 };
+  });
+  const watchlist = watchlistRows.map(w => ({ ...w, last_price: priceMap[w.ticker]?.price ?? w.last_price }));
+
+  let adherenceSummary = '';
+  try {
+    const { getAdherenceSummaryForAgent } = await import('./planAdherence.js');
+    const raw = await getAdherenceSummaryForAgent(userId);
+    if (raw) adherenceSummary = raw.replace(/^PLAN ADHERENCE PATTERNS[^:]*: /, '').replace(/\.$/, '');
+  } catch {}
+
+  return { signals: detectSignals({ positions, watchlist, adherenceSummary }), hasPositions: true };
+}
+
 export async function generateDigestForUser(userId) {
   // Pull positions + watchlist in parallel
   const [posRes, watchRes] = await Promise.allSettled([

@@ -161,6 +161,7 @@ export const api = {
   },
   agent: {
     messages: () => get('/api/agent/messages'),
+    opener: () => get('/api/agent/opener'),
     send: (content) => post('/api/agent/messages', { content }),
     clear: () => del('/api/agent/messages'),
     clearMemories: () => del('/api/agent/memories'),

@@ -9,6 +9,9 @@ import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
 import { assessRegister, moodDirective } from '../services/pulseContext.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
 import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
+import { buildAgentOpener } from '../services/agentOpener.js';
+import { gatherSignalsForUser } from '../services/proactiveDigest.js';
+import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { config } from '../config.js';
 import { trackAICall, trackToolCall, trackTruncation, trackError } from '../services/monitor.js';
 import { trackFeature, trackAgentUsage, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
@@ -551,6 +554,44 @@ router.get('/messages', requireAuth, rateLimit(30), async (req, res) => {
     res.json({ messages });
   } catch {
     res.status(500).json({ error: 'Failed to load messages' });
+  }
+});
+
+// Proactive opener — the agent reaches out first. At most once per day, when the
+// user opens the agent, post a short conversational opener built from the day's
+// top signal so the conversation (the one thing that pulls users in) starts
+// itself. The deterministic hook lives in agentOpener.js; the depth comes from
+// the real agent when the user replies to it.
+router.get('/opener', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const today = etTodayStr();
+    const { data: mem } = await supabase.from('agent_memory')
+      .select('id, content').eq('user_id', req.user.id).eq('memory_type', 'proactive_opener')
+      .maybeSingle();
+    let lastDate = null;
+    try { lastDate = mem?.content ? JSON.parse(mem.content).date : null; } catch {}
+    if (lastDate === today) return res.json({ posted: false });
+
+    const { signals, hasPositions } = await gatherSignalsForUser(req.user.id);
+    // Quiet day: don't manufacture a daily ping. Leave the date unstamped so a
+    // later open re-checks if something develops during the session.
+    if (!signals.length) return res.json({ posted: false });
+
+    const opener = buildAgentOpener(signals, { hasPositions });
+    const { error: insErr } = await supabase.from('agent_messages')
+      .insert({ user_id: req.user.id, role: 'assistant', content: opener, created_at: new Date().toISOString() });
+    if (insErr) return res.json({ posted: false });
+
+    const memContent = JSON.stringify({ date: today });
+    if (mem?.id) {
+      await supabase.from('agent_memory').update({ content: memContent }).eq('id', mem.id).eq('user_id', req.user.id);
+    } else {
+      await supabase.from('agent_memory').insert({ user_id: req.user.id, memory_type: 'proactive_opener', content: memContent, created_at: new Date().toISOString() });
+    }
+    res.json({ posted: true, opener });
+  } catch (e) {
+    console.error('[Agent] opener failed:', e.message);
+    res.json({ posted: false });
   }
 });
 
