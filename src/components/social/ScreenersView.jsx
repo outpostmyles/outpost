@@ -18,6 +18,15 @@ const EXAMPLES = [
   'high-growth cybersecurity',
 ];
 
+// Where you are on a name in your own research. Stays with the ticker everywhere.
+const STATUS_META = {
+  researching: { label: 'Researching', color: 'var(--blue)', bg: 'rgba(59,130,246,0.14)', border: 'rgba(59,130,246,0.4)' },
+  watching: { label: 'Watching', color: '#f59e0b', bg: 'rgba(245,158,11,0.14)', border: 'rgba(245,158,11,0.4)' },
+  passed: { label: 'Passed', color: 'var(--faint)', bg: 'var(--raised)', border: 'var(--border)' },
+  bought: { label: 'Bought', color: 'var(--green)', bg: 'rgba(34,197,94,0.14)', border: 'rgba(34,197,94,0.4)' },
+};
+const STATUS_ORDER = ['researching', 'watching', 'passed', 'bought'];
+
 export default function ScreenersView({ showToast }) {
   const [screeners, setScreeners] = useState(null); // null = loading
   const [query, setQuery] = useState('');
@@ -30,9 +39,11 @@ export default function ScreenersView({ showToast }) {
   const [dossier, setDossier] = useState(null);
   const [dossierLoading, setDossierLoading] = useState(false);
   const [dossierError, setDossierError] = useState(null);
+  const [statuses, setStatuses] = useState({}); // ticker -> research status
 
   useEffect(() => {
     api.screeners.list().then(d => setScreeners(d.screeners ?? [])).catch(() => setScreeners([]));
+    api.research.statuses().then(d => setStatuses(d.statuses || {})).catch(() => {});
   }, []);
 
   // Opening a screen that has new names clears the NEW flags (server + local), so
@@ -116,6 +127,14 @@ export default function ScreenersView({ showToast }) {
     setDossierLoading(false);
   }
   function closeDossier() { setDossierTicker(null); setDossier(null); setDossierError(null); }
+  async function setStatus(ticker, status) {
+    const next = statuses[ticker] === status ? null : status; // tapping the active one clears it
+    try {
+      await api.research.setStatus(ticker, next);
+      setStatuses(m => { const n = { ...m }; if (next) n[ticker] = next; else delete n[ticker]; return n; });
+      setDossier(d => (d && d.ticker === ticker) ? { ...d, status: next } : d);
+    } catch (e) { showToast?.(e.error || 'Could not save your call', 'error'); }
+  }
   function deepDive(d) {
     const t = d?.ticker || dossierTicker;
     const name = d?.name && d.name !== t ? ` (${d.name})` : '';
@@ -126,6 +145,7 @@ export default function ScreenersView({ showToast }) {
   // ── Research dossier (one stock), overlays list or workspace ──
   if (dossierTicker) {
     return <DossierView ticker={dossierTicker} dossier={dossier} loading={dossierLoading} error={dossierError}
+      status={dossier?.status ?? statuses[dossierTicker] ?? null} onStatus={(s) => setStatus(dossierTicker, s)}
       onBack={closeDossier} onWatch={() => watch(dossierTicker)} onAsk={() => deepDive(dossier)} />;
   }
 
@@ -161,7 +181,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
         )}
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
@@ -247,13 +267,15 @@ export default function ScreenersView({ showToast }) {
   );
 }
 
-function ResultRow({ r, onAsk, onWatch, onOpen }) {
+function ResultRow({ r, status, onAsk, onWatch, onOpen }) {
+  const sm = status ? STATUS_META[status] : null;
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)', opacity: status === 'passed' ? 0.55 : 1 }}>
       <div onClick={onOpen} title="Open research" style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {r.isNew && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: 'var(--green)', background: 'rgba(34,197,94,0.14)', border: '0.5px solid rgba(34,197,94,0.4)', borderRadius: 3, padding: '1px 4px' }}>NEW</span>}
           <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.ticker}</span>
+          {sm && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: sm.color, background: sm.bg, border: `0.5px solid ${sm.border}`, borderRadius: 3, padding: '1px 4px', textTransform: 'uppercase' }}>{sm.label}</span>}
           {r.price != null && <span style={{ fontSize: 10, color: 'var(--faint)' }}>${r.price}</span>}
           {r.changePercent != null && (
             <span style={{ fontSize: 10, fontWeight: 700, color: r.changePercent >= 0 ? 'var(--green)' : 'var(--red)' }}>
@@ -280,7 +302,7 @@ function ResultRow({ r, onAsk, onWatch, onOpen }) {
 // book. The screener finds names; this is the room you research one in.
 const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
 
-function DossierView({ ticker, dossier, loading, error, onBack, onWatch, onAsk }) {
+function DossierView({ ticker, dossier, loading, error, status, onStatus, onBack, onWatch, onAsk }) {
   const d = dossier;
   const f = d?.fundamentals || {};
   const hasFund = f && Object.values(f).some(v => v != null);
@@ -356,6 +378,24 @@ function DossierView({ ticker, dossier, loading, error, onBack, onWatch, onAsk }
               ))}
             </DSection>
           )}
+
+          <DSection title="YOUR CALL">
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {STATUS_ORDER.map(s => {
+                const m = STATUS_META[s];
+                const active = status === s;
+                return (
+                  <button key={s} onClick={() => onStatus(s)}
+                    style={{ fontSize: 10, fontWeight: 700, padding: '6px 11px', borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit',
+                      color: active ? m.color : 'var(--muted)', background: active ? m.bg : 'var(--raised)',
+                      border: `1px solid ${active ? m.border : 'var(--border)'}` }}>
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p style={dsNote}>Your call sticks to {(dossier?.ticker) || ticker} everywhere in Outpost. Tap the active one to clear it.</p>
+          </DSection>
 
           <div style={{ display: 'flex', gap: 8, padding: '14px 16px' }}>
             <button onClick={onAsk} className="btn btn-blue" style={{ flex: 1, fontSize: 11, padding: '10px' }}>DEEP DIVE WITH OUTPOST</button>

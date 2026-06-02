@@ -2,12 +2,17 @@
 // to the user's book. The screener finds names; this is where you research one.
 // Reusable beyond screeners (Discover, watchlist) since it is keyed only on ticker.
 import express from 'express';
+import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sanitizeTicker } from '../middleware/validate.js';
 import { buildDossier } from '../services/researchDossier.js';
 
 const router = express.Router();
+
+// Where you are on a name in your own research, persisted globally per ticker so
+// your verdict shows everywhere that name appears (screeners, dossier).
+const STATUSES = new Set(['researching', 'watching', 'passed', 'bought']);
 
 // GET /dossier/:ticker — the personalized research dossier for one name.
 router.get('/dossier/:ticker', requireAuth, rateLimit(40), async (req, res) => {
@@ -22,6 +27,40 @@ router.get('/dossier/:ticker', requireAuth, rateLimit(40), async (req, res) => {
   } catch (e) {
     console.error(`[req:${req.requestId}] [Research] dossier failed:`, e.message);
     res.status(500).json({ error: 'Research failed, try again' });
+  }
+});
+
+// GET /status — the user's research verdicts, as a { ticker: status } map.
+router.get('/status', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const { data } = await supabase.from('research_status').select('ticker, status').eq('user_id', req.user.id);
+    const statuses = {};
+    for (const r of data ?? []) statuses[r.ticker] = r.status;
+    res.json({ statuses });
+  } catch {
+    res.json({ statuses: {} }); // fail-safe: pre-migration or table hiccup -> no statuses, not a crash
+  }
+});
+
+// POST /status { ticker, status } — set or clear (null) your verdict on a name.
+router.post('/status', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const ticker = sanitizeTicker(req.body.ticker);
+    if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
+    const status = req.body.status || null;
+    if (status && !STATUSES.has(status)) return res.status(400).json({ error: 'Invalid status' });
+    const { error } = !status
+      ? await supabase.from('research_status').delete().eq('user_id', req.user.id).eq('ticker', ticker)
+      : await supabase.from('research_status')
+          .upsert({ user_id: req.user.id, ticker, status, updated_at: new Date().toISOString() }, { onConflict: 'user_id,ticker' });
+    if (error) {
+      console.error(`[req:${req.requestId}] [Research] status write failed:`, error.message);
+      return res.status(500).json({ error: 'Could not save your call' });
+    }
+    res.json({ ok: true, ticker, status });
+  } catch (e) {
+    console.error(`[req:${req.requestId}] [Research] status failed:`, e.message);
+    res.status(500).json({ error: 'Could not save your call' });
   }
 });
 

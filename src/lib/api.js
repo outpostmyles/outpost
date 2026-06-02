@@ -158,6 +158,8 @@ export const api = {
   },
   research: {
     dossier: (ticker) => get(`/api/research/dossier/${encodeURIComponent(ticker)}`),
+    statuses: () => get('/api/research/status'),
+    setStatus: (ticker, status) => post('/api/research/status', { ticker, status }),
   },
   social: {
     buzz: () => get('/api/social/buzz'),

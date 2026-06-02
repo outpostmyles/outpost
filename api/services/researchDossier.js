@@ -73,13 +73,14 @@ export async function buildDossier(ticker, userId) {
   const T = String(ticker || '').toUpperCase().trim();
   if (!T) return null;
 
-  const [lookupR, finR, ratiosR, analystR, newsR, posR] = await Promise.allSettled([
+  const [lookupR, finR, ratiosR, analystR, newsR, posR, statusR] = await Promise.allSettled([
     lookupStock({ ticker: T }),
     getFinancials(T),
     getRatios(T),
     getAnalystRating(T),
     getStockNews({ ticker: T, limit: 3 }),
     supabase.from('positions').select('ticker, shares, avg_cost').eq('user_id', userId),
+    supabase.from('research_status').select('status').eq('user_id', userId).eq('ticker', T).maybeSingle(),
   ]);
   const look = lookupR.status === 'fulfilled' ? lookupR.value : null;
   const fin = finR.status === 'fulfilled' ? finR.value : null;
@@ -87,6 +88,7 @@ export async function buildDossier(ticker, userId) {
   const analyst = analystR.status === 'fulfilled' ? analystR.value : null;
   const news = newsR.status === 'fulfilled' ? newsR.value : null;
   const positions = posR.status === 'fulfilled' ? (posR.value?.data ?? []) : [];
+  const status = statusR.status === 'fulfilled' ? (statusR.value?.data?.status ?? null) : null; // null pre-migration
 
   const price = (look && !look.error && look.price != null) ? +look.price : (fin?.price ?? null);
   const sector = resolveSector(T, fin?.sector);
@@ -110,6 +112,7 @@ export async function buildDossier(ticker, userId) {
     name: fin?.companyName || T,
     sector,
     industry: fin?.industry || null,
+    status,
     price,
     changePercent: (look && look.changePercent != null) ? look.changePercent : null,
     description: fin?.description || null,
