@@ -12,6 +12,7 @@ import { supabase } from '../db.js';
 import { getPrice } from './pricePool.js';
 import { recallHistory } from './historyAggregator.js';
 import { calculatePositionSize, calculateRiskReward } from './tradeMath.js';
+import { calcRSI, calcATR, calcSMA } from './indicators.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -781,57 +782,9 @@ async function getFundamentals({ ticker }) {
 // ============ NEW TOOLS ============
 
 /**
- * Calculate RSI (Relative Strength Index) from an array of closing prices.
+ * RSI, ATR, and SMA moved to ./indicators.js (imported above) so the indicator
+ * math is unit-testable in isolation.
  */
-function calcRSI(closes, period = 14) {
-  if (closes.length < period + 1) return null;
-  let avgGain = 0, avgLoss = 0;
-  for (let i = 1; i <= period; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) avgGain += diff;
-    else avgLoss -= diff;
-  }
-  avgGain /= period;
-  avgLoss /= period;
-  for (let i = period + 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + (diff > 0 ? diff : 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + (diff < 0 ? -diff : 0)) / period;
-  }
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return +(100 - 100 / (1 + rs)).toFixed(1);
-}
-
-/**
- * Calculate Average True Range from OHLC bars.
- */
-function calcATR(bars, period = 14) {
-  if (bars.length < period + 1) return null;
-  const trueRanges = [];
-  for (let i = 1; i < bars.length; i++) {
-    const high = bars[i].h;
-    const low = bars[i].l;
-    const prevClose = bars[i - 1].c;
-    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-    trueRanges.push(tr);
-  }
-  // Wilder smoothing (same as RSI)
-  let atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < trueRanges.length; i++) {
-    atr = (atr * (period - 1) + trueRanges[i]) / period;
-  }
-  return atr;
-}
-
-/**
- * Calculate simple moving average from closes.
- */
-function calcSMA(closes, period) {
-  if (closes.length < period) return null;
-  const slice = closes.slice(-period);
-  return +(slice.reduce((a, b) => a + b, 0) / period).toFixed(2);
-}
 
 async function getTechnicals({ ticker }) {
   if (!ticker) return { error: 'No ticker provided' };
