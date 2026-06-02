@@ -39,6 +39,7 @@ export default function ScreenersView({ showToast }) {
   const [dossier, setDossier] = useState(null);
   const [dossierLoading, setDossierLoading] = useState(false);
   const [dossierError, setDossierError] = useState(null);
+  const [dossierContext, setDossierContext] = useState(null); // why this name surfaced (screener thesis + query)
   const [statuses, setStatuses] = useState({}); // ticker -> research status
   const [holdings, setHoldings] = useState([]); // [{ ticker, sector, value }] for compare-to-holdings
   const [compareMode, setCompareMode] = useState(false);
@@ -122,8 +123,8 @@ export default function ScreenersView({ showToast }) {
     setRefining(false);
   }
 
-  async function openDossier(ticker) {
-    setDossierTicker(ticker); setDossier(null); setDossierError(null); setDossierLoading(true);
+  async function openDossier(ticker, context = null) {
+    setDossierTicker(ticker); setDossier(null); setDossierError(null); setDossierLoading(true); setDossierContext(context);
     try {
       const d = await api.research.dossier(ticker);
       setDossier(d.dossier || null);
@@ -132,7 +133,7 @@ export default function ScreenersView({ showToast }) {
     }
     setDossierLoading(false);
   }
-  function closeDossier() { setDossierTicker(null); setDossier(null); setDossierError(null); }
+  function closeDossier() { setDossierTicker(null); setDossier(null); setDossierError(null); setDossierContext(null); }
   async function setStatus(ticker, status) {
     const next = statuses[ticker] === status ? null : status; // tapping the active one clears it
     try {
@@ -187,7 +188,7 @@ export default function ScreenersView({ showToast }) {
       : [];
     return <DossierView ticker={dossierTicker} dossier={dossier} loading={dossierLoading} error={dossierError}
       status={dossier?.status ?? statuses[dossierTicker] ?? null} onStatus={(s) => setStatus(dossierTicker, s)}
-      sameHeld={sameHeld} onCompareHoldings={compareToHoldings}
+      sameHeld={sameHeld} onCompareHoldings={compareToHoldings} context={dossierContext}
       onBack={closeDossier} onWatch={() => watch(dossierTicker)} onAsk={() => deepDive(dossier)} />;
   }
 
@@ -234,7 +235,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} compareMode={compareMode} selected={compareSel.includes(r.ticker)} onToggle={() => toggleCompare(r.ticker)} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} compareMode={compareMode} selected={compareSel.includes(r.ticker)} onToggle={() => toggleCompare(r.ticker)} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker, { thesis: r.thesis, query: selected.query })} />)
         )}
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
@@ -360,7 +361,7 @@ function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch,
 // book. The screener finds names; this is the room you research one in.
 const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
 
-function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, onBack, onWatch, onAsk }) {
+function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, context, onBack, onWatch, onAsk }) {
   const d = dossier;
   const f = d?.fundamentals || {};
   const hasFund = f && Object.values(f).some(v => v != null);
@@ -401,6 +402,13 @@ function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHe
               </button>
             )}
           </DSection>
+
+          {context?.thesis && (
+            <DSection title="WHY IT CAME UP">
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.55, margin: 0 }}>{context.thesis}</p>
+              {context.query && <p style={dsNote}>From your "{context.query}" screen.</p>}
+            </DSection>
+          )}
 
           {d.description && (
             <DSection title="WHAT THEY DO">
