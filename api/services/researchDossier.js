@@ -65,6 +65,36 @@ export function forYourBook({ ticker, sector, beta, holdings = [] }) {
 }
 
 /**
+ * Given 2-3 dossiers, pick the one that fits the user's book best and say why.
+ * Deterministic: rewards a name that diversifies (a sector you do not hold) or
+ * rounds out a light area, penalizes one that doubles down on a heavy sector or
+ * that you already own, with a mild nudge toward reasonable valuation. Pure.
+ */
+export function compareForBook(dossiers) {
+  const list = (Array.isArray(dossiers) ? dossiers : []).filter(d => d && d.ticker);
+  if (list.length < 2) return null;
+  const fitScore = { new: 2, fits: 1, unknown: 0, owned: -1, concentrated: -2 };
+  const ranked = list.map(d => {
+    const fb = d.forYourBook || {};
+    let score = fitScore[fb.sectorFit] ?? 0;
+    const pe = d.fundamentals?.pe;
+    if (Number.isFinite(pe) && pe > 0 && pe < 25) score += 0.3; // small value nudge, breaks ties
+    return { ticker: d.ticker, sector: fb.sector, sectorFit: fb.sectorFit, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  let reason;
+  switch (best.sectorFit) {
+    case 'new': reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`; break;
+    case 'fits': reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`; break;
+    case 'concentrated': reason = `These all lean into areas you already hold. ${best.ticker} is the least redundant of them.`; break;
+    case 'owned': reason = `You already own ${best.ticker}, so of these it is the most familiar fit.`; break;
+    default: reason = `${best.ticker} looks like the cleanest fit for your book of these.`;
+  }
+  return { bestTicker: best.ticker, reason, ranked };
+}
+
+/**
  * Assemble the full dossier for a ticker, personalized to the user. Best-effort:
  * each external source is independent, so a single failure (or an FMP rate limit)
  * degrades that one field instead of breaking the whole view.

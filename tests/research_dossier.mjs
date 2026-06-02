@@ -2,7 +2,7 @@
 // This is the part no generic screener can copy: how a name fits THIS user's
 // sectors, concentration, and size. Pure, so it is tested without live data.
 import assert from 'node:assert/strict';
-import { forYourBook } from '../api/services/researchDossier.js';
+import { forYourBook, compareForBook } from '../api/services/researchDossier.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -68,6 +68,41 @@ test('handles an unknown sector honestly', () => {
 test('junk holdings do not crash', () => {
   const r = forYourBook({ ticker: 'AMD', sector: 'Technology', beta: 1.8, holdings: [null, {}, { value: 'x' }] });
   assert.equal(r.bookValue, 0);
+});
+
+const dossier = (ticker, sectorFit, sector, pe) => ({ ticker, fundamentals: { pe }, forYourBook: { sectorFit, sector } });
+
+test('compare picks the name that diversifies into a new sector', () => {
+  const r = compareForBook([
+    dossier('AMD', 'concentrated', 'Technology', 30),
+    dossier('XOM', 'new', 'Energy', 12),
+    dossier('GS', 'fits', 'Financial Services', 11),
+  ]);
+  assert.equal(r.bestTicker, 'XOM');
+  assert.match(r.reason, /diversify you into Energy/);
+});
+
+test('compare prefers rounding out over doubling down', () => {
+  const r = compareForBook([
+    dossier('AMD', 'concentrated', 'Technology', 30),
+    dossier('GS', 'fits', 'Financial Services', 18),
+  ]);
+  assert.equal(r.bestTicker, 'GS');
+});
+
+test('compare returns null with fewer than two names', () => {
+  assert.equal(compareForBook([dossier('AMD', 'new', 'Technology', 20)]), null);
+  assert.equal(compareForBook([]), null);
+  assert.equal(compareForBook(null), null);
+});
+
+test('compare ranks every candidate', () => {
+  const r = compareForBook([
+    dossier('AMD', 'concentrated', 'Technology', 30),
+    dossier('XOM', 'new', 'Energy', 12),
+  ]);
+  assert.equal(r.ranked.length, 2);
+  assert.equal(r.ranked[0].ticker, 'XOM');
 });
 
 let pass = 0, fail = 0;

@@ -158,6 +158,7 @@ export const api = {
   },
   research: {
     dossier: (ticker) => get(`/api/research/dossier/${encodeURIComponent(ticker)}`),
+    compare: (tickers) => get(`/api/research/compare?tickers=${encodeURIComponent(tickers.join(','))}`),
     statuses: () => get('/api/research/status'),
     setStatus: (ticker, status) => post('/api/research/status', { ticker, status }),
   },

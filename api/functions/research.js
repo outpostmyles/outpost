@@ -6,7 +6,7 @@ import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sanitizeTicker } from '../middleware/validate.js';
-import { buildDossier } from '../services/researchDossier.js';
+import { buildDossier, compareForBook } from '../services/researchDossier.js';
 
 const router = express.Router();
 
@@ -27,6 +27,21 @@ router.get('/dossier/:ticker', requireAuth, rateLimit(40), async (req, res) => {
   } catch (e) {
     console.error(`[req:${req.requestId}] [Research] dossier failed:`, e.message);
     res.status(500).json({ error: 'Research failed, try again' });
+  }
+});
+
+// GET /compare?tickers=A,B,C — 2 or 3 dossiers plus a personalized best-fit pick.
+router.get('/compare', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const tickers = String(req.query.tickers || '').split(',').map(t => sanitizeTicker(t)).filter(Boolean).slice(0, 3);
+    if (tickers.length < 2) return res.status(400).json({ error: 'Pick 2 or 3 names to compare' });
+    const dossiers = (await Promise.all(tickers.map(t => buildDossier(t, req.user.id).catch(() => null))))
+      .filter(d => d && d.price != null);
+    if (dossiers.length < 2) return res.status(404).json({ error: 'Could not pull enough data to compare right now' });
+    res.json({ dossiers, best: compareForBook(dossiers) });
+  } catch (e) {
+    console.error(`[req:${req.requestId}] [Research] compare failed:`, e.message);
+    res.status(500).json({ error: 'Compare failed, try again' });
   }
 });
 

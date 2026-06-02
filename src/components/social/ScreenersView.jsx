@@ -40,6 +40,10 @@ export default function ScreenersView({ showToast }) {
   const [dossierLoading, setDossierLoading] = useState(false);
   const [dossierError, setDossierError] = useState(null);
   const [statuses, setStatuses] = useState({}); // ticker -> research status
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSel, setCompareSel] = useState([]);
+  const [comparing, setComparing] = useState(false);
+  const [compareData, setCompareData] = useState(null);
 
   useEffect(() => {
     api.screeners.list().then(d => setScreeners(d.screeners ?? [])).catch(() => setScreeners([]));
@@ -135,11 +139,34 @@ export default function ScreenersView({ showToast }) {
       setDossier(d => (d && d.ticker === ticker) ? { ...d, status: next } : d);
     } catch (e) { showToast?.(e.error || 'Could not save your call', 'error'); }
   }
+
+  function toggleCompare(ticker) {
+    setCompareSel(sel => sel.includes(ticker) ? sel.filter(t => t !== ticker) : (sel.length >= 3 ? sel : [...sel, ticker]));
+  }
+  async function openCompare() {
+    if (compareSel.length < 2) return;
+    setComparing(true);
+    try { const d = await api.research.compare(compareSel); setCompareData(d); }
+    catch (e) { showToast?.(e.error || 'Could not compare those', 'error'); }
+    setComparing(false);
+  }
+  function exitCompare() { setCompareMode(false); setCompareSel([]); }
+  function closeCompare() { setCompareData(null); exitCompare(); }
+  function deepDiveCompare() {
+    const ts = (compareData?.dossiers || []).map(d => d.ticker);
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message:
+      `Compare ${ts.join(', ')} for my portfolio. Which fits best given my concentration and goals, and what are the tradeoffs between them? Be honest about the risks.` } }));
+  }
   function deepDive(d) {
     const t = d?.ticker || dossierTicker;
     const name = d?.name && d.name !== t ? ` (${d.name})` : '';
     window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message:
       `Give me a full research read on ${t}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.` } }));
+  }
+
+  // ── Compare (2-3 stocks, side by side), overlays everything ──
+  if (compareData) {
+    return <CompareView data={compareData} onBack={closeCompare} onAskAll={deepDiveCompare} />;
   }
 
   // ── Research dossier (one stock), overlays list or workspace ──
@@ -169,10 +196,21 @@ export default function ScreenersView({ showToast }) {
                 {results.length} match{results.length === 1 ? '' : 'es'}{selected.last_run_at ? ` · scanned ${timeAgo(selected.last_run_at)}` : ''}
               </p>
             </div>
+            {results.length >= 2 && (
+              <button onClick={() => setCompareMode(m => !m)} className="btn btn-muted" style={{ fontSize: 9, padding: '5px 10px', ...(compareMode ? { color: 'var(--blue)', borderColor: 'var(--blue)' } : {}) }}>COMPARE</button>
+            )}
             <button onClick={() => run(selected.id)} disabled={running} className="btn btn-muted" style={{ fontSize: 9, padding: '5px 10px' }}>{running ? '…' : 'RESCAN'}</button>
             <button onClick={() => remove(selected.id)} className="btn btn-muted" style={{ fontSize: 10, padding: '5px 9px' }} title="Delete screener">✕</button>
           </div>
         </div>
+
+        {compareMode && (
+          <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(59,130,246,0.05)' }}>
+            <span style={{ fontSize: 10, color: 'var(--muted)' }}>{compareSel.length ? `${compareSel.length} selected` : 'Tap 2 or 3 names to compare'}</span>
+            <button onClick={openCompare} disabled={compareSel.length < 2 || comparing} className="btn btn-blue" style={{ marginLeft: 'auto', fontSize: 9, padding: '5px 11px', opacity: compareSel.length < 2 || comparing ? 0.5 : 1 }}>{comparing ? '…' : 'COMPARE'}</button>
+            <button onClick={exitCompare} className="btn btn-muted" style={{ fontSize: 9, padding: '5px 9px' }}>Cancel</button>
+          </div>
+        )}
 
         {(running || refining) ? (
           <p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', padding: '14px 16px' }}>Scanning and vetting…</p>
@@ -181,7 +219,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} compareMode={compareMode} selected={compareSel.includes(r.ticker)} onToggle={() => toggleCompare(r.ticker)} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker)} />)
         )}
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
@@ -267,11 +305,14 @@ export default function ScreenersView({ showToast }) {
   );
 }
 
-function ResultRow({ r, status, onAsk, onWatch, onOpen }) {
+function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch, onOpen }) {
   const sm = status ? STATUS_META[status] : null;
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)', opacity: status === 'passed' ? 0.55 : 1 }}>
-      <div onClick={onOpen} title="Open research" style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)', opacity: status === 'passed' && !compareMode ? 0.55 : 1, background: compareMode && selected ? 'rgba(59,130,246,0.08)' : 'transparent' }}>
+      {compareMode && (
+        <div onClick={onToggle} style={{ cursor: 'pointer', width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${selected ? 'var(--blue)' : 'var(--border)'}`, background: selected ? 'var(--blue)' : 'transparent', flexShrink: 0, marginTop: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10 }}>{selected ? '✓' : ''}</div>
+      )}
+      <div onClick={compareMode ? onToggle : onOpen} title={compareMode ? 'Select to compare' : 'Open research'} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {r.isNew && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: 'var(--green)', background: 'rgba(34,197,94,0.14)', border: '0.5px solid rgba(34,197,94,0.4)', borderRadius: 3, padding: '1px 4px' }}>NEW</span>}
           <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.ticker}</span>
@@ -282,18 +323,20 @@ function ResultRow({ r, status, onAsk, onWatch, onOpen }) {
               {r.changePercent >= 0 ? '+' : ''}{Number(r.changePercent).toFixed(1)}%
             </span>
           )}
-          <span style={{ fontSize: 9, color: 'var(--blue)', marginLeft: 'auto' }}>RESEARCH ›</span>
+          {!compareMode && <span style={{ fontSize: 9, color: 'var(--blue)', marginLeft: 'auto' }}>RESEARCH ›</span>}
         </div>
         {r.thesis && <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, margin: '3px 0 0' }}>{r.thesis}</p>}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
-        <button onClick={onAsk}
-          style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'rgba(59,130,246,0.12)', color: 'var(--blue)', border: '0.5px solid rgba(59,130,246,0.35)', whiteSpace: 'nowrap' }}
-          title="Ask Outpost about this">ASK</button>
-        <button onClick={onWatch}
-          style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'var(--raised)', color: 'var(--muted)', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}
-          title="Add to watchlist">+ WATCH</button>
-      </div>
+      {!compareMode && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+          <button onClick={onAsk}
+            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'rgba(59,130,246,0.12)', color: 'var(--blue)', border: '0.5px solid rgba(59,130,246,0.35)', whiteSpace: 'nowrap' }}
+            title="Ask Outpost about this">ASK</button>
+          <button onClick={onWatch}
+            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', background: 'var(--raised)', color: 'var(--muted)', border: '1px solid var(--border)', whiteSpace: 'nowrap' }}
+            title="Add to watchlist">+ WATCH</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -460,6 +503,58 @@ function fmtCap(n) {
   if (n >= 1e9) return `$${(n / 1e9).toFixed(0)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
   return `$${n}`;
+}
+
+// Compare 2-3 names side by side, with the best fit for YOUR book called out.
+function CompareView({ data, onBack, onAskAll }) {
+  const ds = data?.dossiers || [];
+  const best = data?.best || null;
+  const cols = `1.1fr ${ds.map(() => '1fr').join(' ')}`;
+  const fitShort = { new: 'Diversifies', fits: 'Rounds out', concentrated: 'Doubles down', owned: 'Owned', unknown: '—' };
+  const rows = [
+    ['Price', d => d.price != null ? `$${d.price}` : '—'],
+    ['For your book', d => fitShort[d.forYourBook?.sectorFit] || '—'],
+    ['Sector', d => d.sector || '—'],
+    ['Market cap', d => fmtCap(d.fundamentals?.marketCap) || '—'],
+    ['P/E', d => d.fundamentals?.pe != null ? Number(d.fundamentals.pe).toFixed(1) : '—'],
+    ['Net margin', d => d.fundamentals?.netMargin != null ? `${d.fundamentals.netMargin}%` : '—'],
+    ['Beta', d => d.fundamentals?.beta != null ? Number(d.fundamentals.beta).toFixed(2) : '—'],
+    ['Analyst', d => d.analyst?.consensus || '—'],
+  ];
+  return (
+    <div style={{ paddingBottom: 44 }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 10, fontFamily: 'inherit', letterSpacing: '0.4px', padding: 0, marginBottom: 9 }}>← Back</button>
+        <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', margin: 0 }}>Compare</p>
+      </div>
+
+      {best && (
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(59,130,246,0.05)' }}>
+          <p style={{ fontSize: 9, fontWeight: 800, letterSpacing: '1px', color: 'var(--blue)', margin: '0 0 5px' }}>BEST FIT FOR YOUR BOOK</p>
+          <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{best.reason}</p>
+        </div>
+      )}
+
+      <div style={{ padding: '6px 16px 0' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+          <span />
+          {ds.map(d => (
+            <span key={d.ticker} style={{ fontSize: 12, fontWeight: 800, color: best?.bestTicker === d.ticker ? 'var(--blue)' : 'var(--text)', textAlign: 'right' }}>{d.ticker}</span>
+          ))}
+        </div>
+        {rows.map(([label, fn]) => (
+          <div key={label} style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, color: 'var(--faint)' }}>{label}</span>
+            {ds.map(d => <span key={d.ticker} style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', textAlign: 'right' }}>{fn(d)}</span>)}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ padding: '14px 16px' }}>
+        <button onClick={onAskAll} className="btn btn-blue" style={{ width: '100%', fontSize: 11, padding: '10px' }}>TALK IT THROUGH WITH OUTPOST</button>
+      </div>
+    </div>
+  );
 }
 
 function timeAgo(iso) {
