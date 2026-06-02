@@ -99,7 +99,10 @@ function invalidateTickerSet() {
 function sanitizeSnapshot(ticker, snapshot) {
   if (!snapshot || snapshot.price == null) return snapshot;
   const cp = snapshot.changePercent;
-  if (cp != null && (cp > CHANGE_PCT_MAX || cp < CHANGE_PCT_MIN)) {
+  // Null out anything out of bounds OR non-finite. A NaN/Infinity changePercent
+  // (e.g. a divide-by-zero on a bad prevClose) is as much a data error as a
+  // +7,825% reading, and would otherwise render as "NaN%" downstream.
+  if (cp != null && (!Number.isFinite(cp) || cp > CHANGE_PCT_MAX || cp < CHANGE_PCT_MIN)) {
     console.warn(`[PricePool] Rejecting suspicious changePercent for ${ticker}: ${cp.toFixed(2)}% (price $${snapshot.price}, prevClose $${snapshot.prevClose}). Nulling out.`);
     return { ...snapshot, changePercent: null };
   }
