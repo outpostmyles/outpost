@@ -1,4 +1,5 @@
 import './config.js';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import { globalRateLimit } from './middleware/rateLimit.js';
@@ -173,9 +174,20 @@ app.get('/api/admin/insights', async (req, res) => {
   });
 });
 
+// Unknown API route — return a JSON 404 so clients get a consistent error shape
+// instead of Express's default HTML "Cannot GET" page.
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found', path: req.path, requestId: req.requestId ?? null });
+});
+
 // ============ ERROR HANDLING ============
 
 app.use((err, req, res, next) => {
+  // A malformed JSON body (thrown by express.json) is a client error, not a
+  // server fault, so answer 400 instead of a generic 500.
+  if (err?.type === 'entity.parse.failed' || (err instanceof SyntaxError && 'body' in err)) {
+    return res.status(400).json({ error: 'Invalid JSON body', requestId: req.requestId ?? 'no-rid' });
+  }
   trackError(req.path, err, 'critical');
   // Include the request ID so an incident report ("the app showed me an
   // Internal server error around 3pm with code abc1234") maps directly to
@@ -256,7 +268,14 @@ async function boot() {
   });
 }
 
-boot().catch(err => {
-  console.error('Failed to boot:', err);
-  process.exit(1);
-});
+// Boot the HTTP server + background jobs only when run directly
+// (node api/server.js). When imported, e.g. by an integration test, export
+// `app` without these side effects so it can be exercised on an ephemeral port.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  boot().catch(err => {
+    console.error('Failed to boot:', err);
+    process.exit(1);
+  });
+}
+
+export { app };
