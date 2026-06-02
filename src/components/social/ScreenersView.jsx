@@ -374,6 +374,11 @@ function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHe
           {d?.changePercent != null && <span style={{ fontSize: 12, fontWeight: 700, color: d.changePercent >= 0 ? 'var(--green)' : 'var(--red)' }}>{d.changePercent >= 0 ? '+' : ''}{Number(d.changePercent).toFixed(2)}%</span>}
         </div>
         {d && <p style={{ fontSize: 10.5, color: 'var(--muted)', margin: '3px 0 0' }}>{[d.name !== d.ticker ? d.name : null, d.sector, d.industry].filter(Boolean).join(' · ')}</p>}
+        {d?.momentum1m != null && (
+          <p style={{ fontSize: 10.5, fontWeight: 700, margin: '4px 0 0', color: d.momentum1m >= 0 ? 'var(--green)' : 'var(--red)' }}>
+            {d.momentum1m >= 0 ? '+' : ''}{Number(d.momentum1m).toFixed(1)}% over the past month
+          </p>
+        )}
       </div>
 
       {loading ? (

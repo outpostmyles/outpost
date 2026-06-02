@@ -7,7 +7,7 @@
 // buildDossier assembles live data (best-effort, one slow source never blocks the
 // rest). forYourBook is the pure, personalized read and is unit-tested on its own.
 import { supabase } from '../db.js';
-import { lookupStock, getStockNews } from './agentTools.js';
+import { lookupStock, getStockNews, getHistoricalPrice } from './agentTools.js';
 import { getAnalystRating } from './fmp.js';
 import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
 import { getPrices } from './pricePool.js';
@@ -111,7 +111,8 @@ export async function buildDossier(ticker, userId) {
   const T = String(ticker || '').toUpperCase().trim();
   if (!T) return null;
 
-  const [lookupR, finR, ratiosR, analystR, newsR, posR, statusR] = await Promise.allSettled([
+  const monthAgo = new Date(Date.now() - 31 * 86400000).toISOString().split('T')[0];
+  const [lookupR, finR, ratiosR, analystR, newsR, posR, statusR, momoR] = await Promise.allSettled([
     lookupStock({ ticker: T }),
     getFinancialsResilient(T),
     getRatiosResilient(T),
@@ -119,6 +120,7 @@ export async function buildDossier(ticker, userId) {
     getStockNews({ ticker: T, limit: 3 }),
     supabase.from('positions').select('ticker, shares, avg_cost').eq('user_id', userId),
     supabase.from('research_status').select('status').eq('user_id', userId).eq('ticker', T).maybeSingle(),
+    getHistoricalPrice({ ticker: T, from_date: monthAgo }), // 1-month momentum (Polygon, survives FMP)
   ]);
   const look = lookupR.status === 'fulfilled' ? lookupR.value : null;
   const fin = finR.status === 'fulfilled' ? finR.value : null;
@@ -127,6 +129,7 @@ export async function buildDossier(ticker, userId) {
   const news = newsR.status === 'fulfilled' ? newsR.value : null;
   const positions = posR.status === 'fulfilled' ? (posR.value?.data ?? []) : [];
   const status = statusR.status === 'fulfilled' ? (statusR.value?.data?.status ?? null) : null; // null pre-migration
+  const momentum1m = (momoR.status === 'fulfilled' && momoR.value && !momoR.value.error) ? momoR.value.change_percent : null;
 
   const price = (look && !look.error && look.price != null) ? +look.price : (fin?.price ?? null);
   const sector = resolveSector(T, fin?.sector);
@@ -153,6 +156,7 @@ export async function buildDossier(ticker, userId) {
     status,
     price,
     changePercent: (look && look.changePercent != null) ? look.changePercent : null,
+    momentum1m,
     description: fin?.description || null,
     fundamentals: {
       marketCap: fin?.marketCap ?? null,
