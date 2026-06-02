@@ -568,30 +568,56 @@ router.get('/opener', requireAuth, rateLimit(30), async (req, res) => {
     const { data: mem } = await supabase.from('agent_memory')
       .select('id, content').eq('user_id', req.user.id).eq('memory_type', 'proactive_opener')
       .maybeSingle();
-    let lastDate = null;
-    try { lastDate = mem?.content ? JSON.parse(mem.content).date : null; } catch {}
-    if (lastDate === today) return res.json({ posted: false });
+    let parsed = {};
+    try { parsed = mem?.content ? (JSON.parse(mem.content) || {}) : {}; } catch {}
+
+    // Already handled today: don't post again, but report whether the opener is
+    // still unseen (drives the unread dot on the agent tab).
+    if (parsed.date === today) return res.json({ posted: false, waiting: !parsed.seen });
 
     const { signals, hasPositions } = await gatherSignalsForUser(req.user.id);
     // Quiet day: don't manufacture a daily ping. Leave the date unstamped so a
     // later open re-checks if something develops during the session.
-    if (!signals.length) return res.json({ posted: false });
+    if (!signals.length) return res.json({ posted: false, waiting: false });
 
     const opener = buildAgentOpener(signals, { hasPositions });
     const { error: insErr } = await supabase.from('agent_messages')
       .insert({ user_id: req.user.id, role: 'assistant', content: opener, created_at: new Date().toISOString() });
-    if (insErr) return res.json({ posted: false });
+    if (insErr) return res.json({ posted: false, waiting: false });
 
-    const memContent = JSON.stringify({ date: today });
+    const memContent = JSON.stringify({ date: today, seen: false });
     if (mem?.id) {
       await supabase.from('agent_memory').update({ content: memContent }).eq('id', mem.id).eq('user_id', req.user.id);
     } else {
       await supabase.from('agent_memory').insert({ user_id: req.user.id, memory_type: 'proactive_opener', content: memContent, created_at: new Date().toISOString() });
     }
-    res.json({ posted: true, opener });
+    res.json({ posted: true, waiting: true, opener });
   } catch (e) {
     console.error('[Agent] opener failed:', e.message);
-    res.json({ posted: false });
+    res.json({ posted: false, waiting: false });
+  }
+});
+
+// Mark today's opener as seen — called when the user actually opens the agent,
+// so the unread dot clears and doesn't reappear on the next load.
+router.post('/opener/seen', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const today = etTodayStr();
+    const { data: mem } = await supabase.from('agent_memory')
+      .select('id, content').eq('user_id', req.user.id).eq('memory_type', 'proactive_opener')
+      .maybeSingle();
+    if (mem?.id) {
+      let parsed = {};
+      try { parsed = JSON.parse(mem.content) || {}; } catch {}
+      if (parsed.date === today && !parsed.seen) {
+        await supabase.from('agent_memory')
+          .update({ content: JSON.stringify({ date: today, seen: true }) })
+          .eq('id', mem.id).eq('user_id', req.user.id);
+      }
+    }
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: true });
   }
 });
 

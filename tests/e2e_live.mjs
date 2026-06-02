@@ -79,11 +79,17 @@ async function main() {
   const aVal = await api('GET', '/api/portfolio/value', { token: aTok });
   check('A sees their own position', (aVal.json?.positions ?? []).some(p => p.id === posId));
 
-  // 3b. Proactive opener: A holds one position (100% of the book), so concentration
-  // is a signal and the agent should reach out with a real, signal-driven opener.
+  // 3b. Proactive opener lifecycle: A holds one position (100% of the book), so
+  // concentration is a signal. The agent should reach out, flag it unseen (the
+  // dot), not double-post on a second check, and clear once marked seen.
   const opener = await api('GET', '/api/agent/opener', { token: aTok });
-  check('agent posts a proactive opener from a real signal', opener.json?.posted === true && typeof opener.json?.opener === 'string' && opener.json.opener.length > 0);
+  check('agent posts a proactive opener from a real signal', opener.json?.posted === true && opener.json?.waiting === true && typeof opener.json?.opener === 'string' && opener.json.opener.length > 0);
   if (opener.json?.opener) console.log(`      opener: "${opener.json.opener}"`);
+  const again = await api('GET', '/api/agent/opener', { token: aTok });
+  check('opener is not double-posted and stays unseen (dot on)', again.json?.posted === false && again.json?.waiting === true);
+  await api('POST', '/api/agent/opener/seen', { token: aTok });
+  const seen = await api('GET', '/api/agent/opener', { token: aTok });
+  check('marking it seen clears the dot', seen.json?.waiting === false);
 
   // 4. ISOLATION (read): B must not see A's position
   const bVal = await api('GET', '/api/portfolio/value', { token: bTok });

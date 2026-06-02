@@ -189,7 +189,7 @@ function MemoryViewer({ showToast, refreshKey }) {
 let msgIdCounter = 0;
 function nextMsgId() { return `local_${Date.now()}_${++msgIdCounter}`; }
 
-export default function AgentTab({ user, showToast }) {
+export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -211,13 +211,14 @@ export default function AgentTab({ user, showToast }) {
       // Let the agent reach out first: posts a once-per-day opener built from the
       // day's top signal (no-op if already posted today or nothing worth saying),
       // so the fetched thread shows it at the bottom like the agent just spoke.
-      try { await api.agent.opener(); } catch {}
+      // The `waiting` flag drives the unread dot on the agent tab.
+      try { const op = await api.agent.opener(); onOpenerWaiting?.(!!op?.waiting); } catch {}
       const d = await api.agent.messages();
       setMessages(d.messages ?? []);
       if (d.starters?.length) setStarters(d.starters);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [onOpenerWaiting]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
 

@@ -48,6 +48,10 @@ export default function AppShell() {
   // Tracks whether any position has hit its target or broken its stop. Drives a
   // red dot on the Portfolio tab so the user notices urgency from any screen.
   const [hasUrgentAlert, setHasUrgentAlert] = useState(false);
+  // Blue dot on the Agent tab when Outpost has posted a proactive opener the user
+  // hasn't seen yet. This is what makes the agent reach out and actually pull
+  // them in, rather than waiting to be opened.
+  const [agentWaiting, setAgentWaiting] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => { setMarketStatus(getMarketStatus()); setTime(new Date()); }, 30000);
@@ -104,6 +108,15 @@ export default function AppShell() {
     window.addEventListener('auth_expired', handleExpired);
     return () => window.removeEventListener('auth_expired', handleExpired);
   }, []);
+
+  // When the user opens the agent, clear the unread dot and mark today's opener
+  // seen so it doesn't nag again on the next load.
+  useEffect(() => {
+    if (activeTab === 'agent') {
+      setAgentWaiting(false);
+      api.agent.openerSeen().catch(() => {});
+    }
+  }, [activeTab]);
 
   function switchTab(id) { setActiveTab(id); }
 
@@ -180,7 +193,7 @@ export default function AppShell() {
             own boundary: a crash here can't take down the rest of the app. */}
         <ErrorBoundary variant="inline">
           <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <AgentTab user={user} showToast={showToast} />
+            <AgentTab user={user} showToast={showToast} onOpenerWaiting={setAgentWaiting} />
           </div>
         </ErrorBoundary>
         {/* The other tabs share one boundary, keyed by tab so switching away and
@@ -205,16 +218,20 @@ export default function AppShell() {
             // is past its target or stop. Pulses to draw the eye without being
             // obnoxious. Hides itself on the active tab — the user is already
             // there. On any other tab it's a quiet "you should look" cue.
-            const showDot = id === 'portfolio' && hasUrgentAlert && !active;
+            // Portfolio shows a red urgency dot; the agent shows a blue "Outpost
+            // has something for you" dot when an unseen opener is waiting.
+            const dotColor = (id === 'portfolio' && hasUrgentAlert && !active) ? 'var(--red)'
+              : (id === 'agent' && agentWaiting && !active) ? 'var(--blue)'
+              : null;
             return (
               <button key={id} onClick={() => switchTab(id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, background: 'none', border: 'none', cursor: 'pointer', padding: '3px 0', color: active ? 'var(--blue)' : 'var(--faint)', transition: 'color 0.15s', position: 'relative' }}>
                 <div style={{ position: 'relative', display: 'inline-block' }}>
                   <Icon active={active} />
-                  {showDot && (
+                  {dotColor && (
                     <span style={{
                       position: 'absolute', top: -2, right: -4,
                       width: 7, height: 7, borderRadius: '50%',
-                      background: 'var(--red)',
+                      background: dotColor,
                       boxShadow: '0 0 0 2px var(--surface)',
                       animation: 'pulse 1.6s ease-in-out infinite',
                     }} />
