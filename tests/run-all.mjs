@@ -23,6 +23,7 @@ const SUITE = [
   'today_composite', 'injection_wrap', 'notices', 'history_recall', 'agent_opener',
   'screener_verdicts', 'screener_diff', 'screener_constraints', 'sector_map', 'research_dossier',
   'portfolio_actions', 'thesis_watch', 'read_continuity', 'decision_memory', 'journal_prompts',
+  'composure',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via

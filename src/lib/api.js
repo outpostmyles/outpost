@@ -93,6 +93,8 @@ export const api = {
     // of trading. Server owns the history (like the agent): pass a conversationId to
     // continue, omit it to start fresh. Plus list / open / delete past conversations.
     coachChat: (content, conversationId) => post('/api/ai/coach-chat', { content, conversation_id: conversationId }),
+    // "Who you're becoming": the coach's honest read of your growth as an investor.
+    becoming: () => get('/api/ai/becoming'),
     coachConversations: () => get('/api/ai/coach-conversations'),
     coachConversation: (id) => get(`/api/ai/coach-conversations/${encodeURIComponent(id)}`),
     deleteCoachConversation: (id) => del(`/api/ai/coach-conversations/${encodeURIComponent(id)}`),

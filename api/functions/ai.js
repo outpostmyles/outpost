@@ -1,6 +1,7 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
+import { buildGrowthArc } from '../../src/lib/growthArc.js';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
@@ -1071,6 +1072,84 @@ router.delete('/coach-conversations/:id', requireAuth, rateLimit(15), async (req
   } catch (err) {
     console.error('[coach-conversation delete] error:', err.message);
     res.status(500).json({ error: 'Could not delete' });
+  }
+});
+
+// WHO YOU'RE BECOMING: the coach writing your growth story back to you. Not a
+// stats report: a short, honest, personal read of who you are becoming as an
+// investor, grounded in the behaviors you control (conviction, discipline,
+// patience, learning), never just luck or P&L. The lead of the Progress tab.
+const BECOMING_CREDIT_COST = 4;
+const avgOf = (arr) => { const v = arr.filter(Number.isFinite); return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : null; };
+const cleanStr = (s) => !!(s && String(s).trim());
+
+router.get('/becoming', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
+  try {
+    const cacheKey = `becoming_${req.user.id}_${todayStr()}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.json({ narrative: cached.result, cached: true });
+
+    const [closedR, posR] = await Promise.all([
+      supabase.from('closed_trades').select('*').eq('user_id', req.user.id).order('closed_at', { ascending: false }).limit(50),
+      supabase.from('positions').select('ticker, entry_thesis, stop_loss, price_target').eq('user_id', req.user.id),
+    ]);
+    const trades = closedR.data || [];
+    const positions = posR.data || [];
+    const n = trades.length;
+    const openN = positions.length;
+
+    // Truly the very start: no Claude call, just an honest warm beginning.
+    if (n === 0 && openN === 0) {
+      const narrative = "You're at the very start, and there is nothing to measure yet. That is completely fine. The moment you make your first move I start watching how you handle it, not whether it wins, but whether you go in with a reason and a plan, and how you sit with the ups and downs. That is what I will reflect back to you here as you grow.";
+      await setCache(cacheKey, narrative).catch(() => {});
+      return res.json({ narrative, cached: false });
+    }
+
+    const pct = (num, den) => den > 0 ? Math.round((num / den) * 100) : 0;
+    const winHold = avgOf(trades.filter(t => t.pnl > 0).map(t => t.hold_days));
+    const lossHold = avgOf(trades.filter(t => t.pnl < 0).map(t => t.hold_days));
+    const arc = buildGrowthArc(trades);
+
+    const ctx = [
+      `Closed trades: ${n}.`,
+      n ? `Win rate: ${pct(trades.filter(t => t.pnl > 0).length, n)}% (this is partly luck, weight it lightly).` : '',
+      n ? `Went in with a written thesis on ${pct(trades.filter(t => cleanStr(t.entry_thesis)).length, n)}% of closes, a stop on ${pct(trades.filter(t => t.stop_loss > 0).length, n)}%, and logged a reflection on ${pct(trades.filter(t => cleanStr(t.reflection_what_happened) || cleanStr(t.reflection_lesson)).length, n)}%.` : '',
+      (winHold != null && lossHold != null) ? `Holds winners about ${winHold} days, losers about ${lossHold} days${lossHold > winHold ? ' (rides losers longer than winners, the opposite of the goal)' : ''}.` : '',
+      openN ? `Open positions: ${openN}, with a thesis on ${pct(positions.filter(p => cleanStr(p.entry_thesis)).length, openN)}% and a stop on ${pct(positions.filter(p => p.stop_loss > 0).length, openN)}%.` : '',
+      arc?.hasEnough && arc.lines?.length ? `How they have changed over time: ${arc.lines.join(' ')}` : '',
+    ].filter(Boolean).join('\n');
+
+    let newBalance;
+    try { newBalance = await deductCredits(req.user.id, BECOMING_CREDIT_COST); }
+    catch (e) {
+      if (e.message === 'insufficient_credits') return res.status(402).json({ error: 'Not enough credits' });
+      throw e;
+    }
+
+    let narrative;
+    try {
+      narrative = await claudeCall(
+        `You are Outpost's mindset coach writing a short, honest, personal read titled "who you're becoming" for ONE investor, often a beginner with a small account. This is NOT a stats report. It is a few sentences that reflect their GROWTH as an investor back to them, warmly and truthfully, the way a coach who has watched them would. Name one real strength and one honest growth edge. Praise the behavior they CONTROL (conviction, discipline, patience, learning), never just luck or P&L. If they are early, say so kindly and say what you will be watching for. Do not invent anything beyond the data given. 2 to 4 sentences. Sound like a real person, no em-dashes or en-dashes, no clinical or corporate tone.\n${PLAIN_TEXT_RULE}`,
+        `Here is the behavioral data on this investor. Write their "who you're becoming" read:\n\n${ctx}`,
+        260,
+        { model: 'sonnet', cache: false }
+      );
+      narrative = (narrative || '').trim();
+    } catch (aiErr) {
+      await refundCredits(req.user.id, BECOMING_CREDIT_COST);
+      throw aiErr;
+    }
+    if (!narrative) {
+      await refundCredits(req.user.id, BECOMING_CREDIT_COST);
+      return res.status(502).json({ error: 'Could not read your growth right now' });
+    }
+
+    await setCache(cacheKey, narrative).catch(() => {});
+    trackFeature('becoming', req.user.id);
+    res.json({ narrative, cached: false, creditsRemaining: newBalance });
+  } catch (err) {
+    console.error('[becoming] error:', err.message);
+    res.status(500).json({ error: 'Could not read your growth right now' });
   }
 });
 

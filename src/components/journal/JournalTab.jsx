@@ -14,6 +14,7 @@ import { cachedFetch } from '../../lib/cache.js';
 import { buildCoaching } from '../../lib/coaching.js';
 import { buildGrowthArc } from '../../lib/growthArc.js';
 import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
+import { computeComposure } from '../../lib/composure.js';
 import NorthStarCard from '../home/NorthStarCard.jsx';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
@@ -421,6 +422,75 @@ function CoachChat({ onClose }) {
   );
 }
 
+// WHO YOU'RE BECOMING: the coach's honest growth read, the lead of Progress and the
+// thing no tracker does. It interprets your behavior into a story, instead of
+// handing you a chart to decode yourself.
+function WhoYoureBecomingCard() {
+  const [narrative, setNarrative] = useState(null); // null = loading, '' = none
+  useEffect(() => {
+    let alive = true;
+    cachedFetch('progress_becoming', () => api.ai.becoming(), 30 * 60000)
+      .then(d => { if (alive) setNarrative(d?.narrative || ''); })
+      .catch(() => { if (alive) setNarrative(''); });
+    return () => { alive = false; };
+  }, []);
+  if (narrative === null) return <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}><p style={{ fontSize: 11, color: 'var(--faint)', fontStyle: 'italic', margin: 0 }}>Reading your growth…</p></div>;
+  if (!narrative) return null;
+  return (
+    <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+      <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '1.2px', color: 'var(--text)', margin: '0 0 8px' }}>WHO YOU'RE BECOMING</p>
+      <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{narrative}</p>
+    </div>
+  );
+}
+
+// COMPOSURE: a score for what you control, not what the market did. Climbs as you
+// build the habits, so it can rise in a red market. Hides until there is real data.
+const subColor = (v) => v >= 65 ? 'var(--green)' : v >= 40 ? 'var(--blue)' : 'var(--amber)';
+function ComposureCard() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      cachedFetch('portfolio_attribution', () => api.portfolio.attribution(), 10 * 60000).catch(() => null),
+      cachedFetch('portfolio_value', () => api.portfolio.value(), 60000).catch(() => ({ positions: [] })),
+    ]).then(([attribution, val]) => { if (alive) setData({ attribution, positions: val?.positions || [] }); });
+    return () => { alive = false; };
+  }, []);
+  if (!data) return null;
+  const c = computeComposure(data);
+  if (!c.hasEnough) return null;
+  return (
+    <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+        <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '1.2px', color: 'var(--text)', margin: 0 }}>COMPOSURE</p>
+        <span style={{ fontSize: 11, color: subColor(c.score), fontWeight: 700 }}>{c.band}</span>
+      </div>
+      <p style={{ fontSize: 10, color: 'var(--faint)', lineHeight: 1.5, margin: '0 0 12px' }}>
+        What you control, not what the market did. This climbs as you build the habits, even in a red market.
+      </p>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
+        <span style={{ fontSize: 32, fontWeight: 800, color: subColor(c.score), letterSpacing: '-1px', lineHeight: 1 }}>{c.score}</span>
+        <span style={{ fontSize: 12, color: 'var(--faint)' }}>/ 100</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {c.subs.map(s => (
+          <div key={s.key}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+              <span style={{ fontSize: 11, color: 'var(--text)', fontWeight: 600 }}>{s.label}</span>
+              <span style={{ fontSize: 10, color: 'var(--faint)' }}>{s.value}</span>
+            </div>
+            <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: `${s.value}%`, height: '100%', background: subColor(s.value), borderRadius: 3 }} />
+            </div>
+            <p style={{ fontSize: 9, color: 'var(--faint)', margin: '3px 0 0' }}>{s.note}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============ PROGRESS OVERVIEW ============
 // The cold-start-proof front page. Leads with where you are headed (the North Star
 // trajectory, meaningful from your first dollar), then the mirror that fills in as
@@ -439,9 +509,13 @@ function ProgressOverview({ onSeeStory, onReflect }) {
   }, []);
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
-      {/* The human front door comes first: the mental side, before any numbers. */}
+      {/* Who you are becoming leads: the story, not the numbers. */}
+      <WhoYoureBecomingCard />
+      {/* The human front door: talk the hard part through. */}
       <MindsetCard onOpen={() => setCoachOpen(true)} />
       {coachOpen && <CoachChat onClose={() => setCoachOpen(false)} />}
+      {/* What you control, getting better even when the market is not. */}
+      <ComposureCard />
       <NorthStarCard currentValue={totalValue} />
       <ReflectFeed onReflect={onReflect} />
       <PatternsView />
