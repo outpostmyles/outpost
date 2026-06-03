@@ -9,8 +9,8 @@ import { buildPortfolioActions } from '../../lib/portfolioActions.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
-import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { TickerIcon, Spinner, EmptyState, Modal, FormField, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
 import StockDossier from '../research/StockDossier.jsx';
 import PlanAdherenceCard from './PlanAdherenceCard.jsx';
@@ -1996,7 +1996,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
                 cannot. Stops the "BELOW STOP" / "RECONSIDER · Below the stop" double. */}
             {(() => {
               const live = pos.currentPrice;
-              const belowStop = pos.stop_loss > 0 && live && live <= pos.stop_loss;
+              const belowStop = pos.stop_loss > 0 && live && live < pos.stop_loss; // strict, to match the badge (BELOW STOP fires on price < stop)
               const atTarget = pos.price_target > 0 && live && live >= pos.price_target;
               return (belowStop || atTarget) ? null : <HealthRead pos={pos} />;
             })()}
@@ -2548,7 +2548,11 @@ function DevelopmentsCard() {
   const [items, setItems] = useState(null); // null = loading, [] = none
   useEffect(() => {
     let alive = true;
-    api.portfolio.developments().then(d => { if (alive) setItems(d.items || []); }).catch(() => { if (alive) setItems([]); });
+    // Cache like ExposureCard so reopening the tab does not re-fan-out the
+    // per-holding news fetch on every mount.
+    cachedFetch('portfolio_developments', () => api.portfolio.developments(), 5 * 60000)
+      .then(d => { if (alive) setItems(d?.items || []); })
+      .catch(() => { if (alive) setItems([]); });
     return () => { alive = false; };
   }, []);
   if (!items || items.length === 0) return null;
@@ -2925,14 +2929,16 @@ function GrowthChartInline({ showGrowth, setShowGrowth }) {
   // Hide entirely until there's enough history for the chart to be meaningful.
   if (snapshots.length < 7) return null;
 
-  const chartData = snapshots.map((s, i) => {
-    const spy = spyBenchmark[i];
-    return {
-      date: s.date,
-      value: parseFloat(s.total_value ?? 0),
-      spy: spy ? parseFloat(spy.value ?? 0) : null,
-    };
-  });
+  // Date-key the benchmark (it only has trading-day bars, so it is NOT 1:1 with
+  // snapshots by index) and read spy_value, the field the backend actually sends
+  // (scaled to your starting capital so it shares the chart's axis).
+  const spyMap = {};
+  spyBenchmark.forEach(s => { if (s?.date != null) spyMap[s.date] = parseFloat(s.spy_value ?? 0); });
+  const chartData = snapshots.map(s => ({
+    date: s.date,
+    value: parseFloat(s.total_value ?? 0),
+    spy: spyMap[s.date] ?? null,
+  }));
   // Are you beating the market? Period return for your book vs the S&P benchmark
   // (already fetched, just never drawn before).
   const hasSpy = chartData.some(d => d.spy != null);

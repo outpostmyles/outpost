@@ -1554,7 +1554,14 @@ router.get('/developments', requireAuth, rateLimit(20), async (req, res) => {
     if (!tickers.length) return res.json({ items: [] });
     const priceMap = getPrices(tickers);
 
-    const perTicker = await Promise.allSettled(tickers.map(async (t) => {
+    // Bound the fan-out: a big book should not fire one news request per holding.
+    // Fetch news for at most the 40 names that moved most today, the ones most
+    // likely to have something worth surfacing.
+    const focus = [...tickers]
+      .sort((a, b) => Math.abs(priceMap[b]?.changePercent ?? 0) - Math.abs(priceMap[a]?.changePercent ?? 0))
+      .slice(0, 40);
+
+    const perTicker = await Promise.allSettled(focus.map(async (t) => {
       const n = await getStockNews({ ticker: t, limit: 2 });
       return (n?.articles ?? []).map(a => ({
         ticker: t,
