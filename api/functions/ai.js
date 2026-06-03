@@ -924,6 +924,86 @@ ${statsBlock}`,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// THE MINDSET COACH: the emotional side of trading
+// ═══════════════════════════════════════════════════════════════════════════
+// A grounded "talk it through" companion for the hard part: fear, being down, the
+// urge to panic-sell, the weight of risk. Warm and human, grounded in the user's
+// real situation, NOT therapy and NOT financial advice, with a real-crisis offramp.
+// This is the front door of the Progress tab.
+
+const COACH_SYSTEM = `You are Outpost's mindset coach. You talk with a retail investor, often a beginner with a small account, about the HARD part of investing: the fear, the doubt, the weight of being down, the urge to panic-sell or to chase. Your job is to steady them and help them think clearly, the way a calm, experienced friend would. For most people this emotional and behavioral side matters more than any single stock pick.
+
+How to be:
+- Warm and human first. Validate the feeling before anything else. Being down genuinely hurts, do not rush past it.
+- Ground everything in THEIR real situation provided below. Reference their actual numbers and history. Never invent numbers or holdings.
+- Give perspective, not platitudes. No empty "you got this" cheerleading. Real reframes: drawdowns are normal, zoom out, why selling at the bottom feels right but usually is not, sizing so you can sleep, that one trade is not your whole life.
+- End with one small doable next step, or one honest question back. Keep them moving without overwhelming them.
+- Be concise and real. A few sentences, like a message from someone who cares, not an essay.
+- Sound like a real person texting, not an AI. Do not use em-dashes or en-dashes; use commas, periods, or shorter sentences. No corporate or clinical tone.
+
+Hard limits:
+- You are a trading mindset coach, NOT a therapist or mental-health professional, and NOT a financial advisor. Do not diagnose, do not treat clinical issues, and never tell them to buy or sell a specific security. If they ask what to do with a position, turn it back to their own plan and what is driving the urge.
+- If the person sounds like they are in real crisis, talking about harming themselves, or in despair beyond money, stop coaching. Gently tell them you are only a trading coach and they deserve real support, and point them to it: in the US, call or text 988 (the Suicide and Crisis Lifeline), or reach someone they trust today. Do not try to counsel a crisis yourself.
+
+${PLAIN_TEXT_RULE}`;
+
+const COACH_CREDIT_COST = 2;
+
+router.post('/coach-chat', requireAuth, rateLimit(20), dailyAiCeiling(), async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    // Keep only well-formed turns, cap length and size so one request stays bounded.
+    const messages = raw
+      .filter(m => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string' && m.content.trim())
+      .slice(-12)
+      .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }));
+    if (!messages.length || messages[messages.length - 1].role !== 'user') {
+      return res.status(400).json({ error: 'Need a message to respond to' });
+    }
+
+    // Ground the coach in what is actually going on with their money. Best-effort:
+    // if it fails, the coach still talks, just less specifically.
+    let context = '';
+    try { context = await buildUserContext(req.user.id, req.user); } catch {}
+
+    let newBalance;
+    try { newBalance = await deductCredits(req.user.id, COACH_CREDIT_COST); }
+    catch (e) {
+      if (e.message === 'insufficient_credits') return res.status(402).json({ error: 'Not enough credits' });
+      throw e;
+    }
+
+    let reply;
+    try {
+      const system = context
+        ? `${COACH_SYSTEM}\n\nTHEIR SITUATION RIGHT NOW (use it to ground your support, never invent beyond it):\n${context}`
+        : COACH_SYSTEM;
+      const msg = await anthropic.messages.create({
+        model: MODEL_SONNET,
+        max_tokens: 500,
+        system,
+        messages,
+      });
+      trackAICall(true);
+      reply = msg.content?.[0]?.text?.trim() || '';
+    } catch (aiErr) {
+      await refundCredits(req.user.id, COACH_CREDIT_COST);
+      throw aiErr;
+    }
+    if (!reply) {
+      await refundCredits(req.user.id, COACH_CREDIT_COST);
+      return res.status(502).json({ error: 'Coach was lost for words, try again' });
+    }
+
+    trackFeature('mindset_coach', req.user.id);
+    res.json({ reply, creditsRemaining: newBalance });
+  } catch (err) {
+    console.error('[coach-chat] error:', err.message);
+    res.status(500).json({ error: 'Coach unavailable right now' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PHASE 4 — DEPLOY CASH WORKFLOW
 // ═══════════════════════════════════════════════════════════════════════════
 

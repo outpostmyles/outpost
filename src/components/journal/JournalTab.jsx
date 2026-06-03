@@ -276,6 +276,97 @@ export default function JournalTab({ showToast, onTabSwitch }) {
   );
 }
 
+// ============ THE MINDSET COACH ============
+// The front door of Progress and the heart of it: a grounded "talk it through"
+// companion for the emotional side of investing. Warm, knows your situation,
+// not therapy and not advice. The card invites; the overlay holds the conversation.
+
+const COACH_STARTERS = [
+  "I'm down and it's stressing me out",
+  "I feel like panic selling",
+  "I'm scared to buy anything",
+  "Did I mess up?",
+];
+const coachBubbleStyle = { maxWidth: '85%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px 10px 10px 2px', padding: '10px 12px', fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5, marginBottom: 10, whiteSpace: 'pre-wrap' };
+const userBubbleStyle = { maxWidth: '85%', marginLeft: 'auto', background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '10px 10px 2px 10px', padding: '10px 12px', fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5, marginBottom: 10, whiteSpace: 'pre-wrap' };
+
+function MindsetCard({ onOpen }) {
+  return (
+    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+      <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '1.2px', color: 'var(--text)', margin: '0 0 6px' }}>YOUR CORNER</p>
+      <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
+        The hard part of investing is the part nobody talks about: down days, fear, the urge to bail. Talk it through with a coach who knows your situation.
+      </p>
+      <button onClick={onOpen} className="btn btn-blue" style={{ fontSize: 11, padding: '8px 16px' }}>TALK IT THROUGH</button>
+    </div>
+  );
+}
+
+function CoachChat({ onClose }) {
+  const [messages, setMessages] = useState([]); // {role:'user'|'assistant', content}
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, sending]);
+
+  async function send(text) {
+    const content = (text ?? input).trim();
+    if (!content || sending) return;
+    const next = [...messages, { role: 'user', content }];
+    setMessages(next);
+    setInput('');
+    setSending(true);
+    try {
+      const d = await api.ai.coachChat(next);
+      setMessages(m => [...m, { role: 'assistant', content: d?.reply || "I'm here. Tell me a bit more?" }]);
+    } catch {
+      setMessages(m => [...m, { role: 'assistant', content: 'I could not reach you just now. Try again in a moment, I am still here.' }]);
+    }
+    setSending(false);
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column', zIndex: 1000 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--faint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>‹ Back</button>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.5px', margin: 0 }}>YOUR COACH</p>
+          <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0' }}>the mental side, just between us</p>
+        </div>
+      </div>
+
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        <div style={coachBubbleStyle}>
+          I'm here. The hard part of investing, the fear, being down, not knowing what to do, is real, and you do not have to sit with it alone. What is on your mind?
+        </div>
+        {messages.map((m, i) => (
+          <div key={i} style={m.role === 'user' ? userBubbleStyle : coachBubbleStyle}>{m.content}</div>
+        ))}
+        {sending && <div style={{ ...coachBubbleStyle, color: 'var(--faint)', fontStyle: 'italic' }}>thinking…</div>}
+        {messages.length === 0 && !sending && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
+            {COACH_STARTERS.map(s => (
+              <button key={s} onClick={() => send(s)}
+                style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 14, padding: '7px 12px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, padding: '10px 16px 4px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+        <input className="input" value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
+          placeholder="Tell me what's weighing on you…" style={{ flex: 1, fontSize: 12 }} disabled={sending} />
+        <button onClick={() => send()} disabled={!input.trim() || sending} className="btn btn-blue" style={{ fontSize: 11, padding: '8px 14px', opacity: (!input.trim() || sending) ? 0.5 : 1 }}>Send</button>
+      </div>
+      <p style={{ fontSize: 8.5, color: 'var(--faint)', textAlign: 'center', padding: '4px 16px 8px', margin: 0, lineHeight: 1.4, flexShrink: 0 }}>
+        A trading mindset coach, not therapy or financial advice. If you are in crisis, call or text 988.
+      </p>
+    </div>
+  );
+}
+
 // ============ PROGRESS OVERVIEW ============
 // The cold-start-proof front page. Leads with where you are headed (the North Star
 // trajectory, meaningful from your first dollar), then the mirror that fills in as
@@ -284,6 +375,7 @@ export default function JournalTab({ showToast, onTabSwitch }) {
 // still sees their goal and an honest "this fills in as you trade" below it.
 function ProgressOverview({ onSeeStory, onReflect }) {
   const [totalValue, setTotalValue] = useState(0);
+  const [coachOpen, setCoachOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     cachedFetch('portfolio_value', () => api.portfolio.value(), 60000)
@@ -293,6 +385,9 @@ function ProgressOverview({ onSeeStory, onReflect }) {
   }, []);
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
+      {/* The human front door comes first: the mental side, before any numbers. */}
+      <MindsetCard onOpen={() => setCoachOpen(true)} />
+      {coachOpen && <CoachChat onClose={() => setCoachOpen(false)} />}
       <NorthStarCard currentValue={totalValue} />
       <ReflectFeed onReflect={onReflect} />
       <PatternsView />

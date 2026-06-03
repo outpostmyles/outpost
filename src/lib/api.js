@@ -89,6 +89,9 @@ export const api = {
     news: (ticker) => post('/api/ai/news', { ticker }),
     brief: (opts) => get(`/api/ai/brief${opts?.force ? '?force=true' : ''}`),
     journalCoach: () => get('/api/ai/journal-coach'),
+    // The mindset coach: grounded "talk it through" support for the emotional side
+    // of trading. Multi-turn; send the running conversation, get the next reply.
+    coachChat: (messages) => post('/api/ai/coach-chat', { messages }),
     sectorRadar: (opts) => get(`/api/ai/sector-radar${opts?.force ? '?force=true' : ''}`),
     bargainRadar: (opts) => get(`/api/ai/bargain-radar${opts?.force ? '?force=true' : ''}`),
     moveExplainer: (opts) => get(`/api/ai/move-explainer${opts?.force ? '?force=true' : ''}`),
