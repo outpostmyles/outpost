@@ -12,6 +12,7 @@ import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
+import StockDossier from '../research/StockDossier.jsx';
 import PlanAdherenceCard from './PlanAdherenceCard.jsx';
 import PerformanceAttributionCard from './PerformanceAttributionCard.jsx';
 import SynthesisCard from './SynthesisCard.jsx';
@@ -2119,6 +2120,15 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
 
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
 
+            {/* Research the company itself: the full dossier (what they do,
+                fundamentals, momentum, news, the Street), framed around the fact
+                you hold it. The same research surface as Social. */}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: pos.ticker } }))}
+              className="btn btn-muted btn-full"
+              style={{ fontSize: 11, padding: '9px 0', marginBottom: 8 }}
+            >RESEARCH {pos.ticker} →</button>
+
             {/* Action row — Ask the agent (primary, the high-value path), Edit, Close */}
             <div style={{ display: 'flex', gap: 6 }}>
               <button
@@ -3389,10 +3399,30 @@ export default function PortfolioTab({ marketOpen, showToast, onTabSwitch }) {
   // The growth chart inlines on this same view once 7+ snapshots exist.
   // History/News/P&L sub-component code stays in this file for now (might
   // be revived as drawers); they're just no longer rendered by default.
+
+  // Research overlay: any position can open the full company dossier (the same
+  // research view as Social) by dispatching 'research_open'. This tab is mounted
+  // only when active, so the listener never collides with Social's.
+  const [researchTicker, setResearchTicker] = useState(null);
+  const [researchContext, setResearchContext] = useState(null);
+  useEffect(() => {
+    const handler = (e) => {
+      const t = e.detail?.ticker;
+      if (t) { setResearchTicker(String(t).toUpperCase()); setResearchContext(e.detail?.context || null); }
+    };
+    window.addEventListener('research_open', handler);
+    return () => window.removeEventListener('research_open', handler);
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="scrollable" style={{ flex: 1 }}>
-        <PortfolioSubTab marketOpen={marketOpen} showToast={showToast} onTabSwitch={onTabSwitch} />
+        {researchTicker ? (
+          <StockDossier ticker={researchTicker} context={researchContext}
+            onClose={() => { setResearchTicker(null); setResearchContext(null); }} showToast={showToast} />
+        ) : (
+          <PortfolioSubTab marketOpen={marketOpen} showToast={showToast} onTabSwitch={onTabSwitch} />
+        )}
       </div>
     </div>
   );
