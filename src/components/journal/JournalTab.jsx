@@ -303,9 +303,13 @@ function MindsetCard({ onOpen }) {
 }
 
 function CoachChat({ onClose }) {
+  const [view, setView] = useState('chat'); // 'chat' | 'history'
+  const [conversationId, setConversationId] = useState(null);
   const [messages, setMessages] = useState([]); // {role:'user'|'assistant', content}
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [convos, setConvos] = useState(null); // null = loading
+  const [opening, setOpening] = useState(false);
   const scrollRef = useRef(null);
 
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, sending]);
@@ -313,12 +317,12 @@ function CoachChat({ onClose }) {
   async function send(text) {
     const content = (text ?? input).trim();
     if (!content || sending) return;
-    const next = [...messages, { role: 'user', content }];
-    setMessages(next);
+    setMessages(m => [...m, { role: 'user', content }]);
     setInput('');
     setSending(true);
     try {
-      const d = await api.ai.coachChat(next);
+      const d = await api.ai.coachChat(content, conversationId);
+      if (d?.conversationId) setConversationId(d.conversationId);
       setMessages(m => [...m, { role: 'assistant', content: d?.reply || "I'm here. Tell me a bit more?" }]);
     } catch {
       setMessages(m => [...m, { role: 'assistant', content: 'I could not reach you just now. Try again in a moment, I am still here.' }]);
@@ -326,43 +330,93 @@ function CoachChat({ onClose }) {
     setSending(false);
   }
 
+  async function openHistory() {
+    setView('history'); setConvos(null);
+    try { const d = await api.ai.coachConversations(); setConvos(d?.conversations || []); }
+    catch { setConvos([]); }
+  }
+  async function openConv(id) {
+    setOpening(true); setView('chat');
+    try { const d = await api.ai.coachConversation(id); setMessages(d?.messages || []); setConversationId(id); }
+    catch {}
+    setOpening(false);
+  }
+  function newConv() { setMessages([]); setConversationId(null); setView('chat'); }
+  async function delConv(id, e) {
+    e.stopPropagation();
+    setConvos(cs => (cs || []).filter(c => c.id !== id));
+    if (id === conversationId) newConv();
+    try { await api.ai.deleteCoachConversation(id); } catch {}
+  }
+
+  const smallBtn = { background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 5, padding: '5px 9px', fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column', zIndex: 1000 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--faint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>‹ Back</button>
-        <div style={{ flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <button onClick={view === 'history' ? () => setView('chat') : onClose} style={{ background: 'none', border: 'none', color: 'var(--faint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>‹ Back</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.5px', margin: 0 }}>YOUR COACH</p>
           <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0' }}>the mental side, just between us</p>
         </div>
-      </div>
-
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-        <div style={coachBubbleStyle}>
-          I'm here. The hard part of investing, the fear, being down, not knowing what to do, is real, and you do not have to sit with it alone. What is on your mind?
-        </div>
-        {messages.map((m, i) => (
-          <div key={i} style={m.role === 'user' ? userBubbleStyle : coachBubbleStyle}>{m.content}</div>
-        ))}
-        {sending && <div style={{ ...coachBubbleStyle, color: 'var(--faint)', fontStyle: 'italic' }}>thinking…</div>}
-        {messages.length === 0 && !sending && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
-            {COACH_STARTERS.map(s => (
-              <button key={s} onClick={() => send(s)}
-                style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 14, padding: '7px 12px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
-            ))}
-          </div>
+        {view === 'chat' && (
+          <>
+            <button onClick={openHistory} style={smallBtn}>PAST</button>
+            <button onClick={newConv} style={smallBtn}>+ NEW</button>
+          </>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, padding: '10px 16px 4px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-        <input className="input" value={input} onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
-          placeholder="Tell me what's weighing on you…" style={{ flex: 1, fontSize: 12 }} disabled={sending} />
-        <button onClick={() => send()} disabled={!input.trim() || sending} className="btn btn-blue" style={{ fontSize: 11, padding: '8px 14px', opacity: (!input.trim() || sending) ? 0.5 : 1 }}>Send</button>
-      </div>
-      <p style={{ fontSize: 8.5, color: 'var(--faint)', textAlign: 'center', padding: '4px 16px 8px', margin: 0, lineHeight: 1.4, flexShrink: 0 }}>
-        A trading mindset coach, not therapy or financial advice. If you are in crisis, call or text 988.
-      </p>
+      {view === 'history' ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+          <button onClick={newConv} style={{ width: '100%', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 7, padding: '10px', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', cursor: 'pointer', fontFamily: 'inherit', marginBottom: 12 }}>+ Start a new conversation</button>
+          {convos === null ? (
+            <p style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center', padding: 20 }}>Loading…</p>
+          ) : convos.length === 0 ? (
+            <p style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center', padding: 20, lineHeight: 1.5 }}>No past conversations yet. Everything you talk through is saved here for you.</p>
+          ) : convos.map(c => (
+            <div key={c.id} onClick={() => openConv(c.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 12px', marginBottom: 8, cursor: 'pointer' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</p>
+                {c.last && <p style={{ fontSize: 10, color: 'var(--faint)', margin: '3px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.last}</p>}
+              </div>
+              <span style={{ fontSize: 9, color: 'var(--faint)', flexShrink: 0 }}>{timeAgo(c.updatedAt)}</span>
+              <button onClick={(e) => delConv(c.id, e)} aria-label="Delete" style={{ background: 'none', border: 'none', color: 'var(--faint)', fontSize: 12, cursor: 'pointer', flexShrink: 0, padding: '2px 4px', fontFamily: 'inherit' }}>✕</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <div style={coachBubbleStyle}>
+              I'm here. The hard part of investing, the fear, being down, not knowing what to do, is real, and you do not have to sit with it alone. What is on your mind?
+            </div>
+            {messages.map((m, i) => (
+              <div key={i} style={m.role === 'user' ? userBubbleStyle : coachBubbleStyle}>{m.content}</div>
+            ))}
+            {(sending || opening) && <div style={{ ...coachBubbleStyle, color: 'var(--faint)', fontStyle: 'italic' }}>{opening ? 'opening…' : 'thinking…'}</div>}
+            {messages.length === 0 && !sending && !opening && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 6 }}>
+                {COACH_STARTERS.map(s => (
+                  <button key={s} onClick={() => send(s)}
+                    style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 14, padding: '7px 12px', fontSize: 11, color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, padding: '10px 16px 4px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+            <input className="input" value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
+              placeholder="Tell me what's weighing on you…" style={{ flex: 1, fontSize: 12 }} disabled={sending} />
+            <button onClick={() => send()} disabled={!input.trim() || sending} className="btn btn-blue" style={{ fontSize: 11, padding: '8px 14px', opacity: (!input.trim() || sending) ? 0.5 : 1 }}>Send</button>
+          </div>
+          <p style={{ fontSize: 8.5, color: 'var(--faint)', textAlign: 'center', padding: '4px 16px 8px', margin: 0, lineHeight: 1.4, flexShrink: 0 }}>
+            A trading mindset coach, not therapy or financial advice. If you are in crisis, call or text 988.
+          </p>
+        </>
+      )}
     </div>
   );
 }

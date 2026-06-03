@@ -90,8 +90,12 @@ export const api = {
     brief: (opts) => get(`/api/ai/brief${opts?.force ? '?force=true' : ''}`),
     journalCoach: () => get('/api/ai/journal-coach'),
     // The mindset coach: grounded "talk it through" support for the emotional side
-    // of trading. Multi-turn; send the running conversation, get the next reply.
-    coachChat: (messages) => post('/api/ai/coach-chat', { messages }),
+    // of trading. Server owns the history (like the agent): pass a conversationId to
+    // continue, omit it to start fresh. Plus list / open / delete past conversations.
+    coachChat: (content, conversationId) => post('/api/ai/coach-chat', { content, conversation_id: conversationId }),
+    coachConversations: () => get('/api/ai/coach-conversations'),
+    coachConversation: (id) => get(`/api/ai/coach-conversations/${encodeURIComponent(id)}`),
+    deleteCoachConversation: (id) => del(`/api/ai/coach-conversations/${encodeURIComponent(id)}`),
     sectorRadar: (opts) => get(`/api/ai/sector-radar${opts?.force ? '?force=true' : ''}`),
     bargainRadar: (opts) => get(`/api/ai/bargain-radar${opts?.force ? '?force=true' : ''}`),
     moveExplainer: (opts) => get(`/api/ai/move-explainer${opts?.force ? '?force=true' : ''}`),

@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -948,21 +949,45 @@ Hard limits:
 ${PLAIN_TEXT_RULE}`;
 
 const COACH_CREDIT_COST = 2;
+// Coach conversations are stored per user in ai_cache (no migration), as a bounded
+// list. The server owns the history, exactly like the agent, so the client can pull
+// up old conversations and start new ones. Strictly the user's own data.
+const COACH_CONVOS_KEY = (uid) => `coach_convos:${uid}`;
+const MAX_COACH_CONVOS = 20;
+const MAX_COACH_MSGS = 40;
 
+async function loadCoachConvos(uid) {
+  try {
+    const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', COACH_CONVOS_KEY(uid)).maybeSingle();
+    const parsed = data?.result ? (typeof data.result === 'string' ? JSON.parse(data.result) : data.result) : null;
+    return Array.isArray(parsed?.conversations) ? parsed.conversations : [];
+  } catch { return []; }
+}
+async function saveCoachConvos(uid, conversations) {
+  try {
+    const payload = { cache_key: COACH_CONVOS_KEY(uid), result: JSON.stringify({ conversations: conversations.slice(0, MAX_COACH_CONVOS) }), created_at: new Date().toISOString() };
+    const { data } = await supabase.from('ai_cache').select('id').eq('cache_key', COACH_CONVOS_KEY(uid)).maybeSingle();
+    if (data?.id) await supabase.from('ai_cache').update(payload).eq('id', data.id);
+    else await supabase.from('ai_cache').insert(payload);
+  } catch { /* best effort */ }
+}
+
+// Send a message to the coach. Server owns the conversation: pass conversation_id to
+// continue one, omit it to start fresh. Persists the turn and returns the reply.
 router.post('/coach-chat', requireAuth, rateLimit(20), dailyAiCeiling(), async (req, res) => {
   try {
-    const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    // Keep only well-formed turns, cap length and size so one request stays bounded.
-    const messages = raw
-      .filter(m => (m?.role === 'user' || m?.role === 'assistant') && typeof m?.content === 'string' && m.content.trim())
-      .slice(-12)
-      .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }));
-    if (!messages.length || messages[messages.length - 1].role !== 'user') {
-      return res.status(400).json({ error: 'Need a message to respond to' });
-    }
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim().slice(0, 2000) : '';
+    if (!content) return res.status(400).json({ error: 'Need a message to respond to' });
+    const convId = typeof req.body?.conversation_id === 'string' ? req.body.conversation_id : null;
 
-    // Ground the coach in what is actually going on with their money. Best-effort:
-    // if it fails, the coach still talks, just less specifically.
+    const convos = await loadCoachConvos(req.user.id);
+    let conv = convId ? convos.find(c => c.id === convId) : null;
+    if (!conv) {
+      conv = { id: randomUUID(), title: content.slice(0, 48), createdAt: new Date().toISOString(), updatedAt: null, messages: [] };
+    }
+    conv.messages.push({ role: 'user', content });
+
+    // Ground the coach in what is actually going on with their money. Best-effort.
     let context = '';
     try { context = await buildUserContext(req.user.id, req.user); } catch {}
 
@@ -982,7 +1007,7 @@ router.post('/coach-chat', requireAuth, rateLimit(20), dailyAiCeiling(), async (
         model: MODEL_SONNET,
         max_tokens: 500,
         system,
-        messages,
+        messages: conv.messages.slice(-12).map(m => ({ role: m.role, content: m.content })),
       });
       trackAICall(true);
       reply = msg.content?.[0]?.text?.trim() || '';
@@ -995,11 +1020,57 @@ router.post('/coach-chat', requireAuth, rateLimit(20), dailyAiCeiling(), async (
       return res.status(502).json({ error: 'Coach was lost for words, try again' });
     }
 
+    conv.messages.push({ role: 'assistant', content: reply });
+    conv.messages = conv.messages.slice(-MAX_COACH_MSGS);
+    conv.updatedAt = new Date().toISOString();
+    await saveCoachConvos(req.user.id, [conv, ...convos.filter(c => c.id !== conv.id)]); // most recent first
+
     trackFeature('mindset_coach', req.user.id);
-    res.json({ reply, creditsRemaining: newBalance });
+    res.json({ reply, conversationId: conv.id, title: conv.title, creditsRemaining: newBalance });
   } catch (err) {
     console.error('[coach-chat] error:', err.message);
     res.status(500).json({ error: 'Coach unavailable right now' });
+  }
+});
+
+// List past coach conversations (summaries, newest first).
+router.get('/coach-conversations', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const convos = await loadCoachConvos(req.user.id);
+    res.json({ conversations: convos.map(c => ({
+      id: c.id,
+      title: c.title || 'Conversation',
+      updatedAt: c.updatedAt || c.createdAt,
+      count: c.messages?.length || 0,
+      last: c.messages?.[c.messages.length - 1]?.content?.slice(0, 90) || '',
+    })) });
+  } catch (err) {
+    console.error('[coach-conversations] error:', err.message);
+    res.json({ conversations: [] });
+  }
+});
+
+// Full message history of one coach conversation.
+router.get('/coach-conversations/:id', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const conv = (await loadCoachConvos(req.user.id)).find(c => c.id === req.params.id);
+    if (!conv) return res.json({ id: req.params.id, title: '', messages: [] });
+    res.json({ id: conv.id, title: conv.title, messages: conv.messages || [] });
+  } catch (err) {
+    console.error('[coach-conversation] error:', err.message);
+    res.json({ id: req.params.id, title: '', messages: [] });
+  }
+});
+
+// Delete a coach conversation.
+router.delete('/coach-conversations/:id', requireAuth, rateLimit(15), async (req, res) => {
+  try {
+    const convos = await loadCoachConvos(req.user.id);
+    await saveCoachConvos(req.user.id, convos.filter(c => c.id !== req.params.id));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[coach-conversation delete] error:', err.message);
+    res.status(500).json({ error: 'Could not delete' });
   }
 });
 
