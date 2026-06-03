@@ -11,12 +11,45 @@ import { api } from '../../lib/api.js';
  * Every result has an ASK chip into a fresh agent conversation.
  */
 
-const EXAMPLES = [
-  'AI infrastructure stocks',
-  'profitable small caps under $50',
-  'beaten-down quality names near 52-week lows',
-  'high-growth cybersecurity',
+// A library of starting ideas so nobody lands here stuck. Each is a plain-English
+// screen the engine can vet. Grouped so the page reads like a menu, not a wall,
+// and easy to extend with whatever is relevant later.
+const IDEA_LIBRARY = [
+  { group: 'TRENDING THEMES', ideas: [
+    'AI infrastructure stocks', 'datacenter power and cooling', 'cybersecurity leaders',
+    'nuclear and uranium plays', 'weight-loss drug makers', 'robotics and automation',
+    'grid and electrification', 'space and defense tech', 'quantum computing', 'chip equipment makers',
+  ] },
+  { group: 'QUALITY AND VALUE', ideas: [
+    'profitable small caps under $50', 'beaten-down quality names near 52-week lows',
+    'free cash flow machines', 'wide-moat compounders', 'more cash than debt on the books',
+    'founder-led companies', 'high return on invested capital',
+  ] },
+  { group: 'MOMENTUM AND GROWTH', ideas: [
+    'high-growth cybersecurity', 'breakouts near 52-week highs', 'accelerating revenue growth',
+    'relative strength leaders', 'software growing over 30% a year',
+  ] },
+  { group: 'INCOME', ideas: [
+    'dividend growers raising their payout', 'dividend yield over 4%',
+    'REITs with durable income', 'dividend aristocrats',
+  ] },
+  { group: 'CONTRARIAN AND SPECIAL SITUATIONS', ideas: [
+    'oversold bounce candidates', 'turnaround stories', 'recent IPOs worth watching',
+    'stocks insiders are buying', 'spin-offs and special situations',
+  ] },
 ];
+const ALL_IDEAS = IDEA_LIBRARY.flatMap(g => g.ideas);
+
+// Rotate a handful of ideas to the top each day so the page feels alive without
+// anyone hand-updating it. Deterministic within a calendar day (stable per date).
+function freshPicks(n = 5) {
+  if (!ALL_IDEAS.length) return [];
+  const day = Math.floor(Date.now() / 86400000);
+  const start = day % ALL_IDEAS.length;
+  const out = [];
+  for (let i = 0; i < n && i < ALL_IDEAS.length; i++) out.push(ALL_IDEAS[(start + i) % ALL_IDEAS.length]);
+  return out;
+}
 
 // Where you are on a name in your own research. Stays with the ticker everywhere.
 const STATUS_META = {
@@ -33,6 +66,7 @@ export default function ScreenersView({ showToast }) {
   const [creating, setCreating] = useState(false);
   const [runningId, setRunningId] = useState(null);
   const [selectedId, setSelectedId] = useState(null); // null = list, id = workspace
+  const [showSaved, setShowSaved] = useState(false); // list view: false = idea library, true = saved screens
   const [refineText, setRefineText] = useState('');
   const [refining, setRefining] = useState(false);
   const [dossierTicker, setDossierTicker] = useState(null);
@@ -262,6 +296,10 @@ export default function ScreenersView({ showToast }) {
   }
 
   // ── List of screeners ──
+  // Today's featured picks, and a set to keep them from also appearing in their
+  // category below (no idea shows twice on the page).
+  const picks = freshPicks();
+  const pickSet = new Set(picks);
   return (
     <div style={{ paddingBottom: 24 }}>
       <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)' }}>
@@ -281,22 +319,17 @@ export default function ScreenersView({ showToast }) {
 
       {screeners === null ? (
         <p style={{ fontSize: 11, color: 'var(--faint)', padding: '12px 16px', fontStyle: 'italic' }}>Loading your screeners…</p>
-      ) : screeners.length === 0 ? (
-        <div style={{ padding: '14px 16px' }}>
-          <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.5, marginBottom: 10 }}>No screeners yet. Try one of these, or write your own above:</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {EXAMPLES.map(ex => (
-              <button key={ex} onClick={() => create(ex)} disabled={creating}
-                style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 10px', fontSize: 10, color: 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit' }}>
-                {ex}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
+      ) : showSaved ? (
+        // ── Saved screens (reachable from the button above the ideas) ──
         <>
-          <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', padding: '10px 16px 2px' }}>YOUR SCREENERS</p>
-          {screeners.map(s => {
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px 2px' }}>
+            <button onClick={() => setShowSaved(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 10, fontWeight: 700, color: 'var(--blue)', letterSpacing: '0.5px', padding: 0 }}>‹ IDEAS</button>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px' }}>YOUR SAVED SCREENS</span>
+          </div>
+          {screeners.length === 0 ? (
+            <p style={{ fontSize: 11, color: 'var(--faint)', padding: '12px 16px', lineHeight: 1.5 }}>No saved screens yet. Tap an idea to build your first.</p>
+          ) : screeners.map(s => {
             const top = Array.isArray(s.results) ? s.results : [];
             const newCount = top.filter(r => r.isNew).length;
             return (
@@ -323,8 +356,67 @@ export default function ScreenersView({ showToast }) {
             );
           })}
         </>
+      ) : (
+        // ── Idea library: the default landing, so nobody is ever stuck for a start ──
+        <div style={{ padding: '12px 16px 4px' }}>
+          {screeners.length > 0 && (
+            <button onClick={() => setShowSaved(true)} disabled={creating}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 13px', marginBottom: 18, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ color: 'var(--blue)' }}>⊞</span> YOUR SAVED SCREENS
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--faint)' }}>{screeners.length} ›</span>
+            </button>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 7 }}>
+            <p style={IDEA_HDR}>FRESH PICKS</p>
+            <span style={{ fontSize: 8.5, color: 'var(--faint)' }}>rotates daily</span>
+          </div>
+          <div style={CHIP_WRAP}>
+            {picks.map(ex => <IdeaChip key={ex} label={ex} featured disabled={creating} onClick={() => create(ex)} />)}
+          </div>
+
+          {IDEA_LIBRARY.map(group => {
+            const rest = group.ideas.filter(i => !pickSet.has(i));
+            if (!rest.length) return null;
+            return (
+              <div key={group.group} style={{ marginTop: 16 }}>
+                <p style={IDEA_HDR}>{group.group}</p>
+                <div style={{ ...CHIP_WRAP, marginTop: 7 }}>
+                  {rest.map(ex => <IdeaChip key={ex} label={ex} disabled={creating} onClick={() => create(ex)} />)}
+                </div>
+              </div>
+            );
+          })}
+
+          <p style={{ fontSize: 10, color: 'var(--faint)', lineHeight: 1.5, marginTop: 18 }}>
+            Tap any idea to scan it now, or describe your own up top. Outpost vets every match against live data before it shows it to you.
+          </p>
+        </div>
       )}
     </div>
+  );
+}
+
+const CHIP_WRAP = { display: 'flex', flexWrap: 'wrap', gap: 7 };
+const IDEA_HDR = { fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', margin: 0 };
+
+// One tappable starting idea. Featured picks read in the brand blue; the rest sit
+// quiet so a long library does not shout.
+function IdeaChip({ label, onClick, disabled, featured }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{
+        background: featured ? 'rgba(59,130,246,0.10)' : 'var(--raised)',
+        border: `1px solid ${featured ? 'rgba(59,130,246,0.35)' : 'var(--border)'}`,
+        borderRadius: 6, padding: '7px 11px', fontSize: 10.5,
+        color: featured ? 'var(--blue)' : 'var(--muted)',
+        cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit',
+        opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap',
+      }}>
+      {label}
+    </button>
   );
 }
 
