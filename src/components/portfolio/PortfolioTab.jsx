@@ -688,6 +688,7 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showPlan, setShowPlan] = useState(false);
+  const [fundFromCash, setFundFromCash] = useState(false);
 
   // Pre-trade gut-check — one sharp question rooted in the user's history with
   // this ticker. Fires once the ticker reaches 1-5 letters and stabilizes. We
@@ -762,6 +763,7 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
       if (form.reversalCondition.trim()) body.reversalCondition = form.reversalCondition.trim();
       if (form.priceTarget) body.priceTarget = parseFloat(form.priceTarget);
       if (form.stopLoss) body.stopLoss = parseFloat(form.stopLoss);
+      if (fundFromCash && shares > 0 && avgCost > 0) body.fundFromCash = true;
       // Phase 4 — tag the position with where it came from so the Timeline
       // can attribute it back to the Deploy Cash session that produced it.
       if (prefill?.source) body.source = prefill.source;
@@ -779,6 +781,7 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
       showToast(`${addedTicker} added to portfolio`, 'success');
       setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
+      setFundFromCash(false);
       onPrefillConsumed?.();
       onDone();
       // First position ever: surface an instant AI read so a brand-new user
@@ -810,6 +813,20 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
         <FormField label="Company Name (optional)"><input className="input" placeholder="Apple Inc." value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></FormField>
         <FormField label="Number of Shares"><input className="input" type="number" placeholder="10" value={form.shares} onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} /></FormField>
         <FormField label="Average Cost (optional)"><input className="input" type="number" placeholder="150.00" value={form.avgCost} onChange={e => setForm(f => ({ ...f, avgCost: e.target.value }))} /></FormField>
+        {/* A real buy moves money out of cash. Off by default so recording an
+            existing holding never silently drains your cash balance. */}
+        {(() => {
+          const cost = (parseFloat(form.shares) || 0) * (parseFloat(form.avgCost) || 0);
+          if (!(cost > 0)) return null;
+          return (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 2px 2px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={fundFromCash} onChange={e => setFundFromCash(e.target.checked)} style={{ marginTop: 2, cursor: 'pointer' }} />
+              <span style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
+                This is a new buy, take ${fmt(cost)} from my cash balance. Leave unchecked if you are recording something you already hold.
+              </span>
+            </label>
+          );
+        })()}
         <FormField label="Date Purchased (optional)"><input className="input" type="date" value={form.purchasedAt} max={`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`} onChange={e => setForm(f => ({ ...f, purchasedAt: e.target.value }))} /></FormField>
         <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: -4, marginBottom: 14, lineHeight: 1.5 }}>
           If you've added to this position over multiple dates, use your earliest purchase or leave it blank. Outpost would rather know the date is unknown than guess wrong about how long you've held it.
@@ -1706,9 +1723,13 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
       if (reflectionWhatHappened.trim()) body.reflectionWhatHappened = reflectionWhatHappened.trim();
       if (reflectionLesson.trim()) body.reflectionLesson = reflectionLesson.trim();
       if (executionRating != null) body.executionRating = executionRating;
-      await api.portfolio.removePosition(pos.id, body);
+      const res = await api.portfolio.removePosition(pos.id, body);
       onRefresh();
-      showToast(`${pos.ticker} closed and saved to history`, 'success');
+      const proceeds = res?.proceeds;
+      showToast(
+        proceeds > 0 ? `${pos.ticker} closed. $${fmt(proceeds)} added to your cash.` : `${pos.ticker} closed and saved to history`,
+        'success',
+      );
     } catch {
       setErr('Failed to remove');
       setRemoving(false);
@@ -2490,6 +2511,38 @@ function TrackRecordCard() {
   );
 }
 
+// Set the account's cash balance. Closing a position credits cash automatically;
+// this is for matching your brokerage and recording deposits or withdrawals.
+function CashModal({ current, onClose, onDone, showToast }) {
+  const [amount, setAmount] = useState(current != null ? String(current) : '');
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    const amt = parseFloat(amount);
+    if (!isFinite(amt) || amt < 0) { showToast?.('Enter a cash amount of zero or more', 'error'); return; }
+    setSaving(true);
+    try {
+      await api.portfolio.setCash(amt);
+      showToast?.('Cash balance updated', 'success');
+      onDone?.();
+      onClose();
+    } catch (e) { showToast?.(e.error || 'Could not save', 'error'); setSaving(false); }
+  }
+  return (
+    <Modal title="Cash balance" onClose={onClose}>
+      <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 12 }}>
+        The uninvested cash in your account. Set it to match your brokerage. Outpost keeps it accurate as you trade: closing a position adds the proceeds here, so your total never drops just because you sold.
+      </p>
+      <input className="input" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
+        placeholder="e.g. 1500" autoFocus style={{ width: '100%', boxSizing: 'border-box', marginBottom: 12 }} />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={onClose} className="btn btn-muted" style={{ flex: 1 }}>Cancel</button>
+        <button onClick={save} disabled={saving} className="btn btn-blue" style={{ flex: 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2603,9 +2656,17 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>VALUE</p>
-                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px' }}>${fmtCompact(data?.totalValue)}</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px' }}>${fmtCompact(data?.accountValue ?? data?.totalValue)}</p>
                 <p style={{ fontSize: 10, color: 'var(--faint)' }}>{positions.length} position{positions.length === 1 ? '' : 's'}</p>
               </div>
+            </div>
+            {/* Cash + holdings breakdown. The account is both, so closing a position
+                moves value into cash instead of shrinking the total. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--faint)' }}>Cash <b style={{ color: 'var(--muted)' }}>${fmt(data?.cash ?? 0)}</b></span>
+              <span style={{ fontSize: 10, color: 'var(--faint)' }}>·</span>
+              <span style={{ fontSize: 10, color: 'var(--faint)' }}>Holdings <b style={{ color: 'var(--muted)' }}>${fmt(data?.totalValue ?? 0)}</b></span>
+              <button onClick={() => setModal('cash')} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--blue)', fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', cursor: 'pointer', fontFamily: 'inherit' }}>EDIT CASH</button>
             </div>
             {data?.staleCount > 0 && (
               <p style={{ fontSize: 9, color: 'var(--amber)', marginTop: 6 }}>
@@ -2680,6 +2741,7 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
       )}
       {modal === 'closed' && <ClosedTradesDrawer onClose={() => setModal(null)} showToast={showToast} />}
       {modal === 'theses' && <ThesesDrawer onClose={() => setModal(null)} showToast={showToast} />}
+      {modal === 'cash' && <CashModal current={data?.cash ?? 0} onClose={() => setModal(null)} onDone={load} showToast={showToast} />}
     </div>
   );
 }

@@ -138,6 +138,10 @@ export const api = {
     // "Outpost noticed" passive observations. Up to 3, ranked by priority.
     // Pure deterministic logic on the backend (no AI call).
     notices: () => get('/api/portfolio/notices'),
+    // Cash balance. The account is cash + holdings; closing credits cash, a funded
+    // buy debits it, and this sets it to an exact amount.
+    getCash: () => get('/api/portfolio/cash'),
+    setCash: (amount) => post('/api/portfolio/cash', { amount }),
     // North Star — the user's financial-freedom target portfolio value.
     getGoal: () => get('/api/portfolio/goal'),
     setGoal: (body) => post('/api/portfolio/goal', body),

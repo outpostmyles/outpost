@@ -65,6 +65,32 @@ const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
 
+// ── Cash balance ───────────────────────────────────────────────────────────
+// The account is cash + holdings. Cash lives in agent_memory as a per-user JSON
+// singleton, the same no-migration pattern the North Star goal uses. Closing a
+// position credits its proceeds here, a funded buy debits it, and the user can set
+// it to match their brokerage. Never goes negative.
+async function getCashBalance(userId) {
+  try {
+    const { data } = await supabase.from('agent_memory')
+      .select('content').eq('user_id', userId).eq('memory_type', 'cash_balance')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!data?.content) return 0;
+    const amt = Number(JSON.parse(data.content)?.amount);
+    return Number.isFinite(amt) && amt >= 0 ? amt : 0;
+  } catch { return 0; }
+}
+async function setCashBalance(userId, amount) {
+  const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
+  await supabase.from('agent_memory').delete().eq('user_id', userId).eq('memory_type', 'cash_balance');
+  await supabase.from('agent_memory').insert({ user_id: userId, memory_type: 'cash_balance', content: JSON.stringify({ amount: amt }), created_at: new Date().toISOString() });
+  return amt;
+}
+async function adjustCashBalance(userId, delta) {
+  const cur = await getCashBalance(userId);
+  return setCashBalance(userId, Math.max(0, cur + (Number(delta) || 0)));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 3 — TICKER HISTORY (powers "Your history with this" on position cards
 // and Watchlist items)
@@ -95,7 +121,8 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
     const pos = positions ?? [];
 
     if (!pos.length) {
-      return res.json({ totalValue: 0, totalPnl: 0, totalPnlPercent: 0, todayChange: 0, todayChangePercent: 0, positions: [] });
+      const cash = await getCashBalance(req.user.id);
+      return res.json({ totalValue: 0, totalPnl: 0, totalPnlPercent: 0, todayChange: 0, todayChangePercent: 0, positions: [], cash, accountValue: cash });
     }
 
     const marketOpen = isPoolMarketOpen();
@@ -188,6 +215,11 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
     const totalPnlPercent = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
     const prevTotalValue = totalValue - totalTodayChange;
     const todayChangePercent = prevTotalValue > 0 ? (totalTodayChange / prevTotalValue) * 100 : 0;
+    // Cash + holdings = the account total the user actually has. totalValue stays
+    // holdings-only so all the weight/concentration math is unchanged; accountValue
+    // is the headline, and it does not drop when a position is closed (the proceeds
+    // land in cash).
+    const cash = await getCashBalance(req.user.id);
 
     res.json({
       totalValue: parseFloat(totalValue.toFixed(2)),
@@ -195,6 +227,8 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
       totalPnlPercent: parseFloat(totalPnlPercent.toFixed(2)),
       todayChange: parseFloat(totalTodayChange.toFixed(2)),
       todayChangePercent: parseFloat(todayChangePercent.toFixed(2)),
+      cash: parseFloat(cash.toFixed(2)),
+      accountValue: parseFloat((totalValue + cash).toFixed(2)),
       marketOpen,
       positions: enriched,
       staleCount,
@@ -687,7 +721,17 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     requestRefresh(); // Tell price pool to pick up the new ticker
     trackFeature('add_position', req.user.id);
     if (entryThesis || priceTarget || stopLoss) trackTradePlan(req.user.id);
-    res.json({ success: true, position });
+
+    // A funded buy (a real purchase, not recording an existing holding) moves money
+    // from cash into the new position, so the account total stays continuous.
+    let cash = null;
+    if (req.body?.fundFromCash) {
+      const cost = (position.shares || 0) * (position.avg_cost || 0);
+      try { cash = await adjustCashBalance(req.user.id, -cost); } catch (e) {
+        console.warn(`[req:${req.requestId}] [Portfolio] cash debit on buy failed:`, e.message);
+      }
+    }
+    res.json({ success: true, position, cash });
   } catch (err) {
     console.error('[Portfolio] /positions POST failed:', err.message);
     res.status(500).json({ error: 'Server error' });
@@ -1114,7 +1158,14 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       }
     }
 
-    res.json({ success: true });
+    // Closing is a sale: the proceeds become cash, so the account total does not
+    // drop, the value just moves from holdings into cash.
+    let cash = null;
+    try { cash = await adjustCashBalance(req.user.id, proceeds); } catch (e) {
+      console.warn(`[req:${req.requestId}] [Portfolio] cash credit on close failed:`, e.message);
+    }
+
+    res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash });
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);
     res.status(500).json({ error: 'Server error' });
@@ -1463,6 +1514,26 @@ router.get('/performance-attribution', requireAuth, rateLimit(10), async (req, r
   } catch (err) {
     console.error('[Portfolio] /performance-attribution endpoint failed:', err.message);
     res.status(500).json({ error: 'Failed to load performance attribution' });
+  }
+});
+
+// GET /api/portfolio/cash: the account's cash balance.
+router.get('/cash', requireAuth, rateLimit(30), async (req, res) => {
+  try { res.json({ cash: await getCashBalance(req.user.id) }); }
+  catch (err) { console.error(`[req:${req.requestId}] [Portfolio] /cash get failed:`, err.message); res.json({ cash: 0 }); }
+});
+
+// POST /api/portfolio/cash: set the cash balance to an exact amount (match your
+// brokerage, or record a deposit/withdrawal). Body: { amount }.
+router.post('/cash', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1e9) return res.status(400).json({ error: 'Enter a cash amount of zero or more' });
+    const cash = await setCashBalance(req.user.id, amount);
+    res.json({ ok: true, cash });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /cash set failed:`, err.message);
+    res.status(500).json({ error: 'Could not save your cash balance' });
   }
 });
 
