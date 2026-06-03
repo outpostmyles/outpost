@@ -15,6 +15,7 @@ import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
+import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
 import { getPlanAdherence } from '../services/planAdherence.js';
@@ -1624,6 +1625,40 @@ router.get('/thesis-watch', requireAuth, rateLimit(20), async (req, res) => {
   } catch (err) {
     console.error(`[req:${req.requestId}] [Portfolio] /thesis-watch failed:`, err.message);
     res.json({ watches: {} }); // non-critical: the cards just fall back to the plain thesis
+  }
+});
+
+// "Since you were last here" memory. The client sends a compact snapshot of the
+// book's shape; we return the previously stored anchor (so the client can diff and
+// greet the user with what changed) and re-anchor to the current snapshot only on a
+// genuinely new visit, so a within-session reload does not swallow what they just
+// did. Stored per user in ai_cache (no migration); strictly the user's own data.
+router.post('/since', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const holdings = req.body?.snapshot?.holdings;
+    if (!holdings || typeof holdings !== 'object' || Array.isArray(holdings)) return res.json({ prior: null });
+    const key = `portfolio_read_anchor:${req.user.id}`;
+
+    let prior = null;
+    try {
+      const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', key).maybeSingle();
+      if (data?.result) prior = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    } catch {}
+
+    if (shouldReanchor(prior?.at, Date.now())) {
+      const nowISO = new Date().toISOString();
+      const payload = { cache_key: key, result: JSON.stringify({ at: nowISO, holdings }), created_at: nowISO };
+      try {
+        const { data: existing } = await supabase.from('ai_cache').select('id').eq('cache_key', key).maybeSingle();
+        if (existing) await supabase.from('ai_cache').update(payload).eq('id', existing.id);
+        else await supabase.from('ai_cache').insert(payload);
+      } catch { /* best effort: continuity is a nicety, never block the page */ }
+    }
+
+    res.json({ prior });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /since failed:`, err.message);
+    res.json({ prior: null });
   }
 });
 

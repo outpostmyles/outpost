@@ -138,6 +138,9 @@ export const api = {
     developments: () => get('/api/portfolio/developments'),
     // The living thesis watch: is the reason you own each holding still true?
     thesisWatch: () => get('/api/portfolio/thesis-watch'),
+    // "Since you were last here": send the current book shape, get the prior anchor
+    // back so the read can greet the user with what changed.
+    since: (snapshot) => post('/api/portfolio/since', { snapshot }),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

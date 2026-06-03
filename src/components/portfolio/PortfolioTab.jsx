@@ -6,6 +6,7 @@ import { buildStressTests } from '../../lib/stressTest.js';
 import { sectorExposure } from '../../lib/sectorExposure.js';
 import { sectorGaps } from '../../lib/sectorGaps.js';
 import { buildPortfolioActions } from '../../lib/portfolioActions.js';
+import { snapshotReadState, diffReadState } from '../../lib/readContinuity.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
@@ -2341,6 +2342,38 @@ function ExposureCard({ positions, onTabSwitch }) {
 // "WHAT NEEDS YOU" — the prioritized, proactive action list. The few decisions
 // that actually matter on your book today, each with one button to act on it.
 // Renders nothing when the book is calm and fully planned, so it is signal only.
+// "SINCE YOU WERE LAST HERE" — the read's memory. Sends the current shape of the
+// book, gets back the last visit's anchor, and greets the user with what changed
+// and what they did about it. Renders nothing on a first visit or a quiet return,
+// so it is a relationship, not noise. Gated on watchesLoaded so the anchor it
+// stores captures thesis verdicts (and verdict shifts surface next time).
+function ContinuityStrip({ positions, totalValue, thesisWatches, watchesLoaded }) {
+  const [lines, setLines] = useState([]);
+  const ready = watchesLoaded && Array.isArray(positions) && positions.length > 0;
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    const snapshot = snapshotReadState({ positions, totalValue, thesisWatches });
+    api.portfolio.since(snapshot)
+      .then(d => { if (alive) setLines(diffReadState(d?.prior, snapshot).lines); })
+      .catch(() => {});
+    return () => { alive = false; };
+    // One read per visit: fire when the book + verdicts are both loaded.
+  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!lines.length) return null;
+  return (
+    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(59,130,246,0.04)' }}>
+      <p style={{ fontSize: 9, fontWeight: 800, color: 'var(--blue)', letterSpacing: '1px', margin: '0 0 6px' }}>SINCE YOU WERE LAST HERE</p>
+      {lines.map((l, i) => (
+        <div key={i} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', marginTop: i ? 4 : 0 }}>
+          <span style={{ color: 'var(--blue)', fontSize: 11, lineHeight: 1.45, flexShrink: 0 }}>•</span>
+          <p style={{ flex: 1, fontSize: 11.5, color: 'var(--text)', lineHeight: 1.45, margin: 0 }}>{l}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ActionFeed({ positions, totalValue, thesisWatches }) {
   const actions = buildPortfolioActions(positions, totalValue, thesisWatches);
   if (!actions.length) return null;
@@ -2429,6 +2462,7 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   // cold judgment never blocks the page; verdicts pop onto the cards and into the
   // action feed when they arrive.
   const [thesisWatches, setThesisWatches] = useState({});
+  const [watchesLoaded, setWatchesLoaded] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2442,7 +2476,8 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
     let alive = true;
     cachedFetch('portfolio_thesis_watch', () => api.portfolio.thesisWatch(), 30 * 60000)
       .then(d => { if (alive) setThesisWatches(d?.watches || {}); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (alive) setWatchesLoaded(true); });
     return () => { alive = false; };
   }, []);
 
@@ -2497,6 +2532,10 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
         />
       ) : (
         <>
+          {/* SINCE YOU WERE LAST HERE — the read's memory, the first thing you see
+              on return. What changed and what you did, before today's read. */}
+          <ContinuityStrip positions={positions} totalValue={data?.totalValue ?? 0} thesisWatches={thesisWatches} watchesLoaded={watchesLoaded} />
+
           {/* Synthesis — advisor opening read on the whole book. Hides itself
               if there are no positions or the AI call failed. Refreshes when
               the position list changes (refreshKey = positions.length). */}
