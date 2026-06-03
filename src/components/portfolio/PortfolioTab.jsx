@@ -2080,22 +2080,11 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
             {/* AI read — opt-in, charges credits ONLY on fresh fetch.
                 Cached server-side per (user, ticker, day) so subsequent taps
                 that day are free. */}
-            {!aiRead ? (
-              <div style={{ marginBottom: 10 }}>
-                <button
-                  onClick={getAIRead}
-                  disabled={aiLoading}
-                  className="btn btn-blue btn-full"
-                  style={{ fontSize: 11, padding: '9px 0' }}
-                >
-                  {aiLoading ? 'Reading the tape…' : 'Get AI read'}
-                </button>
-                <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 5, lineHeight: 1.4 }}>
-                  Should you worry about today's move? Calm during noise, sharp when something's broken.
-                </p>
-              </div>
-            ) : (
-              <div style={{ background: 'var(--raised)', borderRadius: 6, padding: '10px 12px', marginBottom: 10 }}>
+            {/* AI read, only once fetched — the quick "should I worry about
+                today's move" take, shown inline. The button to fetch it now lives
+                in the secondary row below, so it does not compete with RESEARCH. */}
+            {aiRead && (
+              <div style={{ background: 'var(--raised)', borderRadius: 6, padding: '10px 12px', marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <span style={{ fontSize: 9, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.8px' }}>
                     AI READ {aiCached && <span style={{ color: 'var(--faint)', fontWeight: 400, marginLeft: 4 }}>· cached</span>}
@@ -2112,30 +2101,26 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               </div>
             )}
 
-            {/* The standalone NEWS list was removed. It showed an empty "no
-                headlines" line on most quiet stocks (reads as broken) and was
-                redundant: TODAY'S DRIVER above already shows the day's headline
-                when there is one, and GET AI READ pulls and analyzes news on
-                demand. The lazy news fetch still powers TODAY'S DRIVER. */}
-
             {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
 
-            {/* Research the company itself: the full dossier (what they do,
-                fundamentals, momentum, news, the Street), framed around the fact
-                you hold it. The same research surface as Social. */}
+            {/* ONE clear way in: RESEARCH opens the full holding dossier — your
+                position, the company research (what they do, fundamentals,
+                momentum, news, the Street), and a deep dive into the agent that
+                already knows you hold it. That single surface replaced the old
+                pile of competing AI buttons. */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: pos.ticker } }))}
-              className="btn btn-muted btn-full"
-              style={{ fontSize: 11, padding: '9px 0', marginBottom: 8 }}
+              className="btn btn-blue btn-full"
+              style={{ fontSize: 11.5, padding: '10px 0', marginBottom: 8 }}
             >RESEARCH {pos.ticker} →</button>
 
-            {/* Action row — Ask the agent (primary, the high-value path), Edit, Close */}
+            {/* Secondary row: a quick inline AI read, and the manage actions. */}
             <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: `How's my ${pos.ticker} position looking right now? Walk me through whether to hold, add, or trim it, given my plan.` } }))}
-                className="btn btn-blue"
-                style={{ flex: 1, fontSize: 10, padding: '7px 0' }}
-              >ASK OUTPOST</button>
+              {!aiRead && (
+                <button onClick={getAIRead} disabled={aiLoading} className="btn btn-muted" style={{ flex: 1.4, fontSize: 10, padding: '7px 0' }}>
+                  {aiLoading ? 'Reading…' : "Quick read on today's move"}
+                </button>
+              )}
               <button onClick={() => setMode('edit')} className="btn btn-muted" style={{ flex: 1, fontSize: 10, padding: '7px 0' }}>EDIT</button>
               <button
                 onClick={() => { setSellPrice(pos.currentPrice ? String(pos.currentPrice) : ''); setMode('close'); }}
@@ -2691,30 +2676,21 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             )}
           </div>
 
-          {/* Drawdown band — only fires when something is actually -20%+ */}
-          {drawdowns.length > 0 && (
-            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.05)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--muted)', flexWrap: 'wrap' }}>
-                <span style={{ color: 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>DRAWDOWN</span>
-                {drawdowns.slice(0, 3).map((d, i) => (
-                  <span key={d.ticker} style={{ display: 'inline-flex', gap: 4 }}>
-                    <b style={{ color: 'var(--amber)', fontWeight: 700 }}>{d.ticker}</b>
-                    <span style={{ color: 'var(--faint)' }}>down {Math.abs(d.pct).toFixed(0)}% from cost</span>
-                    {i < Math.min(drawdowns.length, 3) - 1 && <span style={{ color: 'var(--faint)' }}>·</span>}
-                  </span>
-                ))}
-                {drawdowns.length > 3 && <span style={{ color: 'var(--faint)' }}>· +{drawdowns.length - 3} more</span>}
-              </div>
-            </div>
-          )}
-
-          {/* Concentration band — portfolio-level risk. Fires only on a real
-              flag (one name too big, top-heavy, or too thin to absorb a miss). */}
-          {risk.flags.length > 0 && (
+          {/* HEADS UP — one strip for the things that need your eye: the top
+              concentration flag and any real drawdowns, together. Replaces the two
+              separate amber bands that used to stack and say overlapping things. */}
+          {(risk.flags.length > 0 || drawdowns.length > 0) && (
             <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: risk.level === 'high' ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.05)' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ color: risk.level === 'high' ? 'var(--red)' : 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>CONCENTRATION</span>
-                <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>{risk.flags[0].message}</span>
+                <span style={{ color: risk.level === 'high' ? 'var(--red)' : 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>HEADS UP</span>
+                {risk.flags.length > 0 && <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>{risk.flags[0].message}</span>}
+                {drawdowns.length > 0 && (
+                  <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
+                    {risk.flags.length > 0 ? '· ' : ''}
+                    {drawdowns.slice(0, 3).map(d => `${d.ticker} down ${Math.abs(d.pct).toFixed(0)}%`).join(', ')}
+                    {drawdowns.length > 3 ? `, +${drawdowns.length - 3} more` : ''} from cost
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -2729,18 +2705,19 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             <button onClick={() => setModal('menu')} className="btn btn-muted" style={{ padding: '6px 8px', fontSize: 11 }} aria-label="More">⋯</button>
           </div>
 
-          {/* What is happening on your book today — headlines across holdings. */}
-          <DevelopmentsCard />
-
-          {/* Position list — sorted by attention, with calm positions collapsed
-              behind a divider once there are 5+ of them. Plan-coverage nudge
-              shown when many positions lack a target/stop/thesis. */}
+          {/* Position list — the spine of the page. Sorted by attention, with calm
+              positions collapsed behind a divider once there are 5+ of them. Plan-
+              coverage nudge shown when many positions lack a target/stop/thesis. */}
           <PositionList
             positions={positions}
             totalValue={data?.totalValue ?? 0}
             onRefresh={load}
             showToast={showToast}
           />
+
+          {/* What is happening on your book today — headlines across holdings.
+              Ambient context, so it sits below your positions, not above them. */}
+          <DevelopmentsCard />
 
           {/* Stress test — what a drop would cost you, in dollars. Collapsed. */}
           <StressTestCard positions={positions} />
