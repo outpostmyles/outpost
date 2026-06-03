@@ -412,11 +412,18 @@ function PatternsView() {
   const coaching = buildCoaching({ attribution: data, adherence });
   const growth = buildGrowthArc(closed);
   const rows = [
-    { key: 'thesis', label: 'Wrote a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
-    { key: 'stopLoss', label: 'Set a stop loss', explainer: 'You committed to a price where you\'d exit.' },
-    { key: 'priceTarget', label: 'Set a price target', explainer: 'You knew where you\'d take profits before you bought.' },
-    { key: 'reflection', label: 'Logged a reflection on close', explainer: 'You wrote what played out or what you learned.' },
+    { key: 'thesis', label: 'Wrote a thesis', short: 'a thesis', explainer: 'You typed a "why I\'m buying" when you opened the position.' },
+    { key: 'stopLoss', label: 'Set a stop loss', short: 'a stop', explainer: 'You committed to a price where you\'d exit.' },
+    { key: 'priceTarget', label: 'Set a price target', short: 'a target', explainer: 'You knew where you\'d take profits before you bought.' },
+    { key: 'reflection', label: 'Logged a reflection on close', short: 'a reflection', explainer: 'You wrote what played out or what you learned.' },
   ];
+  // A behavior is only worth a full WITH-vs-WITHOUT row when there is an actual
+  // split to compare. If you did it on every closed trade or none, both rows would
+  // just restate your overall rate, four identical boxes that say nothing. Those
+  // collapse into a single honest line instead.
+  const hasSplit = (k) => (patterns[k]?.with?.count > 0) && (patterns[k]?.without?.count > 0);
+  const comparableRows = rows.filter(r => hasSplit(r.key));
+  const flatRows = rows.filter(r => !hasSplit(r.key));
 
   return (
     <div style={{ padding: '18px 16px' }}>
@@ -427,15 +434,27 @@ function PatternsView() {
       <div style={{ marginBottom: 16 }}>
         <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 4 }}>Your patterns</p>
         <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55 }}>
-          Across your {totalTrades} closed trades. The number on the right is your win rate WITH each behavior vs WITHOUT it.
+          {comparableRows.length > 0
+            ? `Across your ${totalTrades} closed trades. The number on the right is your win rate WITH each behavior vs WITHOUT it.`
+            : `Across your ${totalTrades} closed trades.`}
         </p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rows.map(r => (
-          <PatternRow key={r.key} row={r} pattern={patterns[r.key]} />
-        ))}
-      </div>
+      {comparableRows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {comparableRows.map(r => (
+            <PatternRow key={r.key} row={r} pattern={patterns[r.key]} />
+          ))}
+        </div>
+      )}
+
+      {flatRows.length > 0 && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', marginTop: comparableRows.length ? 10 : 0 }}>
+          <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55, margin: 0 }}>
+            Nothing to compare yet on {flatRows.map(r => r.short).join(', ')}. You did each on all of your closed trades or none, so there is no split to measure. Mix it up and this will show whether it lifts your win rate.
+          </p>
+        </div>
+      )}
 
       {/* Execution rating block. Different shape than the binary patterns
           above, so it gets its own row component. Only renders if the user
@@ -551,7 +570,7 @@ function ScorecardSummary({ s }) {
       {/* Best / worst */}
       {(s.best || s.worst) && (
         <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-          {s.best && <ScoreBestWorst label="Best trade" t={s.best} good />}
+          {s.best && <ScoreBestWorst label="Best trade" t={s.best} />}
           {s.worst && <ScoreBestWorst label="Worst trade" t={s.worst} />}
         </div>
       )}
@@ -569,14 +588,17 @@ function ScoreStat({ label, value, sub }) {
   );
 }
 
-function ScoreBestWorst({ label, t, good }) {
-  const color = good ? 'var(--green)' : 'var(--red)';
+function ScoreBestWorst({ label, t }) {
+  // Color by the actual return, not the best/worst label. If every trade is a
+  // winner, the "worst" trade is still green, because it still made money.
+  const pct = t.pnlPercent;
+  const color = pct == null ? 'var(--faint)' : pct >= 0 ? 'var(--green)' : 'var(--red)';
   return (
     <div style={{ flex: 1, background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
       <p style={{ fontSize: 8.5, color: 'var(--faint)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 3 }}>{label}</p>
       <p style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700, margin: 0 }}>{t.ticker || '—'}</p>
       <p style={{ fontSize: 10, color, fontWeight: 600, margin: '1px 0 0' }}>
-        {t.pnlPercent != null ? `${t.pnlPercent > 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%` : '—'}
+        {pct != null ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%` : '—'}
       </p>
     </div>
   );
