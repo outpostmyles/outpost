@@ -778,7 +778,12 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
         }).catch(() => {}); // non-blocking
       }
       const addedTicker = (form.ticker || '').toUpperCase().trim();
-      showToast(`${addedTicker} added to portfolio`, 'success');
+      // When the backend blended into an existing holding, say so with the new
+      // share count and average instead of a plain "added".
+      const toastMsg = result?.merged
+        ? `Added ${result.addedShares} more to ${addedTicker}, now ${result.position.shares} sh at $${Number(result.position.avg_cost).toFixed(2)} avg`
+        : `${addedTicker} added to portfolio`;
+      showToast(toastMsg, 'success');
       setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
       setFundFromCash(false);

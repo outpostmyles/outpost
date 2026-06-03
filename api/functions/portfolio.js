@@ -16,7 +16,7 @@ import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
-import { computeBookStats } from '../../src/lib/bookStats.js';
+import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
@@ -667,15 +667,50 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     const validation = await validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss });
     if (!validation.ok) return res.status(400).json({ error: validation.error });
 
+    // Already hold this ticker? Then this is a "bought more" add: blend it into
+    // the existing position at the new weighted-average cost instead of erroring.
+    // A merge makes no new position, so it does NOT count against the plan limit.
+    const { data: held } = await supabase.from('positions')
+      .select('id, shares, avg_cost, entry_thesis, price_target, stop_loss')
+      .eq('user_id', req.user.id).eq('ticker', ticker).maybeSingle();
+
+    if (held) {
+      // We need the price of the new shares to update the average honestly.
+      if (!(avgCost > 0)) {
+        return res.status(400).json({ error: `Enter the price you paid for the new ${ticker} shares so I can update your average cost` });
+      }
+      const blended = mergeLots(held.shares, held.avg_cost, shares, avgCost);
+      const updateData = { shares: blended.shares, avg_cost: blended.avgCost };
+      // Fill a plan field only if the user did not already have one; never clobber
+      // an existing thesis, target, or stop with a quick add-more.
+      if (entryThesis && !held.entry_thesis) { updateData.entry_thesis = entryThesis; updateData.thesis_written_at = new Date().toISOString(); }
+      if (priceTarget && !held.price_target) updateData.price_target = priceTarget;
+      if (stopLoss && !held.stop_loss) updateData.stop_loss = stopLoss;
+
+      const { data: position, error: mergeErr } = await supabase.from('positions')
+        .update(updateData).eq('id', held.id).eq('user_id', req.user.id).select().single();
+      if (mergeErr) return res.status(500).json({ error: 'Failed to update position' });
+
+      requestRefresh();
+      trackFeature('add_position', req.user.id);
+
+      // A funded buy moves the added cost out of cash, same as a fresh buy.
+      let cash = null;
+      if (req.body?.fundFromCash) {
+        const cost = shares * avgCost;
+        try { cash = await adjustCashBalance(req.user.id, -cost); }
+        catch (e) { console.warn(`[req:${req.requestId}] [Portfolio] cash debit on add-to-position failed:`, e.message); }
+      }
+      return res.json({ success: true, position, merged: true, addedShares: shares, cash });
+    }
+
+    // New ticker: enforce the plan's position limit, then insert.
     const plan = req.user.plan ?? 'free';
     const limit = POSITION_LIMITS[plan] ?? 3;
     const { data: existing } = await supabase.from('positions').select('id').eq('user_id', req.user.id);
     if ((existing?.length ?? 0) >= limit) {
-      return res.status(403).json({ error: `Position limit reached (${limit} max on ${plan} plan) — upgrade to add more` });
+      return res.status(403).json({ error: `Position limit reached (${limit} max on ${plan} plan), upgrade to add more` });
     }
-
-    const { data: dup } = await supabase.from('positions').select('id').eq('user_id', req.user.id).eq('ticker', ticker).maybeSingle();
-    if (dup) return res.status(409).json({ error: `${ticker} is already in your portfolio` });
 
     const insertData = {
       user_id: req.user.id,

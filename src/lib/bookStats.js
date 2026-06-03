@@ -65,6 +65,7 @@ export function pctOfBookOf(p, holdingsValue) {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const round1 = (n) => Math.round(n * 10) / 10;
+const round4 = (n) => Math.round(n * 10000) / 10000;
 
 /**
  * A stable, order-independent fingerprint of the book's SHAPE: the set of
@@ -75,6 +76,24 @@ const round1 = (n) => Math.round(n * 10) / 10;
  * stamp (they are not a book change), which is what keeps it from thrashing the
  * cache every tick. Equal stamp means equal book.
  */
+/**
+ * Blend an added lot into an existing position at the weighted-average cost.
+ * This is the "I bought more" math: give it the held shares/avg and the newly
+ * bought shares/price, get back the combined { shares, avgCost }. If the prior
+ * cost is unknown (0), the blend still computes from what is known. Pure and
+ * defensive (junk coerces to 0).
+ */
+export function mergeLots(prevShares, prevAvgCost, addShares, addPrice) {
+  const ps = num(prevShares) ?? 0;
+  const pa = num(prevAvgCost) ?? 0;
+  const as = num(addShares) ?? 0;
+  const ap = num(addPrice) ?? 0;
+  const shares = ps + as;
+  if (shares <= 0) return { shares: 0, avgCost: 0 };
+  const avgCost = (ps * pa + as * ap) / shares;
+  return { shares: round4(shares), avgCost: round2(avgCost) };
+}
+
 export function bookStamp(positions) {
   const list = (Array.isArray(positions) ? positions : []).filter(Boolean);
   const parts = list.map(p => {

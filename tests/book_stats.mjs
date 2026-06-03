@@ -4,7 +4,7 @@
 // the holdings-only denominator, the 1-decimal display rounding, and the
 // null-not-NaN guards are all locked here.
 import assert from 'node:assert/strict';
-import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp } from '../src/lib/bookStats.js';
+import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp, mergeLots } from '../src/lib/bookStats.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -154,6 +154,22 @@ test('bookStamp is case-insensitive on ticker and safe on junk', () => {
   assert.equal(bookStamp([{ ticker: 'aapl', shares: 10, avg_cost: 150 }]), bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 150 }]));
   assert.equal(bookStamp(null), '');
   assert.equal(bookStamp([null, undefined]), '');
+});
+
+test('mergeLots blends a bought-more lot at the weighted-average cost', () => {
+  // 10 @ $150 + 5 @ $170 => 15 @ $156.67
+  assert.deepEqual(mergeLots(10, 150, 5, 170), { shares: 15, avgCost: 156.67 });
+  // Adding at the same price keeps the average.
+  assert.deepEqual(mergeLots(10, 150, 10, 150), { shares: 20, avgCost: 150 });
+});
+
+test('mergeLots from an empty/new position just takes the new lot', () => {
+  assert.deepEqual(mergeLots(0, 0, 5, 100), { shares: 5, avgCost: 100 });
+});
+
+test('mergeLots is safe on junk inputs', () => {
+  assert.deepEqual(mergeLots(null, null, 3, 50), { shares: 3, avgCost: 50 });
+  assert.deepEqual(mergeLots('x', 'y', 'z', 'w'), { shares: 0, avgCost: 0 });
 });
 
 let pass = 0, fail = 0;
