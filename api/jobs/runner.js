@@ -1,5 +1,4 @@
 import '../config.js';
-import { backgroundScan } from '../functions/social.js';
 import { runBargainScan } from '../functions/bargainRadar.js';
 import { runDailyScreeners } from '../functions/screeners.js';
 import { refreshAllThesisWatches } from '../services/thesisWatch.js';
@@ -20,14 +19,12 @@ import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiSt
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 
-// Run social scan every 30 min
-const CATEGORIES = ['all', 'stocks', 'pennystocks', 'etfs', 'crypto'];
-CATEGORIES.forEach((cat, i) => {
-  setTimeout(() => {
-    backgroundScan(cat);
-    setInterval(() => backgroundScan(cat), 30 * 60 * 1000);
-  }, i * 12000);
-});
+// NOTE: the buzz/social scanner is started by the API server (server.js calls
+// startBackgroundScanner on boot), so it is NOT run here. The old per-category
+// backgroundScan(cat) loop was a leftover from before the Social redesign moved
+// scanning into a single server-side scanner; its import no longer existed,
+// which crashed this entire runner on load and silently killed every scheduled
+// job below (briefs, bargain scan, explainers, digests, recaps, resets).
 
 /**
  * Concurrency limiter — runs async functions with max N concurrent.
