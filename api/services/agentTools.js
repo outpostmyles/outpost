@@ -8,6 +8,7 @@ import { getFinancials, getAnalystRating } from './fmp.js';
 import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
 import { getEarningsForTicker, getEarningsForTickers, getEarningsCalendar } from '../utils/finnhub.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
+import { normalizeQuote } from '../utils/polygon.js';
 import { getTaxInsights } from './taxInsights.js';
 import { supabase } from '../db.js';
 import { getPrice } from './pricePool.js';
@@ -385,21 +386,19 @@ export async function lookupStock({ ticker }) {
   const t = data?.ticker;
   if (!t) return { error: `No data found for ${ticker}` };
 
-  const price = t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || null;
-  const prev = t?.prevDay?.c || price;
-  const change = price && prev ? price - prev : null;
-  const changePct = prev && change != null ? (change / prev) * 100 : null;
+  const q = normalizeQuote(t);
+  if (!q) return { error: `No price data for ${ticker}` };
 
   return {
     ticker,
-    price: price ? +price.toFixed(2) : null,
-    change: change ? +change.toFixed(2) : null,
-    change_percent: changePct ? +changePct.toFixed(2) : null,
-    volume: t?.day?.v ?? null,
-    day_high: t?.day?.h ?? null,
-    day_low: t?.day?.l ?? null,
-    day_open: t?.day?.o ?? null,
-    prev_close: prev ? +prev.toFixed(2) : null,
+    price: q.price,
+    change: q.change,
+    change_percent: q.changePercent,
+    volume: q.volume,
+    day_high: q.dayHigh,
+    day_low: q.dayLow,
+    day_open: q.dayOpen,
+    prev_close: q.prevClose,
     updated: t?.lastTrade?.t ? new Date(t.lastTrade.t / 1e6).toISOString() : null,
   };
 }

@@ -31,23 +31,18 @@ async function poly(path, ttlMs = 60000, cacheKey = null) {
 export async function getSnapshot(ticker) {
   try {
     const data = await poly(`/v2/snapshot/locale/us/markets/stocks/tickers/${ticker}`, 30000, `snap_${ticker}`);
-    const t = data?.ticker;
-    if (!t) return null;
-    // Use the best available price — prevDay.c is most reliable after hours
-    const price = validPrice(t?.day?.c) ?? validPrice(t?.lastTrade?.p) ?? validPrice(t?.min?.c) ?? validPrice(t?.prevDay?.c) ?? null;
-    const prev = validPrice(t?.prevDay?.c) ?? price;
-    const change = price != null && prev != null ? price - prev : null;
-    const changePct = prev && change != null ? (change / prev) * 100 : null;
+    const q = normalizeQuote(data?.ticker);
+    if (!q) return null;
     return {
       ticker,
-      price: price != null ? parseFloat(price.toFixed(2)) : null,
-      change: change != null ? parseFloat(change.toFixed(2)) : null,
-      changePercent: changePct != null ? parseFloat(changePct.toFixed(2)) : null,
-      volume: t?.day?.v ?? null,
-      high: t?.day?.h ?? null,
-      low: t?.day?.l ?? null,
-      open: t?.day?.o ?? null,
-      prevClose: prev != null ? parseFloat(prev.toFixed(2)) : null,
+      price: q.price,
+      change: q.change,
+      changePercent: q.changePercent,
+      volume: q.volume,
+      high: q.dayHigh,
+      low: q.dayLow,
+      open: q.dayOpen,
+      prevClose: q.prevClose,
     };
   } catch (err) {
     console.error(`[Polygon] Snapshot failed for ${ticker}:`, err.message);
@@ -57,7 +52,47 @@ export async function getSnapshot(ticker) {
 
 // Returns number if it's a valid positive price, null otherwise
 function validPrice(v) {
-  return typeof v === 'number' && v > 0 ? v : null;
+  // Must be a finite positive number. The Number.isFinite guard rejects
+  // Infinity (which would otherwise pass `> 0`) and NaN, so a garbage feed
+  // value can never become a rendered price.
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+// Sanity bounds for a single-session change percent. A reading outside this band
+// (or non-finite) is a data error, usually a bad prevClose, and is nulled rather
+// than rendered as garbage.
+const CHANGE_PCT_MAX = 500;
+const CHANGE_PCT_MIN = -95;
+
+// THE single source of truth for turning a raw Polygon snapshot ticker object into
+// a normalized quote. One field-precedence chain, one change computation, one
+// clamp on the percent. Every quote path (getSnapshot, getSnapshots, getMovers,
+// lookupStock) routes through this, so the same ticker cannot show two different
+// prices or today-percents across the app. Pure: give it `t` (data.ticker), get
+// back a normalized quote, or null when there is no usable price.
+export function normalizeQuote(t) {
+  if (!t || typeof t !== 'object') return null;
+  const price = validPrice(t.day?.c) ?? validPrice(t.lastTrade?.p) ?? validPrice(t.min?.c) ?? validPrice(t.prevDay?.c) ?? null;
+  if (price == null) return null;
+  // No fallback to `price`: an absent prior close means the day's change is
+  // UNKNOWN, not zero. Fabricating prev = price would render a fake "flat 0%"
+  // on a stock we simply have no reference for. Honest null instead.
+  const prev = validPrice(t.prevDay?.c);
+  const change = prev != null ? price - prev : null;
+  let changePercent = (prev != null && prev > 0 && change != null) ? (change / prev) * 100 : null;
+  if (changePercent != null && (!Number.isFinite(changePercent) || changePercent > CHANGE_PCT_MAX || changePercent < CHANGE_PCT_MIN)) {
+    changePercent = null; // out-of-band or NaN/Infinity => data error, do not render
+  }
+  return {
+    price: parseFloat(price.toFixed(2)),
+    change: change != null ? parseFloat(change.toFixed(2)) : null,
+    changePercent: changePercent != null ? parseFloat(changePercent.toFixed(2)) : null,
+    prevClose: prev != null ? parseFloat(prev.toFixed(2)) : null,
+    volume: t.day?.v ?? null,
+    dayHigh: t.day?.h ?? null,
+    dayLow: t.day?.l ?? null,
+    dayOpen: t.day?.o ?? null,
+  };
 }
 
 export async function getSnapshots(tickers) {
@@ -66,15 +101,13 @@ export async function getSnapshots(tickers) {
     const data = await poly(`/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers.join(',')}`, 30000);
     const result = {};
     for (const t of data?.tickers ?? []) {
-      const price = validPrice(t?.day?.c) ?? validPrice(t?.lastTrade?.p) ?? validPrice(t?.min?.c) ?? validPrice(t?.prevDay?.c) ?? null;
-      const prev = validPrice(t?.prevDay?.c) ?? price;
-      const change = price != null && prev != null ? price - prev : null;
-      const changePct = prev && change != null ? (change / prev) * 100 : null;
+      const q = normalizeQuote(t);
+      if (!q) continue;
       result[t.ticker] = {
-        price: price != null ? parseFloat(price.toFixed(2)) : null,
-        changePercent: changePct != null ? parseFloat(changePct.toFixed(2)) : null,
-        volume: t?.day?.v ?? null,
-        prevClose: prev != null ? parseFloat(prev.toFixed(2)) : null,
+        price: q.price,
+        changePercent: q.changePercent,
+        volume: q.volume,
+        prevClose: q.prevClose,
       };
     }
     // Log tickers that returned no usable price
@@ -97,17 +130,12 @@ export async function getMovers(direction = 'gainers') {
       const volume = t?.day?.v ?? 0;
       return price >= 5 && volume >= 500000;
     }).slice(0, 5);
+    // Display price/change go through the one normalizer, so a mover that is also
+    // a held position shows the same number on the movers list and the card.
     return tickers.map(t => {
-      const price = t?.day?.c ?? t?.lastTrade?.p ?? 0;
-      const prev = t?.prevDay?.c ?? price;
-      const changePct = prev > 0 ? ((price - prev) / prev) * 100 : 0;
-      return {
-        ticker: t.ticker,
-        price: parseFloat(price.toFixed(2)),
-        changePercent: parseFloat(changePct.toFixed(2)),
-        volume: t?.day?.v ?? 0,
-      };
-    });
+      const q = normalizeQuote(t);
+      return q ? { ticker: t.ticker, price: q.price, changePercent: q.changePercent, volume: q.volume } : null;
+    }).filter(Boolean);
   } catch { return []; }
 }
 
