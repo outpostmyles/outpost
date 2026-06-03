@@ -498,12 +498,14 @@ function ComposureCard() {
 // sits up top so the next entry is one tap. Never an empty page: a brand new user
 // still sees their goal and an honest "this fills in as you trade" below it.
 function ProgressOverview({ onSeeStory, onReflect }) {
-  const [totalValue, setTotalValue] = useState(0);
+  // Account value (holdings + cash), not holdings only: the North Star measures
+  // progress against everything they have, so sitting in cash still counts.
+  const [accountValue, setAccountValue] = useState(0);
   const [coachOpen, setCoachOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     cachedFetch('portfolio_value', () => api.portfolio.value(), 60000)
-      .then(d => { if (alive) setTotalValue(d?.totalValue ?? 0); })
+      .then(d => { if (alive) setAccountValue(d?.accountValue ?? d?.totalValue ?? 0); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -523,7 +525,7 @@ function ProgressOverview({ onSeeStory, onReflect }) {
       {coachOpen && <CoachChat onClose={() => setCoachOpen(false)} />}
       {/* What you control, getting better even when the market is not. */}
       <ComposureCard />
-      <NorthStarCard currentValue={totalValue} />
+      <NorthStarCard currentValue={accountValue} />
       <ReflectFeed onReflect={onReflect} />
       <PatternsView />
       <div style={{ padding: '0 16px 22px' }}>

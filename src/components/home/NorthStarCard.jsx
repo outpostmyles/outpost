@@ -3,10 +3,11 @@ import { api } from '../../lib/api.js';
 import { goalProgress } from '../../lib/goalProgress.js';
 import { projectGoal } from '../../lib/goalProjection.js';
 
-// The North Star: the portfolio value that means financial freedom to this
-// user. Orients the app around their destination, not just today's balance.
-// `currentValue` is passed from Home (already loaded), so this only fetches the
-// goal itself.
+// The North Star: the account value that means financial freedom to this user.
+// Orients the app around their destination, not just today's balance.
+// `currentValue` is passed in already loaded and is ACCOUNT value (holdings +
+// cash), not holdings only, so closing a position into cash does not make the
+// goal look further away. This component only fetches the goal and snapshots.
 
 function fmtMoney(n) {
   if (n == null || isNaN(n)) return '$0';

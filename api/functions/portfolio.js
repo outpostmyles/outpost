@@ -17,6 +17,7 @@ import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats } from '../../src/lib/bookStats.js';
+import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
@@ -66,31 +67,9 @@ const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
 
-// ── Cash balance ───────────────────────────────────────────────────────────
-// The account is cash + holdings. Cash lives in agent_memory as a per-user JSON
-// singleton, the same no-migration pattern the North Star goal uses. Closing a
-// position credits its proceeds here, a funded buy debits it, and the user can set
-// it to match their brokerage. Never goes negative.
-async function getCashBalance(userId) {
-  try {
-    const { data } = await supabase.from('agent_memory')
-      .select('content').eq('user_id', userId).eq('memory_type', 'cash_balance')
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if (!data?.content) return 0;
-    const amt = Number(JSON.parse(data.content)?.amount);
-    return Number.isFinite(amt) && amt >= 0 ? amt : 0;
-  } catch { return 0; }
-}
-async function setCashBalance(userId, amount) {
-  const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
-  await supabase.from('agent_memory').delete().eq('user_id', userId).eq('memory_type', 'cash_balance');
-  await supabase.from('agent_memory').insert({ user_id: userId, memory_type: 'cash_balance', content: JSON.stringify({ amount: amt }), created_at: new Date().toISOString() });
-  return amt;
-}
-async function adjustCashBalance(userId, delta) {
-  const cur = await getCashBalance(userId);
-  return setCashBalance(userId, Math.max(0, cur + (Number(delta) || 0)));
-}
+// Cash balance helpers now live in services/cashBalance.js so every surface
+// (this router, the agent's North Star framing, the daily digest) reads the
+// account's cash the same single way. Imported at the top of this file.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 3 — TICKER HISTORY (powers "Your history with this" on position cards

@@ -1,6 +1,7 @@
 import { supabase } from '../db.js';
 import { getMarketData, getMoversData } from '../services/marketData.js';
 import { getPrices } from '../services/pricePool.js';
+import { getCashBalance } from '../services/cashBalance.js';
 import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
@@ -336,8 +337,12 @@ export async function buildAgentContext(userId, user) {
       const target = Number(g?.amount);
       if (target > 0) {
         const pm = getPrices(rawPos.map(p => p.ticker));
-        const totalValue = rawPos.reduce((s, p) => s + (pm[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0);
-        const pct = Math.max(0, Math.min(100, Math.round((totalValue / target) * 100)));
+        const holdingsValue = rawPos.reduce((s, p) => s + (pm[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0);
+        // Account value, not holdings only: the freedom number is measured against
+        // everything they have, so cash counts and closing a position into cash
+        // does not make the goal look further away.
+        const accountValue = holdingsValue + await getCashBalance(userId);
+        const pct = Math.max(0, Math.min(100, Math.round((accountValue / target) * 100)));
         northStar = `\n\nNORTH STAR (the trader's stated freedom goal): $${target.toLocaleString()}${g.label ? ` ("${safeUserText(g.label, 80)}")` : ''}. They are about ${pct}% of the way there. When a decision is material, frame it in terms of protecting and advancing this goal. Never reframe or invent a different goal for them.`;
       }
     }

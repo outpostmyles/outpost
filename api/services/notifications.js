@@ -24,6 +24,7 @@ import { getPerformanceAttribution } from './performanceAttribution.js';
 import { getPlanAdherence } from './planAdherence.js';
 import { todayStr } from '../utils/marketHours.js';
 import { goalProgress } from '../../src/lib/goalProgress.js';
+import { getCashBalance } from './cashBalance.js';
 
 const resend = config.resendKey ? new Resend(config.resendKey) : null;
 const FROM_ADDRESS = 'Outpost <noreply@outpostapp.co>';
@@ -390,7 +391,11 @@ async function northStarForDigest(userId) {
     const { data: snap } = await supabase.from('portfolio_snapshots')
       .select('total_value').eq('user_id', userId)
       .order('date', { ascending: false }).limit(1).maybeSingle();
-    const p = goalProgress(Number(snap?.total_value) || 0, target);
+    // Account value, not holdings only: cash counts toward the freedom number, so
+    // a user sitting in cash still sees honest progress (snapshot is end-of-day
+    // holdings, cash is current; close enough for a daily digest figure).
+    const accountValue = (Number(snap?.total_value) || 0) + await getCashBalance(userId);
+    const p = goalProgress(accountValue, target);
     if (!p) return null;
     return { pct: p.pct, reached: p.reached, label: g.label || '' };
   } catch { return null; }

@@ -530,7 +530,7 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           {/* NORTH STAR — the freedom number and progress toward it. Shown once
               there's a book to grow; orients the app around the destination. */}
           {(data.portfolio?.positions?.length ?? 0) >= 1 && (
-            <NorthStarCard currentValue={data.portfolio?.totalValue ?? 0} />
+            <NorthStarCard currentValue={data.portfolio?.accountValue ?? data.portfolio?.totalValue ?? 0} />
           )}
 
           {/* REFLECT: the journal comes to you. The few moments worth capturing

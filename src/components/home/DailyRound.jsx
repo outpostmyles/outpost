@@ -82,7 +82,7 @@ export default function DailyRound({ onTabSwitch, showToast }) {
 function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [round, setRound] = useState(null);
-  const [standing, setStanding] = useState({ todayChange: 0, totalPnl: 0, totalValue: 0, pulse: '' });
+  const [standing, setStanding] = useState({ todayChange: 0, totalPnl: 0, totalValue: 0, accountValue: 0, pulse: '' });
   const [goal, setGoal] = useState(null);
   const [i, setI] = useState(0);
 
@@ -106,7 +106,7 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
       const closedTrades = closedR.status === 'fulfilled' ? (closedR.value?.trades || []) : [];
       const adherence = adhR.status === 'fulfilled' ? adhR.value : null;
       setGoal(goalR.status === 'fulfilled' ? (goalR.value?.goal || null) : null);
-      setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, totalValue: value.totalValue ?? 0, pulse });
+      setStanding({ todayChange: value.todayChange ?? 0, totalPnl: value.totalPnl ?? 0, totalValue: value.totalValue ?? 0, accountValue: value.accountValue ?? value.totalValue ?? 0, pulse });
       setRound(buildRound({
         todayItems: today.items || [],
         positions: value.positions || [],
@@ -163,7 +163,7 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
               {current === 'standing' && <StandingStep standing={standing} />}
               {current === 'opportunity' && <OpportunityStep items={round.opportunity} onAct={act} />}
               {current === 'sharpen' && <SharpenStep sharpen={round.sharpen} showToast={showToast} onAct={act} onReflected={markReflectedId} />}
-              {current === 'close' && <CloseStep round={round} goal={goal} currentValue={standing.totalValue} />}
+              {current === 'close' && <CloseStep round={round} goal={goal} currentValue={standing.accountValue} />}
               <button onClick={next} className="btn btn-blue btn-full" style={{ marginTop: 22 }}>
                 {last ? "Done. I'm covered." : 'Next'}
               </button>
