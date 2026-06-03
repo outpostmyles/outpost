@@ -1020,7 +1020,7 @@ function EarningsBadge({ earnings }) {
  * collapsible calm group. Designed to scale from 1 to 100+ positions without
  * becoming a wall of rows.
  */
-function PositionList({ positions, totalValue, onRefresh, showToast }) {
+function PositionList({ positions, totalValue, onRefresh, showToast, thesisWatches = {} }) {
   const [calmExpanded, setCalmExpanded] = useState(false);
 
   // Annotate each position with status + score, then split into needs-attention
@@ -1050,6 +1050,7 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
           onRefresh={onRefresh}
           showToast={showToast}
           status={status}
+          thesisWatch={thesisWatches[pos.ticker]}
         />
       ))}
 
@@ -1085,6 +1086,7 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
           onRefresh={onRefresh}
           showToast={showToast}
           status={status}
+          thesisWatch={thesisWatches[pos.ticker]}
         />
       ))}
     </div>
@@ -1543,7 +1545,32 @@ function HealthRead({ pos }) {
   );
 }
 
-function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
+// The living thesis watch verdict, shown right under the user's own thesis. Same
+// visual family as POSITION HEALTH, but this one judges the REASON you own it,
+// not the price: is it strengthening, intact, weakening, or breaking, with the one
+// fact behind the call and when Outpost last looked.
+const THESIS_META = {
+  strengthening: { label: 'STRENGTHENING', color: 'var(--green)', bg: 'rgba(34,197,94,0.1)',  border: 'rgba(34,197,94,0.25)' },
+  intact:        { label: 'INTACT',        color: 'var(--blue)',  bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.22)' },
+  weakening:     { label: 'WEAKENING',     color: 'var(--amber)', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.25)' },
+  broken:        { label: 'BREAKING',      color: 'var(--red)',   bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.25)' },
+};
+function ThesisWatchBadge({ watch }) {
+  const m = THESIS_META[watch?.verdict];
+  if (!m) return null;
+  return (
+    <div style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 8, padding: '10px 12px', margin: '6px 0 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.8px', color: m.color }}>THESIS {m.label}</span>
+        {watch.asOf && <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>watched {devTimeAgo(watch.asOf)}</span>}
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.55, margin: 0 }}>{watch.headline}</p>
+      {watch.evidence && <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, margin: '4px 0 0' }}>{watch.evidence}</p>}
+    </div>
+  );
+}
+
+function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWatch }) {
   // Modes:
   //   'collapsed' — compact card showing price + today + P&L
   //   'expanded'  — opened card showing details + news + GET AI READ button
@@ -1778,6 +1805,10 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               onEdit={() => setMode('edit')}
               onReconfirmed={onRefresh}
             />
+
+            {/* LIVING THESIS WATCH — is the reason you own it still true? Sits
+                right under your own words, since it is a verdict on those words. */}
+            {thesisWatch && <ThesisWatchBadge watch={thesisWatch} />}
 
             {/* POSITION HEALTH — the honest verdict on whether this holding still
                 earns its place. Suppressed when it would only restate the attention
@@ -2310,8 +2341,8 @@ function ExposureCard({ positions, onTabSwitch }) {
 // "WHAT NEEDS YOU" — the prioritized, proactive action list. The few decisions
 // that actually matter on your book today, each with one button to act on it.
 // Renders nothing when the book is calm and fully planned, so it is signal only.
-function ActionFeed({ positions, totalValue }) {
-  const actions = buildPortfolioActions(positions, totalValue);
+function ActionFeed({ positions, totalValue, thesisWatches }) {
+  const actions = buildPortfolioActions(positions, totalValue, thesisWatches);
   if (!actions.length) return null;
   const act = (a) => {
     if (a.actionType === 'ask') window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: a.askMessage } }));
@@ -2394,6 +2425,10 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [addPrefill, setAddPrefill] = useState(null);
   // First-ever position triggers a one-time instant AI read (first-run aha).
   const [firstRead, setFirstRead] = useState(null);
+  // The living thesis watch, keyed by ticker. Fetched on its own (cached) so a
+  // cold judgment never blocks the page; verdicts pop onto the cards and into the
+  // action feed when they arrive.
+  const [thesisWatches, setThesisWatches] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2402,6 +2437,14 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let alive = true;
+    cachedFetch('portfolio_thesis_watch', () => api.portfolio.thesisWatch(), 30 * 60000)
+      .then(d => { if (alive) setThesisWatches(d?.watches || {}); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // Phase 4 deploy-cash pick handler — open AddModal pre-filled with the
   // chosen recommendation's ticker, shares, cost, and reasoning (the bridge
@@ -2493,7 +2536,7 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
               drawdown/concentration bands (those are just two of the things it
               surfaces) and turns "here's a flag" into "here's the thing and the
               button to handle it." */}
-          <ActionFeed positions={positions} totalValue={data?.totalValue ?? 0} />
+          <ActionFeed positions={positions} totalValue={data?.totalValue ?? 0} thesisWatches={thesisWatches} />
 
           {/* Compact action bar — + ADD primary, refresh + menu as icons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -2513,6 +2556,7 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             totalValue={data?.totalValue ?? 0}
             onRefresh={load}
             showToast={showToast}
+            thesisWatches={thesisWatches}
           />
 
           {/* What is happening on your book today — headlines across holdings.

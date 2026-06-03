@@ -136,6 +136,8 @@ export const api = {
     sectors: () => get('/api/portfolio/sectors'),
     // "What is happening on your book" — recent headlines across your holdings.
     developments: () => get('/api/portfolio/developments'),
+    // The living thesis watch: is the reason you own each holding still true?
+    thesisWatch: () => get('/api/portfolio/thesis-watch'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

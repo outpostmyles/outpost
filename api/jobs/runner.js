@@ -2,6 +2,7 @@ import '../config.js';
 import { backgroundScan } from '../functions/social.js';
 import { runBargainScan } from '../functions/bargainRadar.js';
 import { runDailyScreeners } from '../functions/screeners.js';
+import { refreshAllThesisWatches } from '../services/thesisWatch.js';
 import { generateAllExplainers } from '../functions/portfolioExplainer.js';
 import { generateAllDigests } from '../services/proactiveDigest.js';
 import { sendAllDailyDigestEmails, sendAllWeeklySummaryEmails } from '../services/notifications.js';
@@ -248,6 +249,13 @@ scheduleAt(17, 0, async () => {
   if (!isWeekday()) return;
   try { await runBargainScan(); } catch (err) { console.error('[Jobs] Bargain scan failed:', err.message); }
 }, 'Bargain Radar scan');
+// Living thesis watch: re-judge whether the reason behind each held thesis still
+// holds, against the day's news and fundamentals. Weekday only, after the close,
+// so the verdicts are fresh on the cards and ready for the morning read.
+scheduleAt(18, 0, async () => {
+  if (!isWeekday()) return;
+  try { await refreshAllThesisWatches(); } catch (err) { console.error('[Jobs] Thesis watch refresh failed:', err.message); }
+}, 'Thesis watch refresh');
 // Living screens: re-run each saved screener after the close so it surfaces what
 // is new since the user last looked. Weekday only, for fresh end-of-day prices.
 scheduleAt(18, 30, async () => {

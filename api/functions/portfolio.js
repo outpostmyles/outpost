@@ -14,6 +14,7 @@ import { resolveSector } from '../services/sectorMap.js';
 import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
+import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
 import { getPlanAdherence } from '../services/planAdherence.js';
@@ -1597,6 +1598,32 @@ router.get('/developments', requireAuth, rateLimit(20), async (req, res) => {
   } catch (err) {
     console.error(`[req:${req.requestId}] [Portfolio] /developments failed:`, err.message);
     res.json({ items: [] }); // non-critical
+  }
+});
+
+// THE LIVING THESIS WATCH. For every holding the user wrote a reason for, return
+// whether that reason is strengthening / intact / weakening / breaking, judged
+// against live news, fundamentals, and price. Cached (and pre-warmed nightly), so
+// this is usually a fast cache read; only changed theses or fresh news pay for a
+// new judgment. The client fetches this on its own so a cold judgment never blocks
+// the page. Map is keyed by ticker: { TICKER: { verdict, headline, evidence, asOf } }.
+router.get('/thesis-watch', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const { data: positions } = await supabase
+      .from('positions')
+      .select('ticker, shares, avg_cost, entry_thesis, reversal_condition')
+      .eq('user_id', req.user.id);
+    const withThesis = (positions ?? []).filter(p => p.entry_thesis && String(p.entry_thesis).trim());
+    if (!withThesis.length) return res.json({ watches: {} });
+
+    const priceMap = getPrices([...new Set(withThesis.map(p => p.ticker))]);
+    const enriched = withThesis.map(p => ({ ...p, currentPrice: priceMap[p.ticker]?.price ?? p.avg_cost ?? 0 }));
+
+    const watches = await getThesisWatchesForUser(req.user.id, enriched);
+    res.json({ watches });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /thesis-watch failed:`, err.message);
+    res.json({ watches: {} }); // non-critical: the cards just fall back to the plain thesis
   }
 });
 

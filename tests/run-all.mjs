@@ -22,7 +22,7 @@ const SUITE = [
   'discover_ranker', 'ticker_extract', 'journal_search', 'note_match', 'patterns_resilient',
   'today_composite', 'injection_wrap', 'notices', 'history_recall', 'agent_opener',
   'screener_verdicts', 'screener_diff', 'screener_constraints', 'sector_map', 'research_dossier',
-  'portfolio_actions',
+  'portfolio_actions', 'thesis_watch',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via

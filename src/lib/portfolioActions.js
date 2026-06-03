@@ -1,9 +1,10 @@
 // "What needs you": the prioritized action list at the top of the Portfolio tab.
 // The point is to replace "read everything and figure out what matters" with a
 // short list of the few things that actually need a decision right now, each with
-// the single action to take. It is deliberately proactive: it flags a winner with
-// no stop, a name creeping past a quarter of your book, or a name approaching its
-// target BEFORE those bite, not after.
+// the single action to take. It is deliberately proactive: it flags a name whose
+// thesis is breaking, a winner with no stop, a name creeping past a quarter of
+// your book, or a name approaching its target BEFORE those bite, not after. The
+// thesis verdicts come from the living thesis watch (passed in as a ticker map).
 //
 // Crucially it does NOT repeat: signals that would otherwise be the same sentence
 // over and over (several winners with no stop, several holdings with no thesis or
@@ -19,8 +20,9 @@ function preview(names, n = 3) {
   return names.slice(0, n).join(', ') + (names.length > n ? `, +${names.length - n} more` : '');
 }
 
-export function buildPortfolioActions(positions, totalValue = 0) {
+export function buildPortfolioActions(positions, totalValue = 0, thesisWatches = {}) {
   const list = Array.isArray(positions) ? positions : [];
+  const watches = thesisWatches || {};
   const individual = [];          // specific, urgent, one-off
   const winnersNoStop = [];       // { ticker, pnlPct }
   const noThesis = [];            // { ticker }
@@ -37,17 +39,23 @@ export function buildPortfolioActions(positions, totalValue = 0) {
     const hasStop = !!(p.stop_loss && p.stop_loss > 0);
     const hasPlan = hasStop || !!(p.price_target && p.price_target > 0);
     const hasThesis = !!(p.entry_thesis && String(p.entry_thesis).trim());
+    const watch = watches[ticker] || watches[String(ticker).toUpperCase()];
 
     if (st.status === 'below_stop') {
       individual.push({ id: `${ticker}:stop`, ticker, severity: 100, actionType: 'research', actionLabel: 'REVIEW', text: `${ticker} broke its stop ($${p.stop_loss}). Decide on purpose: honor it, or move it.` });
     } else if (st.status === 'target_hit') {
       individual.push({ id: `${ticker}:target`, ticker, severity: 95, actionType: 'research', actionLabel: 'DECIDE', text: `${ticker} hit your target ($${p.price_target}). Take profits, trim, or raise the target.` });
+    } else if (watch?.verdict === 'broken') {
+      // The reason you own it may be gone. That outranks most price-based flags.
+      individual.push({ id: `${ticker}:thesis`, ticker, severity: 92, actionType: 'research', actionLabel: 'REVIEW', text: `Your ${ticker} thesis may be breaking. ${watch.headline}` });
     } else if (pnlPct <= -20) {
       individual.push({ id: `${ticker}:dd`, ticker, severity: 85, actionType: 'research', actionLabel: 'REVIEW', text: `${ticker} is down ${Math.abs(Math.round(pnlPct))}% from your cost. Is the reason you bought it still true?` });
     } else if (pnlPct >= 30 && !hasStop) {
       winnersNoStop.push({ ticker, pnlPct });
     } else if (pct >= 25) {
       individual.push({ id: `${ticker}:conc`, ticker, severity: 70 + Math.min(20, pct - 25), actionType: 'ask', actionLabel: 'TRIM?', text: `${ticker} is ${Math.round(pct)}% of your book. A bad day there moves your whole portfolio.`, askMessage: `${ticker} is ${Math.round(pct)}% of my book. Walk me through whether I should trim it down, and to what.` });
+    } else if (watch?.verdict === 'weakening') {
+      individual.push({ id: `${ticker}:thesis`, ticker, severity: 76, actionType: 'research', actionLabel: 'REVIEW', text: `Your ${ticker} thesis is weakening. ${watch.headline}` });
     } else if (st.status === 'near_target' && p.price_target) {
       const dist = ((p.price_target - price) / price) * 100;
       individual.push({ id: `${ticker}:near`, ticker, severity: 65, actionType: 'research', actionLabel: 'REVIEW', text: `${ticker} is ${dist.toFixed(1)}% from your target ($${p.price_target}). Have your plan ready.` });

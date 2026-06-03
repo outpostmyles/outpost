@@ -48,6 +48,45 @@ test('a calm, planned, thesis-backed position produces no action', () => {
   assert.equal(a.length, 0);
 });
 
+test('a breaking thesis becomes a high-priority action, above a drawdown', () => {
+  const a = buildPortfolioActions(
+    [P({ ticker: 'DELL', currentPrice: 90, avg_cost: 100, entry_thesis: 'margins expand', shares: 10 })],
+    1000,
+    { DELL: { verdict: 'broken', headline: 'Margins fell for a second straight quarter.' } },
+  );
+  assert.equal(a[0].ticker, 'DELL');
+  assert.match(a[0].text, /thesis may be breaking/);
+  assert.match(a[0].text, /Margins fell/);
+  assert.equal(a[0].actionType, 'research');
+  assert.ok(a[0].severity >= 90);
+});
+
+test('a weakening thesis surfaces as a review, below the urgent flags', () => {
+  const a = buildPortfolioActions(
+    [P({ ticker: 'BE', currentPrice: 102, avg_cost: 100, entry_thesis: 'grid demand', shares: 10 })],
+    100000, // small weight, so it is not flagged for concentration first
+    { BE: { verdict: 'weakening', headline: 'A key contract slipped to next year.' } },
+  );
+  const t = a.find(x => x.ticker === 'BE');
+  assert.ok(t, 'a thesis action for BE');
+  assert.match(t.text, /thesis is weakening/);
+  assert.match(t.text, /contract slipped/);
+});
+
+test('intact and strengthening theses produce no action', () => {
+  const a = buildPortfolioActions(
+    [P({ ticker: 'X', currentPrice: 102, avg_cost: 100, stop_loss: 95, price_target: 130, entry_thesis: 'good co', shares: 1 })],
+    1000000,
+    { X: { verdict: 'strengthening', headline: 'New deal validates the thesis.' } },
+  );
+  assert.equal(a.length, 0);
+});
+
+test('omitting the thesis-watch map keeps the old behavior intact', () => {
+  const a = buildPortfolioActions([P({ ticker: 'X', currentPrice: 70, avg_cost: 100 })], 1000);
+  assert.match(a[0].text, /down 30% from your cost/); // unchanged two-arg call
+});
+
 test('groups several winners-with-no-stop into ONE line, not the same sentence repeated', () => {
   const a = buildPortfolioActions([
     P({ ticker: 'A', currentPrice: 150, avg_cost: 100 }),
