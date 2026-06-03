@@ -6,10 +6,35 @@
 // the buildTodayFeed pipeline runs items through compositeMovers, which
 // collapses 3+ mover rows into a single mover_group card.
 import assert from 'node:assert/strict';
-import { compositeMovers } from '../api/services/today.js';
+import { compositeMovers, frameSectorHeat } from '../api/services/today.js';
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+// ── frameSectorHeat: the HEAT item must not cheerlead during a selloff ──────
+test('frameSectorHeat cheers a heating sector in calm regimes', () => {
+  const h = frameSectorHeat({ name: 'Technology', signal: 'strong' }, 'Risk On');
+  assert.match(h.title, /heating up/);
+  assert.equal(h.priorityBonus, 5); // strong-signal bump applies when calm
+});
+
+test('frameSectorHeat reframes (does not cheer) when the market is Risk Off', () => {
+  const h = frameSectorHeat({ name: 'Utilities', signal: 'strong' }, 'Risk Off');
+  assert.doesNotMatch(h.title, /heating up/);
+  assert.match(h.title, /holding up|jittery/i);
+  assert.match(h.detail, /defensive leadership|green light/i);
+  assert.equal(h.priorityBonus, 0); // no priority bump on a risk-off day
+});
+
+test('frameSectorHeat returns null when there is no heating sector', () => {
+  assert.strictEqual(frameSectorHeat(null, 'Neutral'), null);
+  assert.strictEqual(frameSectorHeat(undefined, 'Risk Off'), null);
+});
+
+test('frameSectorHeat prefers the source thesis for detail when present', () => {
+  const h = frameSectorHeat({ name: 'Energy', thesis: 'Oil breaking out.' }, 'Neutral');
+  assert.equal(h.detail, 'Oil breaking out.');
+});
 
 // Helper. Build a minimal mover item for tests.
 const m = (ticker, pct, priority = 70) => ({

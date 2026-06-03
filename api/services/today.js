@@ -35,6 +35,31 @@
  */
 import { supabase } from '../db.js';
 import { getPrices } from './pricePool.js';
+import { getMarketData } from './marketData.js';
+
+/**
+ * Frame the top heating sector for the current market regime. On a risk-off day,
+ * a sector still showing strength is defensive leadership, not a green light to
+ * chase, so we say that instead of cheerleading "heating up" while the broader
+ * market sells off (which read as tone-deaf). Pure so the regime behavior is
+ * testable. Returns { title, detail, priorityBonus } or null when there is no
+ * heating sector to show.
+ */
+export function frameSectorHeat(top, regime) {
+  if (!top) return null;
+  const name = top.name || 'Sector';
+  const riskOff = regime === 'Risk Off';
+  return {
+    title: riskOff ? `${name} holding up while the market is jittery` : `${name} heating up`,
+    detail: top.thesis || (riskOff
+      ? 'Relative strength here even as the broader market pulls back. That is defensive leadership, not a green light to chase.'
+      : 'Money rotating in based on multi-day flow signals.'),
+    // The strong-signal priority bump only applies in calmer regimes. On a
+    // risk-off day we do not let a hot sector jump ahead of the user's own
+    // risk items (broken stops, deep drawdowns).
+    priorityBonus: (!riskOff && top.signal === 'strong') ? 5 : 0,
+  };
+}
 
 const PRIORITY = {
   STOP_BROKEN:       100,
@@ -219,17 +244,18 @@ export async function buildTodayFeed(userId, opts = {}) {
     }
   }
 
-  // ── Sector heat — top heating sector from cache ─────────────────────────
+  // ── Sector heat: top heating sector from cache, framed for the regime ──
   if (sectorRaw?.result) {
     try {
       const sector = JSON.parse(sectorRaw.result);
       const top = (sector.heating || [])[0];
-      if (top) {
+      const heat = frameSectorHeat(top, getMarketData().regime);
+      if (heat) {
         items.push({
           type: 'heat', subtype: 'sector', ticker: top.ticker || 'SECTOR',
-          title: `${top.name || 'Sector'} heating up`,
-          detail: top.thesis || 'Money rotating in based on multi-day flow signals.',
-          priority: PRIORITY.SECTOR_HEAT + (top.signal === 'strong' ? 5 : 0),
+          title: heat.title,
+          detail: heat.detail,
+          priority: PRIORITY.SECTOR_HEAT + heat.priorityBonus,
           link: { tab: 'home', card: 'sector-radar' },
         });
       }
