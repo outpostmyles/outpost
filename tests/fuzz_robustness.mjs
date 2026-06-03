@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 
 import { buildStressTests } from '../src/lib/stressTest.js';
+import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp } from '../src/lib/bookStats.js';
 import { sectorExposure } from '../src/lib/sectorExposure.js';
 import { sectorGaps } from '../src/lib/sectorGaps.js';
 import { goalProgress } from '../src/lib/goalProgress.js';
@@ -39,6 +40,12 @@ const HOSTILE = [
 const cases = [
   ['buildStressTests(arg)', x => buildStressTests(x)],
   ['buildStressTests([], opts)', x => buildStressTests([{ ticker: 'A', currentValue: 100 }], x)],
+  ['marketValueOf', x => marketValueOf(x)],
+  ['costBasisOf', x => costBasisOf(x)],
+  ['pctOfBookOf(a)', x => pctOfBookOf(x, 1000)],
+  ['pctOfBookOf(b)', x => pctOfBookOf({ currentValue: 100 }, x)],
+  ['computeBookStats', x => computeBookStats(x)],
+  ['bookStamp', x => bookStamp(x)],
   ['sectorExposure', x => sectorExposure(x)],
   ['sectorGaps', x => sectorGaps(x)],
   ['sectorGaps(_, opts)', x => sectorGaps([{ sector: 'Tech', pct: 90 }], x)],
@@ -87,6 +94,22 @@ for (const [label, fn] of cases) {
     }
   });
 }
+
+// Beyond not-throwing: the book selector must always yield FINITE aggregates and
+// never a NaN weight, no matter how garbage the positions are. A NaN here would
+// smear "NaN%" across cards and feed the agent a broken number.
+test('computeBookStats always yields finite book aggregates and safe weights', () => {
+  for (const h of HOSTILE) {
+    const { book, positions } = computeBookStats(Array.isArray(h) ? h : [h]);
+    for (const k of ['holdingsValue', 'totalCost', 'unrealizedPnl', 'count']) {
+      assert.ok(Number.isFinite(book[k]), `book.${k} not finite for ${JSON.stringify(h)}`);
+    }
+    for (const p of positions) {
+      assert.ok(p.pctOfBook === null || Number.isFinite(p.pctOfBook), `pctOfBook neither null nor finite for ${JSON.stringify(h)}`);
+      assert.ok(Number.isFinite(p.marketValue) && Number.isFinite(p.costBasis), `marketValue/costBasis not finite for ${JSON.stringify(h)}`);
+    }
+  }
+});
 
 let pass = 0, fail = 0;
 for (const t of tests) {

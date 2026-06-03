@@ -103,7 +103,11 @@ export async function buildUserContext(userId, user) {
             const taxStatus = holdDays >= 365 ? 'long-term' : 'short-term';
             holdSegment = `held ${holdStr} [${taxStatus}]`;
           }
-          return `${p.ticker} (${p.shares} shares @ $${cost} avg, ${livePrice ? `now $${livePrice.toFixed(2)}, ` : ''}${pnlPct > 0 ? '+' : ''}${pnlPct}% P&L, ${holdSegment})`;
+          // With no live quote we do not print a fabricated "0.0% P&L" (which
+          // would read as "flat"); we say the P&L is unknown so the model does
+          // not reason off a number we do not actually have.
+          const pnlSegment = livePrice ? `${pnlPct > 0 ? '+' : ''}${pnlPct}% P&L` : 'P&L unknown (no live price)';
+          return `${p.ticker} (${p.shares} shares @ $${cost} avg, ${livePrice ? `now $${livePrice.toFixed(2)}, ` : ''}${pnlSegment}, ${holdSegment})`;
         }).join(', ')
       : 'No positions yet';
 

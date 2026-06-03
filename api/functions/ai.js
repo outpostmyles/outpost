@@ -809,13 +809,14 @@ router.get('/journal-coach', requireAuth, rateLimit(3), dailyAiCeiling(), async 
 
     // Pre-compute all stats so the AI works with FACTS, not raw data
     const enriched = allPositions.map(p => {
+      const hasLivePrice = !!priceMap[p.ticker]?.price;
       const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
       const cost = (p.avg_cost ?? 0) * (p.shares ?? 0);
       const current = livePrice * (p.shares ?? 0);
       const pnl = current - cost;
       const pnlPct = p.avg_cost > 0 ? ((livePrice - p.avg_cost) / p.avg_cost * 100) : 0;
       const positionSize = current;
-      return { ticker: p.ticker, shares: p.shares, avgCost: p.avg_cost, livePrice: +livePrice.toFixed(2), pnlDollar: +pnl.toFixed(0), pnlPct: +pnlPct.toFixed(1), positionValue: +positionSize.toFixed(0), entryThesis: p.entry_thesis || null, priceTarget: p.price_target || null, stopLoss: p.stop_loss || null };
+      return { ticker: p.ticker, shares: p.shares, avgCost: p.avg_cost, hasLivePrice, livePrice: +livePrice.toFixed(2), pnlDollar: +pnl.toFixed(0), pnlPct: +pnlPct.toFixed(1), positionValue: +positionSize.toFixed(0), entryThesis: p.entry_thesis || null, priceTarget: p.price_target || null, stopLoss: p.stop_loss || null };
     });
 
     const gainers = enriched.filter(p => p.pnlPct > 0);
@@ -866,7 +867,15 @@ Largest position: ${largestPosition?.ticker} at $${largestPosition?.positionValu
 Position size consistency: ${sizeConsistency}% coefficient of variation (lower = more consistent)
 
 POSITIONS WITH LIVE P&L:
-${enriched.map(p => `${p.ticker}: ${p.shares} shares @ $${p.avgCost} avg → $${p.livePrice} now (${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct}%, ${p.pnlDollar >= 0 ? '+' : ''}$${p.pnlDollar}, value: $${p.positionValue})${p.priceTarget ? ` Target: $${p.priceTarget}` : ''}${p.stopLoss ? ` Stop: $${p.stopLoss}` : ''}${p.entryThesis ? ` Thesis: "${p.entryThesis}"` : ''}`).join('\n')}${closedTradeBlock}`;
+${enriched.map(p => {
+        // Do not present cost basis as a live price. When there is no quote, say
+        // so and mark the P&L unknown, so the coach never calls a holding "flat"
+        // when we simply have no current price for it.
+        const body = p.hasLivePrice
+          ? `$${p.livePrice} now (${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct}%, ${p.pnlDollar >= 0 ? '+' : ''}$${p.pnlDollar}, value: $${p.positionValue})`
+          : `no live price right now (cost basis $${p.avgCost}, P&L unknown)`;
+        return `${p.ticker}: ${p.shares} shares @ $${p.avgCost} avg → ${body}${p.priceTarget ? ` Target: $${p.priceTarget}` : ''}${p.stopLoss ? ` Stop: $${p.stopLoss}` : ''}${p.entryThesis ? ` Thesis: "${p.entryThesis}"` : ''}`;
+      }).join('\n')}${closedTradeBlock}`;
 
     let newBalance;
     try { newBalance = await deductCredits(req.user.id, 20); }
@@ -1207,9 +1216,12 @@ async function buildDeployCashContext(userId, user) {
     });
   }
   const priced = positions.map(p => {
+    const hasLivePrice = !!priceMap[p.ticker]?.price;
+    // Cost fallback keeps the book math finite, but we remember it was a
+    // fallback so the prompt never presents cost basis AS the current price.
     const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
     const value = livePrice * (p.shares ?? 0);
-    return { ...p, livePrice, currentValue: value };
+    return { ...p, livePrice, hasLivePrice, currentValue: value };
   });
   // One book-stats source: pctOfBook and the holdings total come from the same
   // selector the cards and the synthesis use, so the agent's "% of book" matches
@@ -1296,7 +1308,13 @@ router.post('/deploy-cash', requireAuth, rateLimit(10), dailyAiCeiling(), async 
     const positionsLines = ctxData.positions.length
       ? ctxData.positions.map(p => {
           const thesisPart = p.entry_thesis ? ` · thesis: ${safeQuote(p.entry_thesis)}` : ' · no thesis written';
-          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}${todayChg(p.ticker)}, ${(p.pctOfBook ?? 0).toFixed(1)}% of book${thesisPart}`;
+          // Only state a current price when we actually have a live quote. With no
+          // quote we say so plainly instead of printing cost basis as "current",
+          // which would mislead a buy/add recommendation.
+          const priceStr = p.hasLivePrice
+            ? `current $${p.livePrice.toFixed(2)}${todayChg(p.ticker)}`
+            : 'no live price right now';
+          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, ${priceStr}, ${(p.pctOfBook ?? 0).toFixed(1)}% of book${thesisPart}`;
         }).join('\n')
       : '  (no positions yet)';
 
