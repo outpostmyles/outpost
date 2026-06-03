@@ -1490,10 +1490,17 @@ function HistorySection({ ticker, currentPositionId }) {
   );
   if (filtered.length === 0) return null;
 
-  // Build the dot-strip data. Sort chronologically (oldest left). One dot per
-  // event, color by source. Shows ALL events even when we only render the
-  // most recent 4 in detail below. The dot strip is the glanceable density
-  // view; the rows are the readable detail view.
+  // Collapse restatements: several events of the same source on this ticker are
+  // usually the same idea repeated (the agent recommended it four times, say), so
+  // the readable rows keep only the most recent of each source. The dot strip
+  // below still shows the full density of every event, so nothing is hidden.
+  const newestFirst = [...filtered].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const seenSource = new Set();
+  const rows = [];
+  for (const e of newestFirst) {
+    if (!seenSource.has(e.source)) { seenSource.add(e.source); rows.push(e); }
+  }
+
   const strip = [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date));
   const showStrip = strip.length >= 3;
 
@@ -1501,7 +1508,7 @@ function HistorySection({ ticker, currentPositionId }) {
     <div style={{ marginBottom: 10 }}>
       <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.6px', marginBottom: 5, fontWeight: 700 }}>
         YOUR HISTORY WITH {ticker}
-        {filtered.length > 4 && (
+        {filtered.length > rows.length && (
           <span style={{ color: 'var(--faint)', fontWeight: 500, marginLeft: 6, letterSpacing: '0.3px' }}>
             · {filtered.length} events
           </span>
@@ -1509,7 +1516,7 @@ function HistorySection({ ticker, currentPositionId }) {
       </p>
       {showStrip && <HistoryDotStrip events={strip} />}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {filtered.slice(0, 4).map(e => <HistoryRow key={e.id} ev={e} />)}
+        {rows.slice(0, 4).map(e => <HistoryRow key={e.id} ev={e} />)}
       </div>
     </div>
   );

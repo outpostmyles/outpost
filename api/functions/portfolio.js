@@ -1565,12 +1565,27 @@ router.get('/developments', requireAuth, rateLimit(20), async (req, res) => {
       }));
     }));
 
-    const items = perTicker
+    const sorted = perTicker
       .filter(r => r.status === 'fulfilled')
       .flatMap(r => r.value)
       .filter(a => a.title && a.published)
-      .sort((a, b) => new Date(b.published).getTime() - new Date(a.published).getTime())
-      .slice(0, 8);
+      .sort((a, b) => new Date(b.published).getTime() - new Date(a.published).getTime());
+
+    // Dedupe so the feed reads as breadth across the book, not the same thing
+    // twice: each distinct headline appears once (a market-wide story tagged to
+    // several holdings collapses to one), and at most one headline per ticker.
+    const seenTitle = new Set();
+    const perTickerCount = {};
+    const items = [];
+    for (const a of sorted) {
+      const key = a.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80);
+      if (seenTitle.has(key)) continue;
+      if ((perTickerCount[a.ticker] || 0) >= 1) continue;
+      seenTitle.add(key);
+      perTickerCount[a.ticker] = 1;
+      items.push(a);
+      if (items.length >= 8) break;
+    }
     res.json({ items });
   } catch (err) {
     console.error(`[req:${req.requestId}] [Portfolio] /developments failed:`, err.message);
