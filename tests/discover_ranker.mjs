@@ -191,6 +191,19 @@ test('a deep drawdown never renders as a positive (green) pct', () => {
   const [item] = buildDiscoverFeed({ bargain: { picks: [{ ticker: 'NVTS', pctOffHigh: -59.7 }] } });
   assert.ok(item.pct < 0, `expected negative drawdown, got ${item.pct}`);
   assert.equal(item.pct, -59.7);
+  assert.equal(item.pctKind, 'offHigh'); // labeled so it can't be misread as today's move
+});
+
+test('each item type labels what kind of percent it is showing', () => {
+  const out = buildDiscoverFeed({
+    catalystData: catalystData([{ ticker: 'AAPL', changePct: 4, flameRating: 3, catalystLabel: 'Earnings' }]),
+    sector: { heating: [{ ticker: 'XLK', name: 'Tech', signal: 'strong', relativeStrength: 2.1 }] },
+    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -22 }] },
+  });
+  const kind = (type) => out.find(i => i.type === type)?.pctKind;
+  assert.equal(kind('catalyst'), 'today');
+  assert.equal(kind('sector'), 'strength');
+  assert.equal(kind('bargain'), 'offHigh');
 });
 
 test('trending detail uses watcher count when present', () => {

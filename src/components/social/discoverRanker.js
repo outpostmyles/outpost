@@ -76,6 +76,7 @@ export function buildDiscoverFeed(input, limit = 10) {
       accent: 'orange',
       signal: 'CATALYST',
       pct: c.changePct,
+      pctKind: 'today',
       meta: { dropTime: c.dropTime, flame: c.flame },
       deepLink: 'ondeck',
       priority: c.flame >= 2 ? PRIORITY.CATALYST_HIGH : PRIORITY.CATALYST_LOW,
@@ -97,6 +98,7 @@ export function buildDiscoverFeed(input, limit = 10) {
       accent: 'green',
       signal: (s.signal || 'signal').toUpperCase(),
       pct: s.relativeStrength,
+      pctKind: 'strength',
       meta: { direction: 'up' },
       deepLink: 'radar',
       priority: strong ? PRIORITY.SECTOR_STRONG : PRIORITY.SECTOR_EARLY,
@@ -112,6 +114,7 @@ export function buildDiscoverFeed(input, limit = 10) {
       accent: 'red',
       signal: (s.signal || 'signal').toUpperCase(),
       pct: s.relativeStrength,
+      pctKind: 'strength',
       meta: { direction: 'down' },
       deepLink: 'radar',
       priority: PRIORITY.SECTOR_EARLY,
@@ -133,6 +136,7 @@ export function buildDiscoverFeed(input, limit = 10) {
       // old code negated it, which flipped a real -59.7% drawdown into a green
       // +59.7% that looked like a huge gain on a stock that had actually fallen.
       pct: b.pctOffHigh != null ? b.pctOffHigh : null,
+      pctKind: 'offHigh',
       meta: {},
       deepLink: 'bargain',
       priority: PRIORITY.BARGAIN,

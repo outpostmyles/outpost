@@ -21,6 +21,17 @@ import { personalizeDiscover } from './personalizeDiscover.js';
  *   onSeeAll(section) — switches Social to a deep-dive section
  */
 
+// What the percent on a row actually MEANS. Each row type shows a different kind
+// of percent (a catalyst shows today's move, a sector shows relative strength, a
+// bargain shows how far it is off its 52-week high), so we label it. Without
+// this, a bargain reading "-59.7%" looks like it fell 59.7% today rather than
+// being that far below its high.
+const PCT_KIND_LABEL = {
+  today: 'today',
+  strength: 'vs market',
+  offHigh: 'off high',
+};
+
 // No --orange in the theme, so the catalyst accent gets a literal one. The
 // rest map to existing CSS vars so they track the palette.
 const ACCENT = {
@@ -166,6 +177,9 @@ function FeedRow({ item, onClick }) {
           {item.pct != null && (
             <span style={{ fontSize: 10.5, color: pctColor, fontWeight: 700 }}>
               {item.pct >= 0 ? '+' : ''}{item.pct.toFixed(1)}%
+              {PCT_KIND_LABEL[item.pctKind] && (
+                <span style={{ color: 'var(--faint)', fontWeight: 600, marginLeft: 3 }}>{PCT_KIND_LABEL[item.pctKind]}</span>
+              )}
             </span>
           )}
           <span style={{
