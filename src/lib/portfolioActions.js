@@ -13,6 +13,7 @@
 // over-weight name) stay as their own line. Pure and deterministic, so it is
 // testable and instant.
 import { computePositionStatus } from './positionStatus.js';
+import { pctOfBookOf } from './bookStats.js';
 
 const MAX_ACTIONS = 5;
 
@@ -35,7 +36,9 @@ export function buildPortfolioActions(positions, totalValue = 0, thesisWatches =
 
     const st = computePositionStatus(p, totalValue);
     const pnlPct = (p.avg_cost > 0) ? ((price - p.avg_cost) / p.avg_cost) * 100 : (p.pnlPercent ?? 0);
-    const pct = totalValue > 0 ? (price * (p.shares || 0) / totalValue) * 100 : 0;
+    // Same weight the rest of the app shows: prefer the server-tagged pctOfBook,
+    // else the one shared formula. Coalesce to 0 for an empty book.
+    const pct = p.pctOfBook != null ? p.pctOfBook : (pctOfBookOf(p, totalValue) ?? 0);
     const hasStop = !!(p.stop_loss && p.stop_loss > 0);
     const hasPlan = hasStop || !!(p.price_target && p.price_target > 0);
     const hasThesis = !!(p.entry_thesis && String(p.entry_thesis).trim());

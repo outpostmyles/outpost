@@ -16,6 +16,7 @@ import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
+import { computeBookStats } from '../../src/lib/bookStats.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
@@ -211,6 +212,13 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
       };
     });
 
+    // One book-stats source: tag every position with pctOfBook (and marketValue,
+    // costBasis, unrealized P&L) via the same selector the agent and the synthesis
+    // read, so a holding's weight is identical on a card, in an action, and in the
+    // AI's mouth. Purely additive to each position; the headline totals are
+    // unchanged (the selector's holdingsValue equals the totalValue summed above).
+    const { positions: enrichedWithBook } = computeBookStats(enriched);
+
     const totalPnl = totalValue - totalCost;
     const totalPnlPercent = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
     const prevTotalValue = totalValue - totalTodayChange;
@@ -230,7 +238,7 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
       cash: parseFloat(cash.toFixed(2)),
       accountValue: parseFloat((totalValue + cash).toFixed(2)),
       marketOpen,
-      positions: enriched,
+      positions: enrichedWithBook,
       staleCount,
       lastUpdated: new Date().toISOString(),
     });

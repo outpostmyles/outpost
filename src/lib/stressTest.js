@@ -6,21 +6,13 @@
 // root to deepen later). A shock to your single biggest holding is exact, since
 // it is just that position's value times the move. Pure so the math is testable.
 
-function num(v) { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; }
-
-function valueOf(p) {
-  const cv = num(p.currentValue);
-  if (cv != null && cv > 0) return cv;
-  const px = num(p.currentPrice ?? p.avg_cost);
-  const sh = num(p.shares);
-  return (px != null && sh != null && px > 0 && sh > 0) ? px * sh : 0;
-}
+import { marketValueOf } from './bookStats.js';
 
 export function buildStressTests(positions = [], opts) {
   const { portfolioBeta = 1 } = opts || {};
   const rows = (Array.isArray(positions) ? positions : [])
     .filter(Boolean)
-    .map(p => ({ ticker: String(p.ticker || '').toUpperCase(), value: valueOf(p) }))
+    .map(p => ({ ticker: String(p.ticker || '').toUpperCase(), value: marketValueOf(p) }))
     .filter(r => r.ticker && r.value > 0);
   const total = rows.reduce((s, r) => s + r.value, 0);
   if (total <= 0) return [];

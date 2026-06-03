@@ -3,6 +3,7 @@
 // computePositionStatus drives both the sort order (what bubbles to the top of
 // the position list) and the badge on each row, so its tiers and priority order
 // are user-facing: they decide what the user's eye is pulled to.
+import { pctOfBookOf } from './bookStats.js';
 
 /**
  * Compute per-position attention status. Used to sort the position list so
@@ -19,9 +20,10 @@ export function computePositionStatus(pos, totalValue) {
   const price = pos.currentPrice ?? 0;
   const pnlPct = pos.avg_cost > 0 && price ? ((price - pos.avg_cost) / pos.avg_cost) * 100 : 0;
   const todayPct = pos.todayChangePercent ?? 0;
-  const concentration = totalValue > 0 && pos.currentValue > 0
-    ? (pos.currentValue / totalValue) * 100
-    : 0;
+  // Weight in the book comes from the single source: prefer the pctOfBook the
+  // server already tagged onto the position, else compute it the one shared way.
+  // Coalesce to 0 so a cashless/empty book renders a number, not null.
+  const concentration = pos.pctOfBook != null ? pos.pctOfBook : (pctOfBookOf(pos, totalValue) ?? 0);
 
   // Below stop — most urgent
   if (pos.stop_loss && price && price < pos.stop_loss) {

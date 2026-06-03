@@ -12,6 +12,7 @@ import { getAnalystRating } from './fmp.js';
 import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
 import { getPrices } from './pricePool.js';
 import { resolveSector, staticSector } from './sectorMap.js';
+import { pctOfBookOf } from '../../src/lib/bookStats.js';
 
 /**
  * The personalized read: how this name sits against the user's actual book.
@@ -170,7 +171,10 @@ export async function buildDossier(ticker, userId) {
       currentValue: +currentValue.toFixed(2),
       pnl: +pnl.toFixed(2),
       pnlPct: costBasis > 0 ? +((pnl / costBasis) * 100).toFixed(1) : null,
-      pctOfBook: bookValue > 0 ? Math.min(100, Math.round((thisInBook / bookValue) * 100)) : null,
+      // Same weight formula as the rest of the app (one shared helper), kept on
+      // the book's own valuation so it cannot exceed 100% when live and pool
+      // prices disagree; rounded to a whole percent and clamped for this card.
+      pctOfBook: (() => { const r = pctOfBookOf({ currentValue: thisInBook }, bookValue); return r == null ? null : Math.min(100, Math.round(r)); })(),
       thesis: withThesis?.entry_thesis || null,
       reversalCondition: withThesis?.reversal_condition || null,
       target: withPlan?.price_target || null,

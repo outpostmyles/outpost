@@ -22,6 +22,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { logAndGrade } from './aiQualityLog.js';
+import { pctOfBookOf } from '../../src/lib/bookStats.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -60,7 +61,9 @@ function buildSummary(positions, totals) {
   // Concentration — top 3 positions by % of book
   const sized = positions.map(p => ({
     ticker: p.ticker,
-    pctOfBook: totals.totalValue > 0 ? (p.currentValue / totals.totalValue) * 100 : 0,
+    // One weight source: the shared selector formula against the holdings total,
+    // so the synthesis cites the same "% of book" the cards and agent show.
+    pctOfBook: pctOfBookOf(p, totals.totalValue) ?? 0,
     pnlPct: p.pnlPercent ?? 0,
     todayChangePct: p.todayChangePercent ?? 0,
     priceTarget: p.price_target ?? null,

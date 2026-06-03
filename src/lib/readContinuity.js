@@ -6,6 +6,8 @@
 // loser fell further, your thesis slipped. Pure and deterministic, so the
 // relationship is reliable, free, and testable (no second model call).
 
+import { pctOfBookOf } from './bookStats.js';
+
 const VERDICT_RANK = { strengthening: 0, intact: 1, weakening: 2, broken: 3 };
 const VERDICT_LABEL = { strengthening: 'strengthening', intact: 'intact', weakening: 'weakening', broken: 'breaking' };
 
@@ -19,7 +21,8 @@ export function snapshotReadState({ positions, totalValue = 0, thesisWatches = {
     const t = p?.ticker;
     if (!t) continue;
     const price = p.currentPrice ?? 0;
-    const pct = totalValue > 0 ? (price * (p.shares || 0) / totalValue) * 100 : 0;
+    // One weight source: the server-tagged pctOfBook, else the shared formula.
+    const pct = p.pctOfBook != null ? p.pctOfBook : (pctOfBookOf(p, totalValue) ?? 0);
     const pnl = (p.avg_cost > 0 && price) ? ((price - p.avg_cost) / p.avg_cost) * 100 : 0;
     const w = thesisWatches[t] || thesisWatches[String(t).toUpperCase()];
     holdings[t] = {

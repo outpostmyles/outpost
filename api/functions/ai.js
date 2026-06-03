@@ -2,6 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildGrowthArc } from '../../src/lib/growthArc.js';
+import { computeBookStats } from '../../src/lib/bookStats.js';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
@@ -1205,16 +1206,16 @@ async function buildDeployCashContext(userId, user) {
       if (r.status === 'fulfilled' && r.value?.price) priceMap[missing[i]] = r.value;
     });
   }
-  let totalValue = 0;
-  const enriched = positions.map(p => {
+  const priced = positions.map(p => {
     const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
     const value = livePrice * (p.shares ?? 0);
-    totalValue += value;
     return { ...p, livePrice, currentValue: value };
   });
-  for (const p of enriched) {
-    p.pctOfBook = totalValue > 0 ? (p.currentValue / totalValue) * 100 : 0;
-  }
+  // One book-stats source: pctOfBook and the holdings total come from the same
+  // selector the cards and the synthesis use, so the agent's "% of book" matches
+  // the screen exactly instead of being re-derived here.
+  const { book, positions: enriched } = computeBookStats(priced);
+  const totalValue = book.holdingsValue;
 
   return { positions: enriched, closedTrades, watchlist, recentChats, totalValue, priceMap };
 }
@@ -1295,7 +1296,7 @@ router.post('/deploy-cash', requireAuth, rateLimit(10), dailyAiCeiling(), async 
     const positionsLines = ctxData.positions.length
       ? ctxData.positions.map(p => {
           const thesisPart = p.entry_thesis ? ` · thesis: ${safeQuote(p.entry_thesis)}` : ' · no thesis written';
-          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}${todayChg(p.ticker)}, ${p.pctOfBook.toFixed(1)}% of book${thesisPart}`;
+          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}${todayChg(p.ticker)}, ${(p.pctOfBook ?? 0).toFixed(1)}% of book${thesisPart}`;
         }).join('\n')
       : '  (no positions yet)';
 
