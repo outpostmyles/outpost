@@ -36,21 +36,56 @@
 import { supabase } from '../db.js';
 import { getPrices } from './pricePool.js';
 import { getMarketData } from './marketData.js';
+import { todayStr } from '../utils/marketHours.js';
+
+// Hybrid freshness gate for the cached signals TODAY renders. Intraday signals
+// (sector heat, catalysts) are only meaningful for the SAME ET trading day, so
+// once the date rolls over they are hidden rather than shown as today's. Daily
+// signals (the nightly bargain scan) stay valid into the next morning, up to
+// ~30h, and are labeled "as of last night's scan" once they are no longer
+// same-day. Pure (now is injectable) so the date logic is unit-testable.
+const DAILY_MAX_AGE_HOURS = 30;
+export function cacheFreshness(kind, createdAtIso, now = new Date()) {
+  if (!createdAtIso) return { show: false, asOf: null };
+  const created = new Date(createdAtIso);
+  if (Number.isNaN(created.getTime())) return { show: false, asOf: null };
+  const sameDay = todayStr(created) === todayStr(now);
+  if (kind !== 'daily') return { show: sameDay, asOf: null }; // intraday: same ET day only
+  if (sameDay) return { show: true, asOf: null };
+  const ageHours = (now.getTime() - created.getTime()) / 3600000;
+  return ageHours <= DAILY_MAX_AGE_HOURS
+    ? { show: true, asOf: "last night's scan" }
+    : { show: false, asOf: null };
+}
+
+// Plain-English scope for the sector ETFs the radar tracks, so "Energy" (XLE,
+// the oil & gas majors) is never read as a user's clean-energy or nuclear names,
+// which often move the opposite way. Falls back to just the sector name.
+const SECTOR_SCOPE = {
+  XLK: 'big tech', SMH: 'semiconductors', XLE: 'oil & gas majors', XLF: 'big banks',
+  XLV: 'healthcare', XLY: 'consumer / retail', XLP: 'consumer staples', XLI: 'industrials',
+  XLU: 'utilities', XLB: 'materials', XLRE: 'real estate', XLC: 'communication / media',
+};
+function sectorLabel(top) {
+  const name = top.name || 'Sector';
+  const scope = top.ticker ? SECTOR_SCOPE[String(top.ticker).toUpperCase()] : null;
+  return scope ? `${name} (${top.ticker}: ${scope})` : name;
+}
 
 /**
  * Frame the top heating sector for the current market regime. On a risk-off day,
  * a sector still showing strength is defensive leadership, not a green light to
  * chase, so we say that instead of cheerleading "heating up" while the broader
- * market sells off (which read as tone-deaf). Pure so the regime behavior is
- * testable. Returns { title, detail, priorityBonus } or null when there is no
- * heating sector to show.
+ * market sells off (which read as tone-deaf). The label names the ETF's scope so
+ * it can't be confused with a user's same-named-but-different sub-sector. Pure so
+ * the behavior is testable. Returns { title, detail, priorityBonus } or null.
  */
 export function frameSectorHeat(top, regime) {
   if (!top) return null;
-  const name = top.name || 'Sector';
+  const label = sectorLabel(top);
   const riskOff = regime === 'Risk Off';
   return {
-    title: riskOff ? `${name} holding up while the market is jittery` : `${name} heating up`,
+    title: riskOff ? `${label} holding up while the market is jittery` : `${label} heating up`,
     detail: top.thesis || (riskOff
       ? 'Relative strength here even as the broader market pulls back. That is defensive leadership, not a green light to chase.'
       : 'Money rotating in based on multi-day flow signals.'),
@@ -245,7 +280,8 @@ export async function buildTodayFeed(userId, opts = {}) {
   }
 
   // ── Sector heat: top heating sector from cache, framed for the regime ──
-  if (sectorRaw?.result) {
+  // Intraday signal: only shown if the radar was generated today, never stale.
+  if (sectorRaw?.result && cacheFreshness('intraday', sectorRaw.created_at).show) {
     try {
       const sector = JSON.parse(sectorRaw.result);
       const top = (sector.heating || [])[0];
@@ -262,18 +298,22 @@ export async function buildTodayFeed(userId, opts = {}) {
     } catch {}
   }
 
-  // ── Bargain pick — top buyable that user doesn't already hold ───────────
-  if (bargainRaw?.result) {
+  // ── Bargain pick: top buyable that user doesn't already hold ────────────
+  // Daily signal: the nightly scan stays valid into the next morning (up to
+  // ~30h), labeled "as of last night's scan" once it is no longer same-day.
+  const bargainFresh = bargainRaw?.result ? cacheFreshness('daily', bargainRaw.created_at) : { show: false, asOf: null };
+  if (bargainFresh.show) {
     try {
       const bargain = JSON.parse(bargainRaw.result);
       const buyable = (bargain.candidates || []).find(b =>
         b.verdict === 'buyable' && !heldTickers.has(b.ticker)
       );
       if (buyable) {
+        const asOf = bargainFresh.asOf ? ` (as of ${bargainFresh.asOf})` : '';
         items.push({
           type: 'bargain', subtype: 'pick', ticker: buyable.ticker,
-          title: `Oversold — story intact`,
-          detail: buyable.thesis || `Down sharply on macro fear, fundamentals unchanged.`,
+          title: `Oversold, story intact`,
+          detail: `${buyable.thesis || 'Down sharply on macro fear, fundamentals unchanged.'}${asOf}`,
           priority: PRIORITY.BARGAIN_PICK,
           link: { tab: 'social', section: 'bargain', ticker: buyable.ticker },
         });
@@ -281,10 +321,11 @@ export async function buildTodayFeed(userId, opts = {}) {
     } catch {}
   }
 
-  // ── Catalyst — top stock from today's most recent drop ─────────────────
+  // ── Catalyst: top stock from today's most recent drop ──────────────────
   // Surfaces the highest-conviction catalyst pick of the day. Skips anything
   // already in the user's portfolio or watchlist (they got covered above).
-  if (catalystRaw?.result) {
+  // Intraday signal: only shown if the catalyst drop is from today.
+  if (catalystRaw?.result && cacheFreshness('intraday', catalystRaw.created_at).show) {
     try {
       const cat = JSON.parse(catalystRaw.result);
       const drops = cat?.drops ? Object.values(cat.drops) : [];

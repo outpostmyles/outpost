@@ -241,7 +241,7 @@ async function generateRadar() {
 /**
  * Get radar data, generating if stale (30 min TTL).
  */
-async function getRadar(force = false) {
+export async function getRadar(force = false) {
   const TTL = 30 * 60 * 1000; // 30 minutes
 
   if (!force && radarData && lastGenerated && Date.now() - lastGenerated < TTL) {

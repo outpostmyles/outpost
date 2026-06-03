@@ -6,10 +6,40 @@
 // the buildTodayFeed pipeline runs items through compositeMovers, which
 // collapses 3+ mover rows into a single mover_group card.
 import assert from 'node:assert/strict';
-import { compositeMovers, frameSectorHeat } from '../api/services/today.js';
+import { compositeMovers, frameSectorHeat, cacheFreshness } from '../api/services/today.js';
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+// ── cacheFreshness: hybrid freshness gate (intraday hidden if not today; daily
+//    valid into next morning, labeled). Mid-day UTC times avoid ET-midnight edge.
+const JUN3_4PM = new Date('2026-06-03T20:00:00Z'); // ~16:00 ET Jun 3 (EDT)
+test('intraday signal shows only on the same ET day', () => {
+  assert.equal(cacheFreshness('intraday', '2026-06-03T14:00:00Z', JUN3_4PM).show, true);  // earlier today
+  assert.equal(cacheFreshness('intraday', '2026-06-02T20:00:00Z', JUN3_4PM).show, false); // yesterday
+  assert.equal(cacheFreshness('intraday', '2026-06-03T14:00:00Z', JUN3_4PM).asOf, null);
+});
+
+test('daily signal stays valid into the next morning, labeled when not same-day', () => {
+  const morning = new Date('2026-06-03T13:00:00Z'); // ~9am ET Jun 3
+  const sameDay = cacheFreshness('daily', '2026-06-03T12:00:00Z', morning);
+  assert.equal(sameDay.show, true);
+  assert.equal(sameDay.asOf, null); // today => no "as of" label
+  const lastNight = cacheFreshness('daily', '2026-06-02T21:00:00Z', morning); // prior 5pm scan, ~16h old
+  assert.equal(lastNight.show, true);
+  assert.match(lastNight.asOf, /last night/);
+});
+
+test('daily signal older than the max age is dropped', () => {
+  const now = new Date('2026-06-03T13:00:00Z');
+  assert.equal(cacheFreshness('daily', '2026-06-01T21:00:00Z', now).show, false); // ~40h old
+});
+
+test('cacheFreshness is safe on missing/invalid timestamps', () => {
+  assert.equal(cacheFreshness('intraday', null, JUN3_4PM).show, false);
+  assert.equal(cacheFreshness('daily', 'not-a-date', JUN3_4PM).show, false);
+  assert.equal(cacheFreshness('intraday', undefined, JUN3_4PM).show, false);
+});
 
 // ── frameSectorHeat: the HEAT item must not cheerlead during a selloff ──────
 test('frameSectorHeat cheers a heating sector in calm regimes', () => {
@@ -34,6 +64,20 @@ test('frameSectorHeat returns null when there is no heating sector', () => {
 test('frameSectorHeat prefers the source thesis for detail when present', () => {
   const h = frameSectorHeat({ name: 'Energy', thesis: 'Oil breaking out.' }, 'Neutral');
   assert.equal(h.detail, 'Oil breaking out.');
+});
+
+test('frameSectorHeat names the ETF scope so Energy is not mistaken for clean-energy', () => {
+  const h = frameSectorHeat({ name: 'Energy', ticker: 'XLE', signal: 'strong' }, 'Risk Off');
+  assert.match(h.title, /XLE: oil & gas majors/);
+  const t = frameSectorHeat({ name: 'Technology', ticker: 'XLK' }, 'Risk On');
+  assert.match(t.title, /XLK: big tech/);
+  assert.match(t.title, /heating up/);
+});
+
+test('frameSectorHeat falls back to just the name when the ETF scope is unknown', () => {
+  const h = frameSectorHeat({ name: 'Frontier', ticker: 'ZZZ' }, 'Neutral');
+  assert.match(h.title, /^Frontier heating up/);
+  assert.doesNotMatch(h.title, /\(/); // no scope parens
 });
 
 // Helper. Build a minimal mover item for tests.

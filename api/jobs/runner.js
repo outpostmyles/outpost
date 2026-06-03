@@ -1,6 +1,7 @@
 import '../config.js';
 import { runBargainScan } from '../functions/bargainRadar.js';
 import { runDailyScreeners } from '../functions/screeners.js';
+import { getRadar } from '../functions/sectorRadar.js';
 import { refreshAllThesisWatches } from '../services/thesisWatch.js';
 import { generateAllExplainers } from '../functions/portfolioExplainer.js';
 import { generateAllDigests } from '../services/proactiveDigest.js';
@@ -237,6 +238,13 @@ scheduleAt(9, 0, async () => {
   if (getETTime().getDay() !== 1) return;
   try { await runFounderDigest(); } catch (err) { console.error('[Jobs] Founder digest failed:', err.message); }
 }, 'Founder digest');
+// Sector radar: regenerate shortly after the open so the HEAT item on Home and
+// the Discover sector signals are today's, not whatever a user's on-demand hit
+// last left in the cache. Without this it was never on a schedule at all.
+scheduleAt(9, 35, async () => {
+  if (!isWeekday()) return;
+  try { await getRadar(true); } catch (err) { console.error('[Jobs] Sector radar refresh failed:', err.message); }
+}, 'Sector radar');
 scheduleAt(16, 30, async () => {
   try { await takeSnapshots(); } catch (err) { console.error('[Jobs] Portfolio snapshots failed:', err.message); }
 }, 'Portfolio snapshots');
