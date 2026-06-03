@@ -48,6 +48,32 @@ test('a calm, planned, thesis-backed position produces no action', () => {
   assert.equal(a.length, 0);
 });
 
+test('groups several winners-with-no-stop into ONE line, not the same sentence repeated', () => {
+  const a = buildPortfolioActions([
+    P({ ticker: 'A', currentPrice: 150, avg_cost: 100 }),
+    P({ ticker: 'B', currentPrice: 160, avg_cost: 100 }),
+    P({ ticker: 'C', currentPrice: 140, avg_cost: 100 }),
+    P({ ticker: 'D', currentPrice: 200, avg_cost: 100 }),
+    P({ ticker: 'E', currentPrice: 135, avg_cost: 100 }),
+  ], 100000000); // five running winners, no stops, each a tiny weight
+  const noStopLines = a.filter(x => /no stop/.test(x.text));
+  assert.equal(noStopLines.length, 1, 'collapses to a single grouped line');
+  assert.match(noStopLines[0].text, /5 winners are running with no stop/);
+  for (const t of ['A', 'B', 'C', 'D', 'E']) assert.ok(noStopLines[0].askMessage.includes(t), `ask carries ${t}`);
+  assert.equal(noStopLines[0].actionLabel, 'SET STOPS');
+});
+
+test('groups several no-plan holdings into ONE line', () => {
+  const a = buildPortfolioActions([
+    P({ ticker: 'A', currentPrice: 101, avg_cost: 100, entry_thesis: 't', shares: 100 }),
+    P({ ticker: 'B', currentPrice: 101, avg_cost: 100, entry_thesis: 't', shares: 100 }),
+    P({ ticker: 'C', currentPrice: 101, avg_cost: 100, entry_thesis: 't', shares: 100 }),
+  ], 126250); // three meaningful, thesis-backed, plan-less names, each ~8% (below concentration)
+  const planLines = a.filter(x => /exit plan/.test(x.text));
+  assert.equal(planLines.length, 1);
+  assert.match(planLines[0].text, /3 holdings have no exit plan/);
+});
+
 test('one action per ticker, capped at five, highest severity first', () => {
   const many = [];
   for (let i = 0; i < 8; i++) many.push(P({ ticker: `T${i}`, currentPrice: 60, avg_cost: 100 }));

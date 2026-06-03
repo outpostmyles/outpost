@@ -17,8 +17,6 @@ import PlanAdherenceCard from './PlanAdherenceCard.jsx';
 import PerformanceAttributionCard from './PerformanceAttributionCard.jsx';
 import SynthesisCard from './SynthesisCard.jsx';
 
-const COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16'];
-
 // computePositionStatus and fmtCompact moved to ../../lib/positionStatus.js
 // (imported above) so the attention-badge thresholds and the compact formatter
 // are unit-tested in isolation.
@@ -1017,187 +1015,13 @@ function EarningsBadge({ earnings }) {
   );
 }
 
-function StockDetails({ ticker }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    cachedFetch(`stock_details_${ticker}`, () => api.portfolio.stockDetails(ticker), 5 * 60000)
-      .then(d => setData(d)).catch(() => {}).finally(() => setLoading(false));
-  }, [ticker]);
-  if (loading) return <div style={{ padding: '8px 0', textAlign: 'center' }}><Spinner size={12} /></div>;
-  if (!data?.financials && !data?.analyst) return <p style={{ fontSize: 10, color: 'var(--faint)', padding: '4px 0' }}>No data available</p>;
-  const f = data.financials;
-  const a = data.analyst;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {f && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {f.pe != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>P/E <b style={{ color: 'var(--text)' }}>{f.pe?.toFixed(1)}</b></span>}
-          {f.marketCap && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>MCap <b style={{ color: 'var(--text)' }}>${f.marketCap >= 1e12 ? (f.marketCap / 1e12).toFixed(1) + 'T' : f.marketCap >= 1e9 ? (f.marketCap / 1e9).toFixed(0) + 'B' : (f.marketCap / 1e6).toFixed(0) + 'M'}</b></span>}
-          {f.eps != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>EPS <b style={{ color: 'var(--text)' }}>${f.eps?.toFixed(2)}</b></span>}
-          {f.beta != null && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>Beta <b style={{ color: 'var(--text)' }}>{f.beta?.toFixed(2)}</b></span>}
-          {f.dividendYield > 0 && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>Div <b style={{ color: 'var(--text)' }}>{f.dividendYield}%</b></span>}
-          {f.yearHigh && <span style={{ fontSize: 9, color: 'var(--faint)', background: 'var(--surface)', padding: '3px 6px', borderRadius: 4 }}>52w <b style={{ color: 'var(--red)' }}>${fmt(f.yearLow)}</b>-<b style={{ color: 'var(--green)' }}>${fmt(f.yearHigh)}</b></span>}
-        </div>
-      )}
-      {a && a.totalAnalysts > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9, color: 'var(--faint)' }}>
-          <span style={{ fontWeight: 700, color: a.consensus === 'Buy' ? 'var(--green)' : a.consensus === 'Sell' ? 'var(--red)' : 'var(--amber)' }}>
-            {a.consensus?.toUpperCase()}
-          </span>
-          <span>{a.buy}B/{a.hold}H/{a.sell}S</span>
-          {a.targetPrice && <span>Target <b style={{ color: 'var(--text)' }}>${fmt(a.targetPrice)}</b></span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /**
- * Alerts panel rendered inside a PositionCard. Lists existing alerts for
- * the ticker, lets the user create a quick "above" / "below" / "% change"
- * alert, and supports deleting or re-arming triggered ones.
- */
-function AlertsPanel({ ticker, currentPrice, onBack, showToast }) {
-  const [alerts, setAlerts] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [err, setErr] = useState('');
-  const [form, setForm] = useState({ direction: 'above', threshold: '', note: '' });
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setErr('');
-    try {
-      const { alerts: all } = await api.alerts.list();
-      setAlerts((all || []).filter(a => a.ticker === ticker));
-    } catch (e) {
-      setErr(e.error || 'Failed to load alerts');
-    }
-    setLoading(false);
-  }, [ticker]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function create() {
-    const threshold = parseFloat(form.threshold);
-    if (!isFinite(threshold)) { setErr('Invalid threshold'); return; }
-    setCreating(true); setErr('');
-    try {
-      await api.alerts.create({
-        ticker,
-        direction: form.direction,
-        threshold,
-        note: form.note.trim() || undefined,
-      });
-      setForm({ direction: 'above', threshold: '', note: '' });
-      showToast?.(`Alert set for ${ticker}`, 'success');
-      load();
-    } catch (e) {
-      setErr(e.error || 'Failed to create alert');
-    }
-    setCreating(false);
-  }
-
-  async function remove(id) {
-    try {
-      await api.alerts.remove(id);
-      load();
-    } catch (e) { setErr(e.error || 'Failed to delete'); }
-  }
-
-  async function reset(id) {
-    try {
-      await api.alerts.update(id, { reset: true });
-      load();
-    } catch (e) { setErr(e.error || 'Failed to reset'); }
-  }
-
-  const placeholder = form.direction === 'percent_change'
-    ? '+5 or -5 (%)'
-    : currentPrice ? String(currentPrice) : '0.00';
-
-  return (
-    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
-      <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', marginBottom: 8 }}>{ticker} ALERTS</p>
-
-      {loading ? (
-        <p style={{ fontSize: 11, color: 'var(--muted)' }}>Loading...</p>
-      ) : (
-        <>
-          {(alerts?.length ?? 0) === 0 ? (
-            <p style={{ fontSize: 10, color: 'var(--faint)', marginBottom: 10 }}>No alerts yet for this ticker.</p>
-          ) : (
-            <div style={{ marginBottom: 10 }}>
-              {alerts.map(a => (
-                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', background: 'var(--raised)', borderRadius: 5, marginBottom: 4, fontSize: 10 }}>
-                  <span style={{ flex: 1, color: 'var(--muted)' }}>
-                    {a.triggered ? (
-                      <span style={{ color: 'var(--amber)', fontWeight: 700 }}>TRIGGERED · </span>
-                    ) : null}
-                    {a.direction === 'above' ? `${ticker} ≥ $${parseFloat(a.threshold).toFixed(2)}`
-                      : a.direction === 'below' ? `${ticker} ≤ $${parseFloat(a.threshold).toFixed(2)}`
-                      : `${ticker} day change ${parseFloat(a.threshold) >= 0 ? '+' : ''}${parseFloat(a.threshold).toFixed(1)}%`}
-                    {a.note && <span style={{ color: 'var(--faint)', fontStyle: 'italic' }}> · {a.note}</span>}
-                  </span>
-                  {a.triggered && (
-                    <button onClick={() => reset(a.id)} className="btn btn-muted" style={{ fontSize: 8, padding: '3px 6px' }}>RESET</button>
-                  )}
-                  <button onClick={() => remove(a.id)} className="btn btn-muted" style={{ fontSize: 8, padding: '3px 6px' }}>DELETE</button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={{ background: 'var(--raised)', borderRadius: 5, padding: '8px 9px', marginBottom: 8 }}>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-              {['above', 'below', 'percent_change'].map(d => (
-                <button
-                  key={d}
-                  onClick={() => setForm(f => ({ ...f, direction: d }))}
-                  className={`btn ${form.direction === d ? 'btn-blue' : 'btn-muted'}`}
-                  style={{ flex: 1, fontSize: 9, padding: '5px 0' }}
-                >
-                  {d === 'above' ? 'ABOVE' : d === 'below' ? 'BELOW' : '% MOVE'}
-                </button>
-              ))}
-            </div>
-            <input
-              className="input"
-              type="number"
-              value={form.threshold}
-              onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))}
-              placeholder={placeholder}
-              style={{ fontSize: 12, marginBottom: 6, width: '100%' }}
-            />
-            <input
-              className="input"
-              value={form.note}
-              onChange={e => setForm(f => ({ ...f, note: e.target.value.slice(0, 200) }))}
-              placeholder="Optional note (e.g. 'take profits here')"
-              style={{ fontSize: 11, marginBottom: 6, width: '100%' }}
-            />
-            <button onClick={create} disabled={creating} className="btn btn-blue btn-full" style={{ fontSize: 10 }}>
-              {creating ? 'CREATING...' : 'SET ALERT'}
-            </button>
-          </div>
-        </>
-      )}
-
-      {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>{err}</p>}
-      <button onClick={onBack} className="btn btn-muted btn-full" style={{ fontSize: 9 }}>BACK</button>
-    </div>
-  );
-}
-
-/**
- * PositionList — wraps the position cards with attention-based sorting,
- * a collapsible calm group, and a one-time plan-coverage nudge. Designed
- * to scale from 1 to 100+ positions without becoming a wall of rows.
+ * PositionList wraps the position cards with attention-based sorting and a
+ * collapsible calm group. Designed to scale from 1 to 100+ positions without
+ * becoming a wall of rows.
  */
 function PositionList({ positions, totalValue, onRefresh, showToast }) {
   const [calmExpanded, setCalmExpanded] = useState(false);
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
 
   // Annotate each position with status + score, then split into needs-attention
   // vs calm. Status is computed once per render — pure JS, fine at any scale.
@@ -1207,11 +1031,9 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
     .sort((a, b) => b.status.score - a.status.score);
   const calm = annotated.filter(a => a.status.status === 'calm');
 
-  // Plan coverage — count positions WITHOUT a thesis/target/stop. Show one
-  // consolidated nudge above the list when half or more of the book is
-  // unplanned (only really matters at 4+ positions). No per-row nag.
-  const unplanned = positions.filter(p => !p.entry_thesis && !p.price_target && !p.stop_loss);
-  const showPlanNudge = !nudgeDismissed && positions.length >= 4 && unplanned.length >= positions.length / 2;
+  // Plan coverage now lives in the WHAT NEEDS YOU action feed at the top of the
+  // tab (grouped "N holdings have no exit plan"), so there is no separate nudge
+  // here. One voice, not two.
 
   // Auto-expand calm group when there are few of them — collapse only matters
   // when there's a real wall to hide.
@@ -1219,38 +1041,6 @@ function PositionList({ positions, totalValue, onRefresh, showToast }) {
 
   return (
     <div style={{ padding: '8px 16px 8px' }}>
-      {/* Plan-coverage nudge — one consolidated message, dismissible */}
-      {showPlanNudge && (
-        <div style={{
-          background: 'rgba(59,130,246,0.06)',
-          border: '1px solid rgba(59,130,246,0.2)',
-          borderRadius: 6,
-          padding: '8px 12px',
-          marginBottom: 8,
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
-        }}>
-          <div style={{ flex: 1 }}>
-            <p style={{ fontSize: 10, color: 'var(--blue)', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 2 }}>
-              {unplanned.length} of {positions.length} positions don't have a plan
-            </p>
-            <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.4, margin: 0 }}>
-              Set a target and stop on each — Outpost will hold you to them. Tap any position to add a plan.
-            </p>
-          </div>
-          <button
-            onClick={() => setNudgeDismissed(true)}
-            aria-label="Dismiss"
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--faint)', fontSize: 14, padding: '0 4px',
-              fontFamily: 'inherit',
-            }}
-          >×</button>
-        </div>
-      )}
-
       {/* Needs-attention positions — always visible, sorted by score */}
       {needsAttention.map(({ pos, status }) => (
         <PositionCard
@@ -2765,146 +2555,6 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   );
 }
 
-function NewsSubTab({ showToast }) {
-  const [positions, setPositions] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState('');
-  const [journalSave, setJournalSave] = useState(null);
-
-  useEffect(() => {
-    api.portfolio.value().then(d => {
-      setPositions(d.positions ?? []);
-      if (d.positions?.length) setSelected(d.positions[0].ticker);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!selected) return;
-    setLoading(true); setErr(''); setArticles([]);
-    api.ai.news(selected)
-      .then(d => setArticles(d.articles ?? []))
-      .catch(e => setErr(e.error || 'News unavailable'))
-      .finally(() => setLoading(false));
-  }, [selected]);
-
-  if (!positions.length) return <EmptyState title="No positions" subtitle="Add positions to see AI-filtered news for your holdings" />;
-
-  return (
-    <div style={{ padding: '10px 16px 24px' }}>
-      <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
-        {positions.map(p => (
-          <button key={p.ticker} onClick={() => setSelected(p.ticker)} className={`btn ${selected === p.ticker ? 'btn-blue' : 'btn-muted'}`}>{p.ticker}</button>
-        ))}
-      </div>
-      {loading && <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner /></div>}
-      {err && <p style={{ fontSize: 12, color: 'var(--red)' }}>{err}</p>}
-      {!loading && !err && articles.length === 0 && <EmptyState title="No news" subtitle="No high-impact news found for this ticker" />}
-      {articles.map((a, i) => (
-        <div key={i} style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 13px', marginBottom: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>{a.source?.toUpperCase()}</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <p style={{ fontSize: 9, color: 'var(--faint)' }}>{a.publishedUtc ? new Date(a.publishedUtc).toLocaleDateString() : ''}</p>
-              <BookmarkButton
-                onClick={() => setJournalSave({
-                  content: `${selected} — ${a.title}${a.aiSummary ? `\n\n${a.aiSummary}` : ''}${a.articleUrl ? `\n\n${a.articleUrl}` : ''}`,
-                })}
-              />
-            </div>
-          </div>
-          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 5, lineHeight: 1.5 }}>{a.title}</p>
-          {a.aiSummary && <p style={{ fontSize: 11, color: 'var(--blue)', lineHeight: 1.6, marginBottom: 6 }}>{renderPlainText(a.aiSummary)}</p>}
-          <a href={a.articleUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: 'var(--blue)', textDecoration: 'none', letterSpacing: '0.5px' }}>READ MORE →</a>
-        </div>
-      ))}
-
-      <SaveToJournalSheet
-        open={journalSave !== null}
-        onClose={() => setJournalSave(null)}
-        initialContent={journalSave?.content || ''}
-        showToast={showToast}
-      />
-    </div>
-  );
-}
-
-function HistorySubTab({ showToast }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.portfolio.closedTrades()
-      .then(d => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><Spinner /></div>;
-  if (!data?.trades?.length) return (
-    <EmptyState title="No closed trades" subtitle="When you close a position, it'll appear here with your P&L"
-      tips={[{ title: 'Build your track record', body: 'Every trade you close is recorded with entry price, exit price, P&L, hold time, and your original thesis. The Journal Coach uses this data to spot patterns in your trading.' }]} />
-  );
-
-  const { trades, stats } = data;
-
-  return (
-    <div style={{ padding: '0 0 24px' }}>
-      {/* Stats bar */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', margin: '0 16px' }}>
-        {[
-          { label: 'TRADES', value: stats.totalTrades, color: 'var(--text)' },
-          { label: 'WIN RATE', value: `${stats.winRate}%`, color: stats.winRate >= 50 ? 'var(--green)' : 'var(--red)' },
-          { label: 'TOTAL P&L', value: `${stats.totalPnl >= 0 ? '+' : ''}$${fmt(stats.totalPnl)}`, color: colorFor(stats.totalPnl) },
-          { label: 'AVG HOLD', value: `${stats.avgHoldDays}d`, color: 'var(--muted)' },
-        ].map((s, i) => (
-          <div key={s.label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: i < 3 ? '1px solid var(--border)' : 'none' }}>
-            <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 3 }}>{s.label}</p>
-            <p style={{ fontSize: 14, fontWeight: 700, color: s.color, letterSpacing: '-0.3px' }}>{s.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Performance Attribution — where the user's edge actually lives */}
-      <PerformanceAttributionCard showToast={showToast} />
-
-      {/* Plan Adherence — patterns from comparing stated plan vs actual exits */}
-      <PlanAdherenceCard showToast={showToast} />
-
-      {/* Trade cards */}
-      <div style={{ padding: '12px 16px 0' }}>
-      {trades.map(t => {
-        const isWin = t.pnl > 0;
-        return (
-          <div key={t.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `2px solid ${isWin ? 'var(--green)' : 'var(--red)'}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <TickerIcon ticker={t.ticker} size={28} />
-                <div>
-                  <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.3px' }}>{t.ticker}</p>
-                  <p style={{ fontSize: 9, color: 'var(--faint)' }}>{t.shares} shares · held {t.hold_days}d</p>
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <p style={{ fontSize: 12, fontWeight: 700, color: colorFor(t.pnl) }}>{t.pnl >= 0 ? '+' : ''}${fmt(t.pnl)}</p>
-                <p style={{ fontSize: 10, color: colorFor(t.pnl_percent) }}>{t.pnl_percent >= 0 ? '+' : ''}{fmt(t.pnl_percent)}%</p>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 12, fontSize: 9, color: 'var(--faint)', marginBottom: t.entry_thesis ? 5 : 0 }}>
-              <span>In: ${fmt(t.avg_cost)}</span>
-              <span>Out: ${fmt(t.sell_price)}</span>
-              <span>{new Date(t.closed_at).toLocaleDateString()}</span>
-            </div>
-            {t.entry_thesis && <p style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic', marginTop: 3 }}>"{t.entry_thesis}"</p>}
-          </div>
-        );
-      })}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Inline growth chart — collapsed by default. Only renders the toggle if the
  * user has 7+ portfolio snapshots, since a chart of 2 dots doesn't say much.
@@ -3343,126 +2993,11 @@ function ClosedTradesDrawer({ onClose, showToast }) {
   );
 }
 
-function PnLSubTab() {
-  const [snapshots, setSnapshots] = useState([]);
-  const [spyBenchmark, setSpyBenchmark] = useState([]);
-  const [showSpy, setShowSpy] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [snapping, setSnapping] = useState(false);
-  const [snapMsg, setSnapMsg] = useState('');
-
-  useEffect(() => { api.portfolio.snapshots().then(d => { setSnapshots(d.snapshots ?? []); setSpyBenchmark(d.spyBenchmark ?? []); setLoading(false); }).catch(() => setLoading(false)); }, []);
-
-  async function takeSnapshot() {
-    setSnapping(true); setSnapMsg('');
-    try {
-      const d = await api.portfolio.takeSnapshot();
-      if (d.alreadyExists) { setSnapMsg('Already snapshotted today'); }
-      else { setSnapMsg(`Snapshot saved — $${(d.totalValue ?? 0).toLocaleString()}`); }
-      const fresh = await api.portfolio.snapshots();
-      setSnapshots(fresh.snapshots ?? []);
-    } catch (e) { setSnapMsg(e.error || 'Snapshot failed'); }
-    setSnapping(false);
-  }
-
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><Spinner /></div>;
-  if (!snapshots.length) return (
-    <div>
-      <EmptyState title="Track Your Growth" subtitle="See how your portfolio value changes over time with a daily P&L chart"
-        action={<button onClick={takeSnapshot} disabled={snapping} className="btn btn-blue">{snapping ? 'Saving...' : 'Take First Snapshot'}</button>}
-        tips={[
-          { title: 'What is this?', body: 'This chart tracks your total portfolio value day by day. Going up means you are making money. Going down means you are losing. Simple as that.' },
-          { title: 'How it works', body: 'We save your portfolio value once a day at 4:30 PM ET. You can also tap the button above anytime. After a few days you will see your performance plotted as a line chart.' },
-        ]} />
-      {snapMsg && <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--green)', padding: '8px 16px' }}>{snapMsg}</p>}
-    </div>
-  );
-
-  // Calculate P&L from first snapshot to latest
-  const firstVal = snapshots[0]?.total_value ?? 0;
-  const latestVal = snapshots[snapshots.length - 1]?.total_value ?? 0;
-  const totalChange = latestVal - firstVal;
-  const totalChangePct = firstVal > 0 ? ((totalChange / firstVal) * 100) : 0;
-  const isUp = totalChange >= 0;
-  const lineColor = isUp ? 'var(--green)' : 'var(--red)';
-
-  return (
-    <div style={{ padding: '14px 16px' }}>
-      {/* Big number hero — Robinhood style */}
-      <div style={{ marginBottom: 16 }}>
-        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 4 }}>PORTFOLIO VALUE</p>
-        <p style={{ fontSize: 30, fontWeight: 700, color: 'var(--text)', letterSpacing: '-1px', marginBottom: 4 }}>
-          ${latestVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-        </p>
-        <p style={{ fontSize: 13, fontWeight: 600, color: lineColor }}>
-          {isUp ? '+' : ''}${totalChange.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({isUp ? '+' : ''}{totalChangePct.toFixed(2)}%)
-          <span style={{ fontSize: 10, color: 'var(--faint)', fontWeight: 400, marginLeft: 6 }}>all time</span>
-        </p>
-      </div>
-
-      {/* Chart — line color matches gain/loss like Robinhood */}
-      {(() => {
-        // Merge SPY benchmark into snapshot data
-        const spyMap = {};
-        spyBenchmark.forEach(s => { spyMap[s.date] = s.spy_value; });
-        const chartData = snapshots.map(s => ({ ...s, spy_value: spyMap[s.date] ?? null }));
-        const hasSpy = spyBenchmark.length > 0;
-
-        // Calculate SPY performance for comparison
-        let spyChange = null, spyChangePct = null;
-        if (hasSpy && spyBenchmark.length >= 2) {
-          const spyFirst = spyBenchmark[0].spy_value;
-          const spyLast = spyBenchmark[spyBenchmark.length - 1].spy_value;
-          spyChange = spyLast - spyFirst;
-          spyChangePct = spyFirst > 0 ? ((spyChange / spyFirst) * 100) : 0;
-        }
-
-        return (
-          <div style={{ background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 14px 10px' }}>
-            <div style={{ height: 180 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} tickLine={false} axisLine={false} tickFormatter={d => { const parts = d.split('-'); return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`; }} />
-                  <YAxis hide domain={['dataMin - 100', 'dataMax + 100']} />
-                  <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11, fontFamily: 'inherit', padding: '8px 12px' }} formatter={(v, name) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name === 'spy_value' ? 'SPY' : 'Portfolio']} labelFormatter={d => { const parts = d.split('-'); return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}`; }} />
-                  <Line type="monotone" dataKey="total_value" stroke={lineColor} dot={chartData.length < 3 ? { r: 4, fill: lineColor } : false} strokeWidth={2.5} name="Portfolio" />
-                  {hasSpy && showSpy && <Line type="monotone" dataKey="spy_value" stroke="var(--faint)" dot={false} strokeWidth={1.5} strokeDasharray="4 3" name="SPY" />}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <p style={{ fontSize: 9, color: 'var(--faint)' }}>{snapshots.length} snapshot{snapshots.length !== 1 ? 's' : ''}</p>
-                {hasSpy && (
-                  <button onClick={() => setShowSpy(s => !s)} style={{ fontSize: 8, color: showSpy ? 'var(--blue)' : 'var(--faint)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', cursor: 'pointer', fontFamily: 'inherit' }}>
-                    {showSpy ? 'SPY ON' : 'SPY OFF'}
-                  </button>
-                )}
-                {hasSpy && showSpy && spyChangePct != null && (
-                  <span style={{ fontSize: 8, color: 'var(--faint)' }}>
-                    SPY: <span style={{ color: spyChangePct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{spyChangePct >= 0 ? '+' : ''}{spyChangePct.toFixed(1)}%</span>
-                    {' '}vs You: <span style={{ color: totalChangePct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>{totalChangePct >= 0 ? '+' : ''}{totalChangePct.toFixed(1)}%</span>
-                  </span>
-                )}
-              </div>
-              <button onClick={takeSnapshot} disabled={snapping} style={{ fontSize: 9, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.3px' }}>
-                {snapping ? 'SAVING...' : '+ SNAPSHOT'}
-              </button>
-            </div>
-            {snapMsg && <p style={{ fontSize: 10, color: 'var(--green)', marginTop: 6, textAlign: 'center' }}>{snapMsg}</p>}
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
-
 export default function PortfolioTab({ marketOpen, showToast, onTabSwitch }) {
-  // Single scrollable view — sub-tabs removed in the retail-focus redesign.
-  // Closed trades live behind the action menu (⋯ → "View closed trades").
-  // The growth chart inlines on this same view once 7+ snapshots exist.
-  // History/News/P&L sub-component code stays in this file for now (might
-  // be revived as drawers); they're just no longer rendered by default.
+  // Single scrollable view. Sub-tabs were removed in the retail-focus redesign:
+  // closed trades live behind the action menu (⋯ then "View closed trades"), and
+  // the growth chart inlines on this same view once 7+ snapshots exist. The old
+  // History/News/P&L sub-tab components were deleted in the cleanup.
 
   // Research overlay: any position can open the full company dossier (the same
   // research view as Social) by dispatching 'research_open'. This tab is mounted
