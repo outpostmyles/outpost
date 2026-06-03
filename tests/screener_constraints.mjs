@@ -39,6 +39,12 @@ test('no bound when none is stated', () => {
   assert.deepEqual(parsePriceBound('high-growth cybersecurity'), { min: null, max: null });
 });
 
+test('a price word embedded in another word does not impose a bound', () => {
+  assert.deepEqual(parsePriceBound('high turnover stocks around $50'), { min: null, max: null }); // "over" inside "turnover"
+  assert.deepEqual(parsePriceBound('takeover targets near $30'), { min: null, max: null });        // "over" inside "takeover"
+  assert.equal(parsePriceBound('high turnover names over $50').min, 50);                            // a real "over $50" still parses
+});
+
 test('vague "cheap" with no number sets no hard bound', () => {
   assert.deepEqual(parsePriceBound('cheap semiconductors'), { min: null, max: null });
 });

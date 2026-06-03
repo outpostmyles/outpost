@@ -50,10 +50,11 @@ function parseJson(text) {
 }
 
 function fmtCap(n) {
-  if (!n) return '';
+  if (!n || !Number.isFinite(n)) return '';
   if (n >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
   if (n >= 1e9) return `$${(n / 1e9).toFixed(0)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
   return `$${n}`;
 }
 
@@ -103,7 +104,7 @@ export async function runScreenerQuery(query) {
         sector: fin?.sector ?? staticSector(ticker),
         industry: fin?.industry ?? null,
         price: +look.price,
-        changePercent: look.changePercent ?? null,
+        changePercent: look.change_percent ?? null,
         momentum1m,
         marketCap: fin?.marketCap ?? null,
         pe: fin?.pe ?? null,
@@ -154,8 +155,8 @@ export async function runScreenerQuery(query) {
       if (c) ordered.push(c);
     }
   }
-  for (const c of enriched) if (!ordered.includes(c)) ordered.push(c);
-  // Fail closed on the AI vetting, then deterministically enforce any explicit
+  // applyScreenerVerdicts fails closed (keeps only Claude-confirmed fits, in the
+  // verdict order built above), then we deterministically enforce any explicit
   // dollar price bound the user typed (Claude is not perfectly reliable on a
   // stated ceiling, and the live price is right here to check against).
   return { results: applyPriceBound(query, applyScreenerVerdicts(ordered, parsed)) };
@@ -178,8 +179,12 @@ export async function persistScreenerRun(screener, { silent = false } = {}) {
   const { results: fresh } = await runScreenerQuery(screener.query);
   const marked = markScreenerNewcomers(screener.results, fresh, { silent });
   const last_run_at = new Date().toISOString();
-  await supabase.from('screeners').update({ results: marked, last_run_at })
+  const { error } = await supabase.from('screeners').update({ results: marked, last_run_at })
     .eq('id', screener.id).eq('user_id', screener.user_id);
+  // supabase-js does not throw on a failed write; surface it so a failed persist
+  // is never reported as a successful run (the nightly job + create/run routes
+  // both rely on this).
+  if (error) throw new Error(`screener persist failed: ${error.message}`);
   return { results: marked, last_run_at };
 }
 
@@ -211,13 +216,16 @@ export async function runDailyScreeners() {
   const { data: users } = await supabase.from('user_profiles').select('id').gt('last_login', since);
   if (!users?.length) return;
   let ran = 0;
-  for (const u of users) {
+  // Bound how many users run at once: each screen fans out to ~50 external calls,
+  // so a serial loop over every user is slow and a fully-parallel one would burst
+  // the data providers. A user's own screens still run one at a time.
+  await mapLimit(users, 3, async (u) => {
     const { data: screens } = await supabase.from('screeners').select('*').eq('user_id', u.id);
     for (const s of screens ?? []) {
       try { await persistScreenerRun(s, { silent: false }); ran++; }
       catch (e) { console.error('[Screener] daily run failed for', s.id, e.message); }
     }
-  }
+  });
   console.log(`[Jobs] Re-ran ${ran} screeners across ${users.length} active users`);
 }
 
@@ -274,7 +282,8 @@ router.post('/:id/seen', requireAuth, rateLimit(60), async (req, res) => {
   try {
     const { data: s } = await supabase.from('screeners').select('id, results').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
     if (s && (Array.isArray(s.results) ? s.results : []).some(r => r.isNew)) {
-      await supabase.from('screeners').update({ results: clearNew(s.results) }).eq('id', s.id).eq('user_id', req.user.id);
+      const { error } = await supabase.from('screeners').update({ results: clearNew(s.results) }).eq('id', s.id).eq('user_id', req.user.id);
+      if (error) console.error(`[req:${req.requestId}] [Screener] seen clear failed:`, error.message);
     }
     res.json({ ok: true });
   } catch {
@@ -292,7 +301,8 @@ router.post('/:id/refine', requireAuth, rateLimit(10), async (req, res) => {
 
     const newQuery = await mergeQuery(s.query, refinement);
     const name = newQuery.slice(0, 60);
-    await supabase.from('screeners').update({ query: newQuery, name }).eq('id', s.id).eq('user_id', req.user.id);
+    const { error: upErr } = await supabase.from('screeners').update({ query: newQuery, name }).eq('id', s.id).eq('user_id', req.user.id);
+    if (upErr) return res.status(500).json({ error: 'Refine failed' }); // do not run the new query if the rename did not stick
     const { results, last_run_at } = await persistScreenerRun({ ...s, query: newQuery }, { silent: true });
     res.json({ screener: { ...s, query: newQuery, name, results, last_run_at } });
   } catch (e) {

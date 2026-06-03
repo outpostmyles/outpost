@@ -90,6 +90,10 @@ export function compareForBook(dossiers) {
 
   const best = ranked[0];
   let reason;
+  // Only name a "best fit" when something here is genuinely addable. When nothing
+  // is (all owned, or all unclassifiable), bestTicker is null so the UI does not
+  // badge a name the reason text just said is NOT a recommendation.
+  let bestTicker = best.score > -1000 ? best.ticker : null;
   if (best.score > -1000) {
     if (best.sectorFit === 'new') reason = `${best.ticker} would diversify you into ${best.sector}, a sector you do not hold yet.`;
     else if (best.sectorFit === 'fits') reason = `${best.ticker} rounds out your ${best.sector} exposure without overloading it.`;
@@ -99,7 +103,7 @@ export function compareForBook(dossiers) {
   } else {
     reason = `We could not classify these well enough to call one the best fit. Open each to judge it on the business.`;
   }
-  return { bestTicker: best.ticker, reason, ranked };
+  return { bestTicker, reason, ranked };
 }
 
 /**
@@ -155,7 +159,7 @@ export async function buildDossier(ticker, userId) {
     industry: fin?.industry || null,
     status,
     price,
-    changePercent: (look && look.changePercent != null) ? look.changePercent : null,
+    changePercent: (look && look.change_percent != null) ? look.change_percent : null,
     momentum1m,
     description: fin?.description || null,
     fundamentals: {

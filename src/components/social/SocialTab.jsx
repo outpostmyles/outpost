@@ -704,6 +704,10 @@ export default function SocialTab({ showToast }) {
     return () => window.removeEventListener('research_open', handler);
   }, []);
 
+  // Leaving a section dismisses the research overlay, so tapping a tab never
+  // strands you on a dossier while the tab bar points somewhere else.
+  useEffect(() => { setResearchTicker(null); setResearchContext(null); }, [activeSection]);
+
   const loadBuzz = useCallback(async () => {
     setLoading(true);
     try {
@@ -734,6 +738,10 @@ export default function SocialTab({ showToast }) {
     loadCatalyst();
     loadWatchlist();
   }, []);
+
+  // The watchlist can change from anywhere (adding a name from a research dossier,
+  // for instance), so refresh it whenever the user lands on that tab.
+  useEffect(() => { if (activeSection === 'watchlist') loadWatchlist(); }, [activeSection, loadWatchlist]);
 
   // Countdown timer for buzz scanner
   useEffect(() => {

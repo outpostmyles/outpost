@@ -198,7 +198,7 @@ function FeedRow({ item, onClick }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'center', paddingRight: 12 }}>
-        {item.ticker && (
+        {item.ticker && item.type !== 'sector' && (
           <button
             onClick={research}
             title="Open research"

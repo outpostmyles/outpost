@@ -64,6 +64,10 @@ export default function ScreenersView({ showToast }) {
       ? { ...x, results: (x.results || []).map(r => ({ ...r, isNew: false })) } : x));
   }, [selectedId, screeners]);
 
+  // Switching screens (or backing out to the list) drops any in-progress compare
+  // selection, so it cannot leak into a different screen and act on hidden tickers.
+  useEffect(() => { setCompareMode(false); setCompareSel([]); }, [selectedId]);
+
   async function create(q = query.trim()) {
     if (!q || creating) return;
     setCreating(true);
@@ -99,9 +103,9 @@ export default function ScreenersView({ showToast }) {
     } }));
   }
 
-  async function watch(ticker) {
+  async function watch(ticker, name) {
     try {
-      await api.social.addToWatchlist({ ticker, companyName: ticker });
+      await api.social.addToWatchlist({ ticker, companyName: name || ticker });
       showToast?.(`${ticker} added to watchlist`, 'success');
     } catch (e) {
       showToast?.(e.error || 'Could not add to watchlist', 'error');
@@ -189,7 +193,7 @@ export default function ScreenersView({ showToast }) {
     return <DossierView ticker={dossierTicker} dossier={dossier} loading={dossierLoading} error={dossierError}
       status={dossier?.status ?? statuses[dossierTicker] ?? null} onStatus={(s) => setStatus(dossierTicker, s)}
       sameHeld={sameHeld} onCompareHoldings={compareToHoldings} context={dossierContext}
-      onBack={closeDossier} onWatch={() => watch(dossierTicker)} onAsk={() => deepDive(dossier)} />;
+      onBack={closeDossier} onWatch={() => watch(dossierTicker, dossier?.name)} onAsk={() => deepDive(dossier)} />;
   }
 
   const selected = selectedId ? (screeners || []).find(s => s.id === selectedId) : null;
@@ -235,7 +239,7 @@ export default function ScreenersView({ showToast }) {
             Nothing held up the vetting this run. Try a more specific query, refine it below, or rescan later.
           </p>
         ) : (
-          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} compareMode={compareMode} selected={compareSel.includes(r.ticker)} onToggle={() => toggleCompare(r.ticker)} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker)} onOpen={() => openDossier(r.ticker, { thesis: r.thesis, query: selected.query })} />)
+          results.map(r => <ResultRow key={r.ticker} r={r} status={statuses[r.ticker]} compareMode={compareMode} selected={compareSel.includes(r.ticker)} onToggle={() => toggleCompare(r.ticker)} onAsk={() => ask(r.ticker, selected.query)} onWatch={() => watch(r.ticker, r.name)} onOpen={() => openDossier(r.ticker, { thesis: r.thesis, query: selected.query })} />)
         )}
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
@@ -393,12 +397,12 @@ export function DossierView({ ticker, dossier, loading, error, status, onStatus,
       ) : d ? (
         <>
           <DSection title="FOR YOUR BOOK" accent>
-            <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{d.forYourBook.fitNote}</p>
-            {d.forYourBook.sector && d.forYourBook.sector !== 'Unknown' && d.forYourBook.bookValue > 0 && (
+            <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{d.forYourBook?.fitNote}</p>
+            {d.forYourBook?.sector && d.forYourBook.sector !== 'Unknown' && d.forYourBook.bookValue > 0 && (
               <SectorBar pct={d.forYourBook.sectorPct} sector={d.forYourBook.sector} />
             )}
-            {d.forYourBook.betaNote && <p style={dsNote}>{d.forYourBook.betaNote}</p>}
-            {d.forYourBook.suggestedSize && <p style={dsNote}>{d.forYourBook.suggestedSize}</p>}
+            {d.forYourBook?.betaNote && <p style={dsNote}>{d.forYourBook.betaNote}</p>}
+            {d.forYourBook?.suggestedSize && <p style={dsNote}>{d.forYourBook.suggestedSize}</p>}
             {sameHeld?.length > 0 && (
               <button onClick={onCompareHoldings}
                 style={{ marginTop: 10, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.4px', color: 'var(--blue)', background: 'rgba(59,130,246,0.1)', border: '0.5px solid rgba(59,130,246,0.35)', borderRadius: 5, padding: '7px 11px', cursor: 'pointer', fontFamily: 'inherit' }}>

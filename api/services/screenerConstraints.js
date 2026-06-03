@@ -13,7 +13,10 @@ const FLOOR_WORDS = 'over|above|more than|at least|no less than|minimum|min|>=|>
 const MAGNITUDES = new Set(['k', 'm', 'b', 't', 'bn', 'mn', 'mm', 'thousand', 'million', 'billion', 'trillion']);
 
 function boundFrom(q, words) {
-  const m = q.match(new RegExp(`(?:${words})\\s*\\$\\s*${NUM}${TAIL}`));
+  // (?<![a-z]) so a keyword only matches at a word start: "over $50" hits, but
+  // "turnover $50" / "recover $50" do not falsely impose a floor. Symbol operators
+  // (<, >, <=, >=) are unaffected by the letter lookbehind.
+  const m = q.match(new RegExp(`(?<![a-z])(?:${words})\\s*\\$\\s*${NUM}${TAIL}`));
   if (!m) return null;
   if (MAGNITUDES.has((m[2] || '').toLowerCase())) return null; // market cap, different dimension
   const n = parseFloat(m[1].replace(/,/g, ''));
