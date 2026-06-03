@@ -10,8 +10,10 @@
 // returns to Timeline, not Notes.
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api } from '../../lib/api.js';
+import { cachedFetch } from '../../lib/cache.js';
 import { buildCoaching } from '../../lib/coaching.js';
 import { buildGrowthArc } from '../../lib/growthArc.js';
+import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
 import { filterNotes } from '../../lib/journalSearch.js';
@@ -107,6 +109,19 @@ export default function JournalTab({ showToast, onTabSwitch }) {
     loadNotes(); // refresh list to reflect any edits
   }
 
+  // A REFLECT prompt was tapped: start a pre-seeded entry (no blank page), mark the
+  // prompt handled so it stops nagging, and drop straight into the editor.
+  async function handleReflect(prompt) {
+    try {
+      const { note } = await api.journal.createNote({ title: prompt.seedTitle, content: prompt.seedBody });
+      api.journal.markReflected(prompt.id).catch(() => {});
+      setNotes(prev => [{ ...note, preview: prompt.seedBody.slice(0, 100) }, ...prev]);
+      setOpenNote(note);
+    } catch (err) {
+      showToast?.(err.error || 'Could not start that entry', 'error');
+    }
+  }
+
   async function handleDeleteNote(id) {
     if (!confirm('Delete this note? This cannot be undone.')) return;
     try {
@@ -190,6 +205,11 @@ export default function JournalTab({ showToast, onTabSwitch }) {
             </button>
           </div>
 
+          {/* REFLECT — the front door. The few moments worth journaling right now,
+              each one tap into a pre-seeded entry. Renders nothing when there is
+              nothing to reflect on, so it is signal, not a chore. */}
+          <ReflectFeed onReflect={handleReflect} />
+
           {/* Search — pure client-side filter over title + preview. Only shown
               once there are notes to search. Instant, no network per keystroke. */}
           {!loading && notes.length > 0 && (
@@ -255,6 +275,48 @@ export default function JournalTab({ showToast, onTabSwitch }) {
       ) : (
         <PatternsView />
       )}
+    </div>
+  );
+}
+
+// ============ REFLECT FEED ============
+// The Journal's proactive front door. Pulls the few moments worth journaling right
+// now from the rest of the app, a trade you closed but never reflected on, a thesis
+// Outpost flagged as breaking, and offers each as one tap into a pre-seeded entry.
+// Quiet (renders nothing) when there is nothing to reflect on.
+function ReflectFeed({ onReflect }) {
+  const [prompts, setPrompts] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      cachedFetch('portfolio_closed_trades', () => api.portfolio.closedTrades(), 5 * 60000).catch(() => ({ trades: [] })),
+      cachedFetch('portfolio_thesis_watch', () => api.portfolio.thesisWatch(), 30 * 60000).catch(() => ({ watches: {} })),
+      api.journal.reflectedIds().catch(() => ({ ids: [] })),
+    ]).then(([ct, tw, rf]) => {
+      if (!alive) return;
+      setPrompts(buildReflectionPrompts({
+        closes: ct?.trades || [],
+        theses: Object.values(tw?.watches || {}),
+        handled: rf?.ids || [],
+      }));
+    });
+    return () => { alive = false; };
+  }, []);
+
+  if (!prompts.length) return null;
+  const act = (p) => { onReflect(p); setPrompts(ps => ps.filter(x => x.id !== p.id)); };
+  return (
+    <div style={{ margin: '12px 16px 0', background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.18)', borderRadius: 8, overflow: 'hidden' }}>
+      <p style={{ fontSize: 9, fontWeight: 800, color: 'var(--blue)', letterSpacing: '1px', padding: '10px 12px 2px', margin: 0 }}>REFLECT</p>
+      {prompts.map((p, i) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i ? '1px solid var(--border)' : 'none' }}>
+          <p style={{ flex: 1, fontSize: 11.5, color: 'var(--text)', lineHeight: 1.4, margin: 0 }}>{p.title}</p>
+          <button onClick={() => act(p)}
+            style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', padding: '6px 11px', borderRadius: 5, cursor: 'pointer', background: 'var(--blue)', color: '#fff', border: 'none', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+            WRITE
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

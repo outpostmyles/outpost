@@ -285,6 +285,9 @@ export const api = {
       const qs = q.toString();
       return get(`/api/journal/timeline${qs ? '?' + qs : ''}`);
     },
+    // REFLECT prompts: which ones the user has already handled (so they do not nag).
+    reflectedIds: () => get('/api/journal/reflected'),
+    markReflected: (id) => post('/api/journal/reflected', { id }),
   },
   admin: {
     check: () => get('/api/admin/check'),

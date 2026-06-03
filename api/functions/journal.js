@@ -260,4 +260,43 @@ router.delete('/notes/:id', requireAuth, rateLimit(30), async (req, res) => {
   }
 });
 
+// The set of REFLECT prompts the user has already acted on or dismissed, so a
+// handled prompt does not nag forever. Stored per user in ai_cache (no migration),
+// capped, strictly the user's own data. The prompts themselves are built on the
+// client from closed trades + thesis verdicts; this just remembers which are done.
+const REFLECTED_KEY = (userId) => `journal_prompts_handled:${userId}`;
+const MAX_HANDLED = 200;
+
+router.get('/reflected', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', REFLECTED_KEY(req.user.id)).maybeSingle();
+    const ids = data?.result ? (typeof data.result === 'string' ? JSON.parse(data.result) : data.result) : [];
+    res.json({ ids: Array.isArray(ids) ? ids : [] });
+  } catch (err) {
+    console.error('[Journal] reflected get:', err.message);
+    res.json({ ids: [] }); // non-critical: at worst a handled prompt reappears once
+  }
+});
+
+router.post('/reflected', requireAuth, rateLimit(60), async (req, res) => {
+  try {
+    const id = sanitizeString(req.body?.id, 120);
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const key = REFLECTED_KEY(req.user.id);
+    const { data } = await supabase.from('ai_cache').select('id, result').eq('cache_key', key).maybeSingle();
+    const existing = data?.result ? (typeof data.result === 'string' ? JSON.parse(data.result) : data.result) : [];
+    const set = new Set(Array.isArray(existing) ? existing : []);
+    set.add(id);
+    let ids = [...set];
+    if (ids.length > MAX_HANDLED) ids = ids.slice(ids.length - MAX_HANDLED); // keep the most recent
+    const payload = { cache_key: key, result: JSON.stringify(ids), created_at: new Date().toISOString() };
+    if (data?.id) await supabase.from('ai_cache').update(payload).eq('id', data.id);
+    else await supabase.from('ai_cache').insert(payload);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[Journal] reflected post:', err.message);
+    res.status(500).json({ error: 'Failed to record' });
+  }
+});
+
 export default router;
