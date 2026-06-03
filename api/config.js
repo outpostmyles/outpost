@@ -35,4 +35,16 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
 };
 
+// Brokerage sync. OFF by default: the app uses the 'manual' provider (positions
+// are hand-entered), exactly as today. It only turns on when a provider is
+// selected via BROKERAGE_PROVIDER and that provider's keys are present, so this
+// can ship dormant and be flipped on the day the SnapTrade account exists.
+const brokerageProvider = process.env.BROKERAGE_PROVIDER || 'manual';
+config.brokerage = {
+  provider: brokerageProvider,
+  enabled: brokerageProvider === 'snaptrade'
+    ? !!(config.snaptradeClientId && config.snaptradeConsumerKey)
+    : false,
+};
+
 console.log('✅ Environment validated');

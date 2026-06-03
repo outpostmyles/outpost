@@ -24,6 +24,7 @@ import onboardingRoutes from './functions/onboarding.js';
 import attributionRoutes from './functions/attribution.js';
 import screenerRoutes from './functions/screeners.js';
 import researchRoutes from './functions/research.js';
+import brokerageRoutes from './functions/brokerage.js';
 import { config } from './config.js';
 import { initMarketDataService, getMarketData } from './services/marketData.js';
 import { initPricePool, poolStats } from './services/pricePool.js';
@@ -92,6 +93,7 @@ app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/portfolio/attribution', attributionRoutes);
 app.use('/api/screeners', screenerRoutes);
 app.use('/api/research', researchRoutes);
+app.use('/api/brokerage', brokerageRoutes);
 
 // ============ HEALTH & MONITORING ============
 
