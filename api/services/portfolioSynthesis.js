@@ -22,7 +22,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { logAndGrade } from './aiQualityLog.js';
-import { pctOfBookOf } from '../../src/lib/bookStats.js';
+import { pctOfBookOf, bookStamp } from '../../src/lib/bookStats.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -182,6 +182,9 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
   }
 
   const cacheKey = `portfolio_synthesis_${userId}`;
+  // Fingerprint of the book right now. The cache is only valid while this is
+  // unchanged, so a synthesis can never describe a book the user no longer has.
+  const stamp = bookStamp(positions);
 
   // Check cache first
   if (!force) {
@@ -196,7 +199,10 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
       if (ageMs < TTL_MS) {
         try {
           const parsed = JSON.parse(cached.result);
-          return { ...parsed, fromCache: true };
+          // Serve the cache only if the book has not changed since it was
+          // written. A mismatch (add, close, re-average) falls through and
+          // regenerates. Entries written before stamping simply regenerate once.
+          if (parsed.bookStamp === stamp) return { ...parsed, fromCache: true };
         } catch {}
       }
     }
@@ -233,6 +239,7 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
     text,
     generatedAt: new Date().toISOString(),
     summary,
+    bookStamp: stamp,
   };
 
   // Persist to cache (upsert)

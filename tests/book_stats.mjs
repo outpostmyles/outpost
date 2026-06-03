@@ -4,7 +4,7 @@
 // the holdings-only denominator, the 1-decimal display rounding, and the
 // null-not-NaN guards are all locked here.
 import assert from 'node:assert/strict';
-import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats } from '../src/lib/bookStats.js';
+import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp } from '../src/lib/bookStats.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -126,6 +126,34 @@ test('computeBookStats: unrealizedPnlPct is null when there is no cost basis', (
   const { positions, book } = computeBookStats([{ ticker: 'A', currentValue: 100 }]);
   assert.strictEqual(positions[0].unrealizedPnlPct, null);
   assert.strictEqual(book.unrealizedPnlPct, null);
+});
+
+test('bookStamp is order-independent: same holdings, same stamp', () => {
+  const a = bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 150 }, { ticker: 'MSFT', shares: 5, avg_cost: 300 }]);
+  const b = bookStamp([{ ticker: 'MSFT', shares: 5, avg_cost: 300 }, { ticker: 'AAPL', shares: 10, avg_cost: 150 }]);
+  assert.equal(a, b);
+});
+
+test('bookStamp changes when you add, close, or resize a position', () => {
+  const base = [{ ticker: 'AAPL', shares: 10, avg_cost: 150 }];
+  assert.notEqual(bookStamp(base), bookStamp([...base, { ticker: 'NVDA', shares: 3, avg_cost: 100 }])); // add
+  assert.notEqual(bookStamp(base), bookStamp([])); // close to empty
+  assert.notEqual(bookStamp(base), bookStamp([{ ticker: 'AAPL', shares: 20, avg_cost: 150 }])); // added shares
+  assert.notEqual(bookStamp(base), bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 160 }])); // re-averaged cost
+});
+
+test('bookStamp ignores live price moves (not a book change)', () => {
+  // Same holdings with different live prices / market values must stamp equal,
+  // so a ticking quote does not thrash the synthesis cache.
+  const a = bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 150, currentValue: 1600, currentPrice: 160 }]);
+  const b = bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 150, currentValue: 1800, currentPrice: 180 }]);
+  assert.equal(a, b);
+});
+
+test('bookStamp is case-insensitive on ticker and safe on junk', () => {
+  assert.equal(bookStamp([{ ticker: 'aapl', shares: 10, avg_cost: 150 }]), bookStamp([{ ticker: 'AAPL', shares: 10, avg_cost: 150 }]));
+  assert.equal(bookStamp(null), '');
+  assert.equal(bookStamp([null, undefined]), '');
 });
 
 let pass = 0, fail = 0;

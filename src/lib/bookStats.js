@@ -67,6 +67,26 @@ const round2 = (n) => Math.round(n * 100) / 100;
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /**
+ * A stable, order-independent fingerprint of the book's SHAPE: the set of
+ * tickers and, for each, the shares and average cost. Used to invalidate cached
+ * AI reads (the portfolio synthesis) the moment the book actually changes: add,
+ * close, or edit a position and the stamp changes, so a stale "you're 30% in
+ * NVDA" can't survive after you've sold it. Live price moves do NOT change the
+ * stamp (they are not a book change), which is what keeps it from thrashing the
+ * cache every tick. Equal stamp means equal book.
+ */
+export function bookStamp(positions) {
+  const list = (Array.isArray(positions) ? positions : []).filter(Boolean);
+  const parts = list.map(p => {
+    const t = String(p.ticker ?? '').toUpperCase();
+    const sh = Number(p.shares) || 0;
+    const ac = Number(p.avg_cost ?? p.avgCost) || 0;
+    return `${t}:${sh}:${ac}`;
+  }).sort();
+  return parts.join('|');
+}
+
+/**
  * THE book-stats selector. Give it the positions (enriched with currentValue if
  * you have it); get back the book aggregates and the same positions, in order,
  * each tagged with marketValue, costBasis, pctOfBook (rounded to 1 decimal: the
