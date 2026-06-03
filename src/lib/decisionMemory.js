@@ -42,9 +42,10 @@ export function detectDecisions(prior, curr, at) {
 // watch = needs an eye, neutral = too early or flat).
 function gradeOne(ev, live, now) {
   const px = +ev?.px;
-  if (!ev?.ticker || !Number.isFinite(px) || px <= 0 || !Number.isFinite(live) || live <= 0) return null;
+  const at = Date.parse(ev?.at);
+  if (!ev?.ticker || !Number.isFinite(px) || px <= 0 || !Number.isFinite(live) || live <= 0 || !Number.isFinite(at)) return null;
   const since = ((live - px) / px) * 100;
-  const ageDays = Math.max(0, Math.floor((now - Date.parse(ev.at)) / 86400000));
+  const ageDays = Math.max(0, Math.floor((now - at) / 86400000));
   const up = since >= 0;
   const s = `${signed(since)}%`;
   let text, tone;

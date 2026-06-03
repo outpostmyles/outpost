@@ -67,6 +67,23 @@ test('flags a deepening loss and a growing concentration', () => {
   assert.ok(diffReadState(p2, c2).lines.some(l => /DELL grew to 18% of your book/.test(l)));
 });
 
+test('a winner giving back gain reads as a pullback, never a loss', () => {
+  const prior = snapshotReadState({ positions: [P({ ticker: 'NVDA', currentPrice: 140, avg_cost: 100, shares: 10 })], totalValue: 100000 }); // +40%
+  const curr = snapshotReadState({ positions: [P({ ticker: 'NVDA', currentPrice: 130, avg_cost: 100, shares: 10 })], totalValue: 100000 }); // +30%
+  const lines = diffReadState(prior, curr).lines;
+  assert.ok(lines.some(l => /NVDA pulled back, now \+30% from cost/.test(l)));
+  assert.ok(!lines.some(l => /fell further/.test(l)));
+});
+
+test('a trim suppresses the contradictory "grew to" line for the same name', () => {
+  // sold shares (100 -> 70) yet the weight rose (the rest of the book fell)
+  const prior = snapshotReadState({ positions: [P({ ticker: 'DELL', currentPrice: 100, shares: 100 })], totalValue: 50000 }); // 20%
+  const curr = snapshotReadState({ positions: [P({ ticker: 'DELL', currentPrice: 100, shares: 70 })], totalValue: 28000 });  // 25%
+  const lines = diffReadState(prior, curr).lines;
+  assert.ok(lines.some(l => /You trimmed DELL/.test(l)));
+  assert.ok(!lines.some(l => /grew to/.test(l)));
+});
+
 test('notices a trim, a new name, and a close', () => {
   const prior = snapshotReadState({ positions: [P({ ticker: 'ALAB', shares: 100 }), P({ ticker: 'OLD', shares: 5 })], totalValue: 100000 });
   const curr = snapshotReadState({ positions: [P({ ticker: 'ALAB', shares: 50 }), P({ ticker: 'NEW', shares: 5 })], totalValue: 100000 });

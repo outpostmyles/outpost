@@ -195,13 +195,18 @@ export async function getThesisWatch(position, userId, { now = Date.now() } = {}
   const thesisSig = thesisSignature(thesis, reversal);
 
   // News drives "what changed", so fetch it first; it is the main re-judge trigger.
-  let articles = [];
-  try { const n = await getStockNews({ ticker, limit: STALE_NEWS }); articles = n?.articles || []; } catch {}
+  // Track whether the fetch actually succeeded: a transient Polygon failure returns
+  // no articles, which must NOT be mistaken for "the news changed to nothing" (that
+  // would flip the signature and force a needless paid re-judge on every blip).
+  let articles = [], newsOk = false;
+  try { const n = await getStockNews({ ticker, limit: STALE_NEWS }); articles = n?.articles || []; newsOk = !n?.error; } catch {}
   const newsSig = newsSignature(articles);
 
   const key = keyFor(userId, ticker);
   const cached = await cacheRead(key);
-  if (cached && cached.thesisSig === thesisSig && cached.newsSig === newsSig && !isStale(cached.evaluatedAt, now)) {
+  // Serve the cache when the thesis is unchanged and the read is fresh, and either
+  // the news is unchanged OR the news fetch failed (ignore the news axis on a blip).
+  if (cached && cached.thesisSig === thesisSig && !isStale(cached.evaluatedAt, now) && (cached.newsSig === newsSig || !newsOk)) {
     return shape(ticker, cached);
   }
 

@@ -83,6 +83,14 @@ test('grading skips decisions with no usable price, newest first, capped', () =>
   assert.deepEqual(g.map(x => x.ticker), ['D', 'A']); // C/B dropped, D newer than A
 });
 
+test('skips a decision with an unparseable date instead of mislabeling it', () => {
+  const g = gradeDecisions([
+    { kind: 'opened', ticker: 'BAD', at: 'not-a-date', px: 100 },
+    { kind: 'opened', ticker: 'OK', at: '2026-05-01T00:00:00Z', px: 100 },
+  ], { BAD: 120, OK: 120 }, Date.now());
+  assert.deepEqual(g.map(x => x.ticker), ['OK']); // BAD dropped, never shown as "today"
+});
+
 test('callAge reads in human units', () => {
   assert.equal(callAge(0), 'today');
   assert.equal(callAge(3), '3d');

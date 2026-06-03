@@ -1638,6 +1638,7 @@ router.post('/since', requireAuth, rateLimit(30), async (req, res) => {
   try {
     const holdings = req.body?.snapshot?.holdings;
     if (!holdings || typeof holdings !== 'object' || Array.isArray(holdings)) return res.json({ prior: null });
+    if (Object.keys(holdings).length > 300) return res.json({ prior: null }); // implausible book size; refuse a giant blob
     const key = `portfolio_read_anchor:${req.user.id}`;
 
     let prior = null;
@@ -1698,6 +1699,15 @@ router.get('/track-record', requireAuth, rateLimit(20), async (req, res) => {
     const priceMap = tickers.length ? getPrices(tickers) : {};
     const livePrices = {};
     for (const t of tickers) { const p = priceMap[t]?.price; if (p) livePrices[t] = p; }
+    // The price pool only carries names you still hold or watch, so a position you
+    // have since exited is not in it. Look those up directly (bounded) so the "you
+    // exited X, it is Y% since" calls, the best feedback, actually grade.
+    const missing = tickers.filter(t => !livePrices[t]).slice(0, 12);
+    if (missing.length) {
+      await Promise.allSettled(missing.map(async (t) => {
+        try { const l = await lookupStock({ ticker: t }); if (l?.price) livePrices[t] = +l.price; } catch {}
+      }));
+    }
 
     const calls = gradeDecisions(events, livePrices, Date.now(), 8);
     res.json({ calls, tracked: events.length });

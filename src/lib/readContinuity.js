@@ -55,7 +55,8 @@ export function diffReadState(prior, curr) {
     if (!p.th && c.th) out.push({ pri: 5, text: `You wrote a thesis on ${t}.` });
     if (!p.stop && c.stop) out.push({ pri: 5, text: `You set a stop on ${t}.` });
     if (!p.tgt && c.tgt) out.push({ pri: 4, text: `You set a target on ${t}.` });
-    if (p.sh && c.sh && c.sh <= p.sh * 0.85) out.push({ pri: 4, text: `You trimmed ${t}.` });
+    const trimmed = p.sh && c.sh && c.sh <= p.sh * 0.85;
+    if (trimmed) out.push({ pri: 4, text: `You trimmed ${t}.` });
     else if (p.sh && c.sh && c.sh >= p.sh * 1.15) out.push({ pri: 3, text: `You added to ${t}.` });
 
     // Things that moved on you (the heads-up).
@@ -68,8 +69,17 @@ export function diffReadState(prior, curr) {
           : `Your ${t} thesis firmed up to ${VERDICT_LABEL[c.v] || c.v}.`,
       });
     }
-    if (c.pnl - p.pnl <= -8) out.push({ pri: 7, text: `${t} fell further, now ${c.pnl >= 0 ? '+' : ''}${c.pnl}% from cost.` });
-    if (c.pct - p.pct >= 3 && c.pct >= 15) out.push({ pri: 6, text: `${t} grew to ${c.pct}% of your book.` });
+    if (c.pnl - p.pnl <= -8) {
+      // Only call it a "fall" when the name is actually underwater. A winner giving
+      // back some gain is a pullback, not a loss, and saying otherwise reads wrong.
+      out.push(c.pnl < 0
+        ? { pri: 7, text: `${t} fell further, now ${c.pnl}% from cost.` }
+        : { pri: 6, text: `${t} pulled back, now +${c.pnl}% from cost.` });
+    }
+    // Suppress "grew to" when we just said "You trimmed" this name, so the pair does
+    // not read as a contradiction (you can sell shares yet rise in weight if the
+    // rest of the book fell).
+    if (!trimmed && c.pct - p.pct >= 3 && c.pct >= 15) out.push({ pri: 6, text: `${t} grew to ${c.pct}% of your book.` });
   }
 
   for (const t of Object.keys(P)) {
