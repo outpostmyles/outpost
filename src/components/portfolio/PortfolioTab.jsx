@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { assessPositionHealth } from '../../lib/positionHealth.js';
-import { assessPortfolioRisk } from '../../lib/portfolioRisk.js';
 import { buildStressTests } from '../../lib/stressTest.js';
 import { sectorExposure } from '../../lib/sectorExposure.js';
 import { sectorGaps } from '../../lib/sectorGaps.js';
+import { buildPortfolioActions } from '../../lib/portfolioActions.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
@@ -2517,6 +2517,29 @@ function ExposureCard({ positions, onTabSwitch }) {
   );
 }
 
+// "WHAT NEEDS YOU" — the prioritized, proactive action list. The few decisions
+// that actually matter on your book today, each with one button to act on it.
+// Renders nothing when the book is calm and fully planned, so it is signal only.
+function ActionFeed({ positions, totalValue }) {
+  const actions = buildPortfolioActions(positions, totalValue);
+  if (!actions.length) return null;
+  const act = (a) => {
+    if (a.actionType === 'ask') window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: a.askMessage } }));
+    else window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: a.ticker } }));
+  };
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)', background: 'rgba(59,130,246,0.04)' }}>
+      <p style={{ fontSize: 9, fontWeight: 800, color: 'var(--blue)', letterSpacing: '1px', padding: '10px 16px 2px', margin: 0 }}>WHAT NEEDS YOU</p>
+      {actions.map(a => (
+        <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', borderTop: '1px solid var(--border)' }}>
+          <p style={{ flex: 1, fontSize: 11.5, color: 'var(--text)', lineHeight: 1.45, margin: 0 }}>{a.text}</p>
+          <button onClick={() => act(a)} className="btn btn-blue" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', padding: '6px 11px', whiteSpace: 'nowrap', flexShrink: 0 }}>{a.actionLabel}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // "ON YOUR BOOK" — recent headlines across the user's holdings, newest first,
 // tagged with each name's move today so the biggest movers and their likely
 // reason surface together. Tap a row to research that company. Stays quiet (renders
@@ -2618,17 +2641,8 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
 
   const positions = data?.positions ?? [];
 
-  // Drawdown alerts — surface positions that are -20%+ from cost basis.
-  // Retail's actual sell trigger. Only band-fires when there's a real one.
-  const drawdowns = positions
-    .filter(p => p.avg_cost > 0 && p.currentPrice && ((p.currentPrice - p.avg_cost) / p.avg_cost) * 100 <= -20)
-    .map(p => ({
-      ticker: p.ticker,
-      pct: ((p.currentPrice - p.avg_cost) / p.avg_cost) * 100,
-    }));
-
-  // Portfolio-level concentration risk (one name too big, top-heavy, too thin).
-  const risk = assessPortfolioRisk(positions);
+  // (Drawdown + concentration flags now live inside the WHAT NEEDS YOU action
+  // feed via buildPortfolioActions, so the old inline computations were removed.)
 
   if (loading) return <div style={{ padding: 16 }}><SkeletonCard /><SkeletonCard /></div>;
 
@@ -2681,24 +2695,11 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             )}
           </div>
 
-          {/* HEADS UP — one strip for the things that need your eye: the top
-              concentration flag and any real drawdowns, together. Replaces the two
-              separate amber bands that used to stack and say overlapping things. */}
-          {(risk.flags.length > 0 || drawdowns.length > 0) && (
-            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: risk.level === 'high' ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.05)' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ color: risk.level === 'high' ? 'var(--red)' : 'var(--amber)', fontWeight: 700, letterSpacing: '0.5px', fontSize: 9 }}>HEADS UP</span>
-                {risk.flags.length > 0 && <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>{risk.flags[0].message}</span>}
-                {drawdowns.length > 0 && (
-                  <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
-                    {risk.flags.length > 0 ? '· ' : ''}
-                    {drawdowns.slice(0, 3).map(d => `${d.ticker} down ${Math.abs(d.pct).toFixed(0)}%`).join(', ')}
-                    {drawdowns.length > 3 ? `, +${drawdowns.length - 3} more` : ''} from cost
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
+          {/* WHAT NEEDS YOU — the prioritized action list. Supersedes the old
+              drawdown/concentration bands (those are just two of the things it
+              surfaces) and turns "here's a flag" into "here's the thing and the
+              button to handle it." */}
+          <ActionFeed positions={positions} totalValue={data?.totalValue ?? 0} />
 
           {/* Compact action bar — + ADD primary, refresh + menu as icons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
