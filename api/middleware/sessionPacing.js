@@ -145,7 +145,7 @@ export function sessionPacing() {
       }
 
       return res.status(429).json({
-        error: `You're on a roll! Your session refreshes in about ${refreshMinutes} minute${refreshMinutes === 1 ? '' : 's'} — perfect time to review your positions.`,
+        error: `You're on a roll! Your session refreshes in about ${refreshMinutes} minute${refreshMinutes === 1 ? '' : 's'}, perfect time to review your positions.`,
         sessionLimit: true,
         refreshMinutes,
         windowType: window.type,
