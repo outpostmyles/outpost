@@ -507,6 +507,13 @@ function ProgressOverview({ onSeeStory, onReflect }) {
       .catch(() => {});
     return () => { alive = false; };
   }, []);
+  // Home can send the user straight into the coach on a hard day (dispatched after
+  // the tab switch, so this listener is mounted and ready to catch it).
+  useEffect(() => {
+    const open = () => setCoachOpen(true);
+    window.addEventListener('coach_open', open);
+    return () => window.removeEventListener('coach_open', open);
+  }, []);
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
       {/* Who you are becoming leads: the story, not the numbers. */}

@@ -4,6 +4,7 @@ import { cachedFetch, clearCachePrefix } from '../../lib/cache.js';
 import { useAuth } from '../../hooks/useAuth.jsx';
 import { fmt, colorFor, greeting } from '../../utils/market.js';
 import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
+import { buildCoachReachout } from '../../lib/coachReachout.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
 import ActivationChecklist from './ActivationChecklist.jsx';
@@ -39,6 +40,46 @@ function persistDismissedNotices(set) {
   try {
     localStorage.setItem(NOTICE_DISMISS_KEY, JSON.stringify(Array.from(set)));
   } catch {}
+}
+
+// The coach reaching out first. On a genuinely hard day or stretch, a steadying
+// word surfaces here with one tap into the coach, so support comes to the user
+// before they break. Quiet on a normal or green day.
+function CoachReachoutCard({ onTabSwitch }) {
+  const [r, setR] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      cachedFetch('home_portfolio', () => api.portfolio.value(), 30000).catch(() => null),
+      cachedFetch('home_snapshots', () => api.portfolio.snapshots(), 10 * 60000).catch(() => ({ snapshots: [] })),
+    ]).then(([val, snap]) => {
+      if (!alive) return;
+      const tv = val?.totalValue, tc = val?.todayChange;
+      const todayChangePct = (tv != null && tc != null && (tv - tc) > 0) ? (tc / (tv - tc)) * 100 : null;
+      const ss = snap?.snapshots || [];
+      const recent = ss.slice(-5);
+      let weekChangePct = null;
+      if (recent.length >= 2) {
+        const a = parseFloat(recent[0].total_value), b = parseFloat(recent[recent.length - 1].total_value);
+        if (a > 0) weekChangePct = ((b - a) / a) * 100;
+      }
+      setR(buildCoachReachout({ todayChangePct, weekChangePct }));
+    });
+    return () => { alive = false; };
+  }, []);
+  if (!r?.show) return null;
+  const openCoach = () => {
+    onTabSwitch?.('journal');
+    // Dispatch after the tab switch so the Progress tab is mounted and listening.
+    setTimeout(() => window.dispatchEvent(new CustomEvent('coach_open')), 0);
+  };
+  return (
+    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(59,130,246,0.05)' }}>
+      <p style={{ fontSize: 9, fontWeight: 800, color: 'var(--blue)', letterSpacing: '1px', margin: '0 0 6px' }}>YOUR COACH</p>
+      <p style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5, margin: '0 0 10px' }}>{r.message}</p>
+      <button onClick={openCoach} className="btn btn-blue" style={{ fontSize: 11, padding: '8px 16px' }}>TALK IT THROUGH</button>
+    </div>
+  );
 }
 
 // REFLECT on Home: the journal comes to the user. Builds the same reflect prompts
@@ -481,6 +522,10 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           {/* PULSE — one personal sentence. Lives near the top so it's an early
               felt moment when the user opens the app. */}
           <PulseCard refreshKey={lastUpdated?.getTime() ?? 0} />
+
+          {/* The coach reaches out on a hard day, before you come looking. Quiet
+              otherwise, so it only ever shows up when it would actually help. */}
+          <CoachReachoutCard onTabSwitch={onTabSwitch} />
 
           {/* NORTH STAR — the freedom number and progress toward it. Shown once
               there's a book to grow; orients the app around the destination. */}
