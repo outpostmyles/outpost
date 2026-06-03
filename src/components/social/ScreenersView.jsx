@@ -334,7 +334,11 @@ function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch,
           <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.ticker}</span>
           {sm && <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.5px', color: sm.color, background: sm.bg, border: `0.5px solid ${sm.border}`, borderRadius: 3, padding: '1px 4px', textTransform: 'uppercase' }}>{sm.label}</span>}
           {r.price != null && <span style={{ fontSize: 10, color: 'var(--faint)' }}>${r.price}</span>}
-          {r.changePercent != null && (
+          {r.momentum1m != null ? (
+            <span title="past month" style={{ fontSize: 10, fontWeight: 700, color: r.momentum1m >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {r.momentum1m >= 0 ? '+' : ''}{Number(r.momentum1m).toFixed(0)}% 1mo
+            </span>
+          ) : r.changePercent != null && (
             <span style={{ fontSize: 10, fontWeight: 700, color: r.changePercent >= 0 ? 'var(--green)' : 'var(--red)' }}>
               {r.changePercent >= 0 ? '+' : ''}{Number(r.changePercent).toFixed(1)}%
             </span>

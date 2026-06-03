@@ -20,7 +20,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { sanitizeString } from '../middleware/validate.js';
-import { lookupStock } from '../services/agentTools.js';
+import { lookupStock, getHistoricalPrice } from '../services/agentTools.js';
 import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { applyScreenerVerdicts } from '../services/screenerVerdicts.js';
 import { markScreenerNewcomers } from '../services/screenerDiff.js';
@@ -91,6 +91,12 @@ export async function runScreenerQuery(query) {
       if (!look || look.error || !look.price) return null;
       let fin = null;
       try { fin = await getFinancialsResilient(ticker); } catch {}
+      let momentum1m = null;
+      try {
+        const monthAgo = new Date(Date.now() - 31 * 86400000).toISOString().split('T')[0];
+        const h = await getHistoricalPrice({ ticker, from_date: monthAgo });
+        if (h && !h.error) momentum1m = h.change_percent;
+      } catch {}
       return {
         ticker,
         name: fin?.companyName ?? null,
@@ -98,6 +104,7 @@ export async function runScreenerQuery(query) {
         industry: fin?.industry ?? null,
         price: +look.price,
         changePercent: look.changePercent ?? null,
+        momentum1m,
         marketCap: fin?.marketCap ?? null,
         pe: fin?.pe ?? null,
       };
@@ -108,6 +115,7 @@ export async function runScreenerQuery(query) {
   // 3. Claude vets each candidate against live data + the query.
   const lines = enriched.map(c => {
     const bits = [`$${c.price}`];
+    if (c.momentum1m != null) bits.push(`${c.momentum1m >= 0 ? '+' : ''}${Number(c.momentum1m).toFixed(0)}% past month`);
     if (c.changePercent != null) bits.push(`${c.changePercent >= 0 ? '+' : ''}${Number(c.changePercent).toFixed(1)}% today`);
     if (c.marketCap) bits.push(`mcap ${fmtCap(c.marketCap)}`);
     if (c.pe) bits.push(`P/E ${c.pe}`);
@@ -123,11 +131,12 @@ export async function runScreenerQuery(query) {
       max_tokens: 1000,
       messages: [{ role: 'user', content:
         `A user is screening for: "${query}".\n\nCandidates with live data:\n${lines}\n\n` +
-        `Each line shows the real company name in parentheses and, in brackets, its real sector and industry from market data, alongside live numbers. Rely on those facts, do not guess a company's business from its ticker symbol or its price.\n` +
-        `Decide which GENUINELY fit, using two different bars:\n` +
+        `Each line shows the real company name in parentheses and, in brackets, its real sector and industry from market data, alongside live numbers including its move over the past month. Rely on those facts, do not guess a company's business from its ticker symbol or its price.\n` +
+        `Decide which GENUINELY fit, using these bars:\n` +
         `- Sector or theme: HARD bar. If the query names a business, sector, or theme, the bracketed sector and industry must actually match it. A company whose real industry is something else (for example a chemicals or lighting company for "semiconductors") is a mismatch, so drop it no matter how well its price fits.\n` +
         `- Explicit numeric limits the user stated, like a dollar price ("under $200") or a market cap: HARD bar. Enforce them exactly against the live numbers shown. A stock priced $269 does NOT fit "under $200".\n` +
-        `- Soft, vague qualifiers like "low price", "cheap", "small", "beaten down", "high growth": REASONABLE bar. Read them sensibly against the live data and the sector. Do not drop a true sector match just because a soft word is fuzzy.\n` +
+        `- Direction and recent move: HARD bar. Use the past-month move to judge direction words in the query. A name the query wants beaten down, fallen, cheap after a drop, or near its lows does NOT fit if it has actually run up sharply (for example up 80% in a month). A name the query wants showing momentum, breaking out, or strong does NOT fit if it has been falling.\n` +
+        `- Other soft, vague qualifiers like "small", "high growth", "quality": REASONABLE bar. Read them sensibly against the live data and the sector. Do not drop a true sector match just because a soft word is fuzzy.\n` +
         `Drop real mismatches and stretches, but keep the genuine fits, aiming for the 5 to 10 strongest rather than an empty list. For each kept name write ONE specific sentence on why it fits, naming its actual business plus the live data, never a generic line. Order strongest fit first. ` +
         `Return ONLY JSON, no prose: {"results":[{"ticker":"NVDA","fits":true,"thesis":"..."}]}` }],
     });
