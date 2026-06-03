@@ -122,7 +122,7 @@ export async function buildDossier(ticker, userId) {
     getRatiosResilient(T),
     getAnalystRating(T),
     getStockNews({ ticker: T, limit: 3 }),
-    supabase.from('positions').select('ticker, shares, avg_cost').eq('user_id', userId),
+    supabase.from('positions').select('ticker, shares, avg_cost, entry_thesis, reversal_condition, price_target, stop_loss').eq('user_id', userId),
     supabase.from('research_status').select('status').eq('user_id', userId).eq('ticker', T).maybeSingle(),
     getHistoricalPrice({ ticker: T, from_date: monthAgo }), // 1-month momentum (Polygon, survives FMP)
   ]);
@@ -147,6 +147,37 @@ export async function buildDossier(ticker, userId) {
     return { ticker: p.ticker, sector: resolveSector(p.ticker, null), value: live * (p.shares ?? 0), beta: null };
   });
 
+  // If the user actually holds this name, attach their real position (cost, live
+  // P&L, weight, the thesis + plan they wrote) so researching a holding reflects
+  // YOUR position, not just "you already own it". Aggregates multiple lots.
+  let holding = null;
+  const heldRows = positions.filter(p => String(p.ticker).toUpperCase() === T);
+  if (heldRows.length && price != null) {
+    const shares = heldRows.reduce((s, p) => s + (Number(p.shares) || 0), 0);
+    const costBasis = heldRows.reduce((s, p) => s + (Number(p.shares) || 0) * (Number(p.avg_cost) || 0), 0);
+    const currentValue = price * shares;
+    const pnl = currentValue - costBasis;
+    // Weight uses ONE price source (the book's own valuation) for both this name
+    // and the total, so it can never exceed 100% when the live quote and the pool
+    // price disagree. P&L keeps the fresh quote since that is the accurate move.
+    const bookValue = holdings.reduce((s, h) => s + h.value, 0);
+    const thisInBook = holdings.filter(h => String(h.ticker).toUpperCase() === T).reduce((s, h) => s + h.value, 0);
+    const withThesis = heldRows.find(p => p.entry_thesis) || heldRows[0];
+    const withPlan = heldRows.find(p => p.price_target || p.stop_loss) || heldRows[0];
+    holding = {
+      shares,
+      avgCost: shares > 0 ? +(costBasis / shares).toFixed(2) : null,
+      currentValue: +currentValue.toFixed(2),
+      pnl: +pnl.toFixed(2),
+      pnlPct: costBasis > 0 ? +((pnl / costBasis) * 100).toFixed(1) : null,
+      pctOfBook: bookValue > 0 ? Math.min(100, Math.round((thisInBook / bookValue) * 100)) : null,
+      thesis: withThesis?.entry_thesis || null,
+      reversalCondition: withThesis?.reversal_condition || null,
+      target: withPlan?.price_target || null,
+      stop: withPlan?.stop_loss || null,
+    };
+  }
+
   const yearHigh = fin?.yearHigh ?? null, yearLow = fin?.yearLow ?? null;
   const rangePosition = (price != null && yearHigh && yearLow && yearHigh > yearLow)
     ? Math.max(0, Math.min(100, Math.round(((price - yearLow) / (yearHigh - yearLow)) * 100)))
@@ -158,6 +189,7 @@ export async function buildDossier(ticker, userId) {
     sector,
     industry: fin?.industry || null,
     status,
+    holding,
     price,
     changePercent: (look && look.change_percent != null) ? look.change_percent : null,
     momentum1m,

@@ -396,6 +396,27 @@ export function DossierView({ ticker, dossier, loading, error, status, onStatus,
         <p style={{ fontSize: 11, color: 'var(--faint)', padding: '16px', lineHeight: 1.5 }}>{error}</p>
       ) : d ? (
         <>
+          {d.holding && (
+            <DSection title="YOUR POSITION" accent>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--text)' }}>{d.holding.shares} shares @ ${d.holding.avgCost}</span>
+                {d.holding.pnlPct != null && (
+                  <span style={{ fontSize: 13, fontWeight: 800, color: d.holding.pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {d.holding.pnl >= 0 ? '+' : '-'}${Math.abs(d.holding.pnl).toLocaleString()} ({d.holding.pnlPct >= 0 ? '+' : ''}{d.holding.pnlPct}%)
+                  </span>
+                )}
+              </div>
+              {(d.holding.pctOfBook != null || d.holding.target || d.holding.stop) && (
+                <p style={dsNote}>
+                  {[d.holding.pctOfBook != null ? `${d.holding.pctOfBook}% of your book` : null,
+                    d.holding.target ? `target $${d.holding.target}` : null,
+                    d.holding.stop ? `stop $${d.holding.stop}` : null].filter(Boolean).join('  ·  ')}
+                </p>
+              )}
+              {d.holding.thesis && <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5, margin: '7px 0 0' }}><span style={{ color: 'var(--faint)' }}>Your thesis: </span>{d.holding.thesis}</p>}
+            </DSection>
+          )}
+
           <DSection title="FOR YOUR BOOK" accent>
             <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{d.forYourBook?.fitNote}</p>
             {d.forYourBook?.sector && d.forYourBook.sector !== 'Unknown' && d.forYourBook.bookValue > 0 && (
