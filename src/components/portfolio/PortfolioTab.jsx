@@ -1982,9 +1982,17 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status }) {
               onReconfirmed={onRefresh}
             />
 
-            {/* POSITION HEALTH — the honest verdict on whether this holding
-                still earns its place, read after re-reading the thesis. */}
-            <HealthRead pos={pos} />
+            {/* POSITION HEALTH — the honest verdict on whether this holding still
+                earns its place. Suppressed when it would only restate the attention
+                badge (below stop / at target); the thesis-aware verdicts (no thesis,
+                down-but-thesis, on track) still show, since those say what the badge
+                cannot. Stops the "BELOW STOP" / "RECONSIDER · Below the stop" double. */}
+            {(() => {
+              const live = pos.currentPrice;
+              const belowStop = pos.stop_loss > 0 && live && live <= pos.stop_loss;
+              const atTarget = pos.price_target > 0 && live && live >= pos.price_target;
+              return (belowStop || atTarget) ? null : <HealthRead pos={pos} />;
+            })()}
 
             {/* TODAY'S DRIVER. The fresh context after the thesis. Why did
                 this stock move today, in one line. Sits below the thesis so
@@ -2387,124 +2395,114 @@ function FirstReadSheet({ ticker, onClose }) {
 // Stress test: what a drop would actually cost you, in dollars. Collapsed by
 // default so it informs without crowding. Honest about its assumption (holdings
 // moving with the market) since we don't model per-stock beta yet.
-function StressTestCard({ positions }) {
+// How exposed are you: the dollar stress tests AND the sector mix in one collapsed
+// block. Both answer the same question ("how concentrated and fragile is my book")
+// and both read the same portfolio_sectors data, so they live together as two
+// labeled parts instead of two separate sections that say overlapping things.
+function ExposureCard({ positions, onTabSwitch }) {
   const [open, setOpen] = useState(false);
   const [beta, setBeta] = useState(1);
+  const [exposure, setExposure] = useState(null);
   useEffect(() => {
     let cancelled = false;
     cachedFetch('portfolio_sectors', () => api.portfolio.sectors(), 5 * 60000)
       .then(d => {
         if (cancelled) return;
-        const hs = (d?.holdings || []).filter(h => Number.isFinite(h.beta) && h.value > 0);
+        const holdings = d?.holdings || [];
+        const hs = holdings.filter(h => Number.isFinite(h.beta) && h.value > 0);
         const tv = hs.reduce((s, h) => s + h.value, 0);
         if (tv > 0) setBeta(hs.reduce((s, h) => s + h.value * h.beta, 0) / tv);
+        setExposure(sectorExposure(holdings));
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
-  const scenarios = buildStressTests(positions, { portfolioBeta: beta });
-  if (scenarios.length === 0) return null;
-  return (
-    <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', fontFamily: 'inherit' }}
-      >
-        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', textTransform: 'uppercase' }}>If the market turns</span>
-        <span style={{ fontSize: 11, color: 'var(--faint)' }}>{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
-        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
-          {scenarios.map(s => (
-            <div key={s.key} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-              <div style={{ minWidth: 0 }}>
-                <p style={{ fontSize: 12, color: 'var(--text)', margin: 0 }}>{s.label}</p>
-                <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0', lineHeight: 1.4 }}>{s.note}</p>
-              </div>
-              <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                <p style={{ fontSize: 13, color: 'var(--red)', fontWeight: 700, margin: 0 }}>-${Math.abs(s.impact).toLocaleString()}</p>
-                <p style={{ fontSize: 9, color: 'var(--faint)', margin: 0 }}>{s.pct}%</p>
-              </div>
-            </div>
-          ))}
-          <p style={{ fontSize: 9, color: 'var(--faint)', lineHeight: 1.5, marginTop: 2 }}>Rough estimates. Markets do not move in straight lines, and this assumes your holdings track the market.</p>
-        </div>
-      )}
-    </div>
-  );
-}
 
-// Sector mix: where the book leans. Catches the quiet concentration the
-// single-name band misses, "you're 70% in one sector." Collapsed by default.
-function SectorMixCard({ onTabSwitch }) {
-  const [open, setOpen] = useState(false);
-  const [exposure, setExposure] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    cachedFetch('portfolio_sectors', () => api.portfolio.sectors(), 5 * 60000)
-      .then(d => { if (!cancelled) setExposure(sectorExposure(d?.holdings || [])); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-  if (!exposure || exposure.sectors.length === 0) return null;
-  const top = exposure.sectors.slice(0, 6);
-  // Gap-fill nudge: only when it actually matters (concentrated or thin book),
-  // never nag an already-diversified holder about niche sectors.
-  const gaps = sectorGaps(exposure.sectors);
-  const showGaps = gaps.gaps.length > 0 && (exposure.concentrated || exposure.sectors.length <= 3);
+  const scenarios = buildStressTests(positions, { portfolioBeta: beta });
+  const sectors = exposure?.sectors || [];
+  const top = sectors.slice(0, 6);
+  const gaps = exposure ? sectorGaps(sectors) : { gaps: [] };
+  const showGaps = gaps.gaps.length > 0 && (exposure?.concentrated || sectors.length <= 3);
+  if (scenarios.length === 0 && sectors.length === 0) return null;
+
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
       <button
         onClick={() => setOpen(o => !o)}
         style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px', fontFamily: 'inherit' }}
       >
-        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', textTransform: 'uppercase' }}>Sector mix</span>
+        <span style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', textTransform: 'uppercase' }}>How exposed are you</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {exposure.concentrated && <span style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700 }}>{exposure.top.sector} {exposure.top.pct}%</span>}
+          {exposure?.concentrated && <span style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700 }}>{exposure.top.sector} {exposure.top.pct}%</span>}
           <span style={{ fontSize: 11, color: 'var(--faint)' }}>{open ? '▾' : '▸'}</span>
         </span>
       </button>
       {open && (
-        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {top.map(s => (
-            <div key={s.sector}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                <span style={{ color: 'var(--text)' }}>{s.sector}</span>
-                <span style={{ color: 'var(--muted)' }}>{s.pct}%</span>
-              </div>
-              <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: 'var(--blue)', borderRadius: 3 }} />
-              </div>
-            </div>
-          ))}
-          {exposure.concentrated && (
-            <p style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, marginTop: 4 }}>
-              {exposure.top.pct}% of your book is in {exposure.top.sector}. One sector turning can swing the whole thing.
-            </p>
-          )}
-          {showGaps && (
-            <div style={{ marginTop: exposure.concentrated ? 8 : 4 }}>
-              <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 6 }}>
-                Light or missing. Tap one and Outpost will find a name to round it out:
-              </p>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {gaps.gaps.map(sec => (
-                  <button
-                    key={sec}
-                    onClick={() => {
-                      try {
-                        window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: `Find me one quality ${sec} name to diversify into. I have little or no exposure to ${sec} right now and want to round out my book.` } }));
-                      } catch {}
-                      onTabSwitch?.('agent');
-                    }}
-                    className="btn btn-muted"
-                    style={{ fontSize: 10, padding: '4px 10px' }}
-                  >
-                    {sec}
-                  </button>
+        <div style={{ padding: '0 16px 14px' }}>
+          {scenarios.length > 0 && (
+            <>
+              <p style={{ fontSize: 8.5, color: 'var(--faint)', letterSpacing: '0.8px', margin: '0 0 8px' }}>IF THE MARKET TURNS</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: sectors.length ? 16 : 0 }}>
+                {scenarios.map(s => (
+                  <div key={s.key} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontSize: 12, color: 'var(--text)', margin: 0 }}>{s.label}</p>
+                      <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0', lineHeight: 1.4 }}>{s.note}</p>
+                    </div>
+                    <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <p style={{ fontSize: 13, color: 'var(--red)', fontWeight: 700, margin: 0 }}>-${Math.abs(s.impact).toLocaleString()}</p>
+                      <p style={{ fontSize: 9, color: 'var(--faint)', margin: 0 }}>{s.pct}%</p>
+                    </div>
+                  </div>
                 ))}
+                <p style={{ fontSize: 9, color: 'var(--faint)', lineHeight: 1.5, marginTop: 2 }}>Rough estimates. Markets do not move in straight lines, and this assumes your holdings track the market.</p>
               </div>
-            </div>
+            </>
+          )}
+          {sectors.length > 0 && (
+            <>
+              <p style={{ fontSize: 8.5, color: 'var(--faint)', letterSpacing: '0.8px', margin: '0 0 8px' }}>SECTOR MIX</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {top.map(s => (
+                  <div key={s.sector}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                      <span style={{ color: 'var(--text)' }}>{s.sector}</span>
+                      <span style={{ color: 'var(--muted)' }}>{s.pct}%</span>
+                    </div>
+                    <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: 'var(--blue)', borderRadius: 3 }} />
+                    </div>
+                  </div>
+                ))}
+                {exposure.concentrated && (
+                  <p style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, marginTop: 4 }}>
+                    {exposure.top.pct}% of your book is in {exposure.top.sector}. One sector turning can swing the whole thing.
+                  </p>
+                )}
+                {showGaps && (
+                  <div style={{ marginTop: exposure.concentrated ? 8 : 4 }}>
+                    <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 6 }}>
+                      Light or missing. Tap one and Outpost will find a name to round it out:
+                    </p>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {gaps.gaps.map(sec => (
+                        <button
+                          key={sec}
+                          onClick={() => {
+                            try { window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: `Find me one quality ${sec} name to diversify into. I have little or no exposure to ${sec} right now and want to round out my book.` } })); } catch {}
+                            onTabSwitch?.('agent');
+                          }}
+                          className="btn btn-muted"
+                          style={{ fontSize: 10, padding: '4px 10px' }}
+                        >
+                          {sec}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -2719,11 +2717,9 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
               Ambient context, so it sits below your positions, not above them. */}
           <DevelopmentsCard />
 
-          {/* Stress test — what a drop would cost you, in dollars. Collapsed. */}
-          <StressTestCard positions={positions} />
-
-          {/* Sector mix — where the book leans, flags a dominant sector. */}
-          <SectorMixCard onTabSwitch={onTabSwitch} />
+          {/* How exposed are you — the dollar stress tests and the sector mix in
+              one collapsed block (they answer the same question). */}
+          <ExposureCard positions={positions} onTabSwitch={onTabSwitch} />
 
 
           {/* Inline growth chart — collapsible, only if we have snapshots */}
@@ -2929,6 +2925,14 @@ function GrowthChartInline({ showGrowth, setShowGrowth }) {
       spy: spy ? parseFloat(spy.value ?? 0) : null,
     };
   });
+  // Are you beating the market? Period return for your book vs the S&P benchmark
+  // (already fetched, just never drawn before).
+  const hasSpy = chartData.some(d => d.spy != null);
+  const first = chartData[0], last = chartData[chartData.length - 1];
+  const youPct = first?.value > 0 ? ((last.value - first.value) / first.value) * 100 : null;
+  const spyA = chartData.find(d => d.spy != null)?.spy;
+  const spyB = [...chartData].reverse().find(d => d.spy != null)?.spy;
+  const spyPct = (spyA > 0 && spyB != null) ? ((spyB - spyA) / spyA) * 100 : null;
 
   return (
     <div style={{ padding: '4px 16px 16px', borderTop: '1px solid var(--border)' }}>
@@ -2945,20 +2949,37 @@ function GrowthChartInline({ showGrowth, setShowGrowth }) {
         <span style={{ fontSize: 9, color: 'var(--faint)' }}>tap to {showGrowth ? 'hide' : 'show'}</span>
       </button>
       {showGrowth && (
-        <div style={{ marginTop: 6, padding: '8px 0', height: 200 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} interval="preserveStartEnd" />
-              <YAxis tick={{ fontSize: 9, fill: 'var(--faint)' }} tickFormatter={fmtCompact} />
-              <Tooltip
-                contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11 }}
-                labelStyle={{ color: 'var(--muted)' }}
-                formatter={(v) => '$' + fmt(v)}
-              />
-              <Line type="monotone" dataKey="value" stroke="var(--blue)" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        <>
+          {youPct != null && (
+            <div style={{ display: 'flex', gap: 16, margin: '2px 0 0', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: 'var(--blue)', marginRight: 5 }} />
+                You <b style={{ color: youPct >= 0 ? 'var(--green)' : 'var(--red)' }}>{youPct >= 0 ? '+' : ''}{youPct.toFixed(1)}%</b>
+              </span>
+              {hasSpy && spyPct != null && (
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <span style={{ display: 'inline-block', width: 10, height: 2, background: 'var(--faint)', marginRight: 5, verticalAlign: 'middle' }} />
+                  S&P 500 <b style={{ color: 'var(--text)' }}>{spyPct >= 0 ? '+' : ''}{spyPct.toFixed(1)}%</b>
+                </span>
+              )}
+            </div>
+          )}
+          <div style={{ marginTop: 4, padding: '8px 0', height: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 9, fill: 'var(--faint)' }} tickFormatter={fmtCompact} />
+                <Tooltip
+                  contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11 }}
+                  labelStyle={{ color: 'var(--muted)' }}
+                  formatter={(v) => '$' + fmt(v)}
+                />
+                {hasSpy && <Line type="monotone" dataKey="spy" stroke="var(--faint)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="S&P 500" />}
+                <Line type="monotone" dataKey="value" stroke="var(--blue)" strokeWidth={2} dot={false} name="You" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
     </div>
   );
