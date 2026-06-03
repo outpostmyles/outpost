@@ -8,7 +8,10 @@ import { checkAndIncrementAiCall } from '../services/aiSpendCeiling.js';
 
 export function dailyAiCeiling() {
   return (req, res, next) => {
-    if (!req.user?.id) return next(); // unauth path — let requireAuth handle the 401
+    if (!req.user?.id) return next(); // unauth path: let requireAuth handle the 401
+    // The 'unlimited' beta tier is exempt from the per-day cap, same as session
+    // pacing, so a beta/founder account is never throttled mid-test.
+    if (req.user.plan === 'unlimited') return next();
     const ceiling = checkAndIncrementAiCall(req.user.id);
     if (!ceiling.allowed) {
       // 429 not 402 — credits aren't the issue here, the per-day cap is.

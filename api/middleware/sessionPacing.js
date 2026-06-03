@@ -90,9 +90,10 @@ function getWindow() {
 
 export function sessionPacing() {
   return async (req, res, next) => {
-    // Only pace paid users — free users have their own gate
+    // Free users have their own gate, and the 'unlimited' beta tier is, by
+    // definition, never paced. Everyone in between (starter/pro/elite) is.
     const plan = req.user?.plan ?? 'free';
-    if (plan === 'free') return next();
+    if (plan === 'free' || plan === 'unlimited') return next();
 
     const userId = req.user.id;
     const window = getWindow();
