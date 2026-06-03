@@ -25,12 +25,11 @@ import { getNews, getSnapshot } from '../utils/polygon.js';
 import { getTickerNews, isFinnhubAvailable } from '../utils/finnhub.js';
 import { todayStr, isWeekday } from '../utils/marketHours.js';
 import { config } from '../config.js';
+import { PLAIN_TEXT_RULE } from '../utils/aiStyle.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
-
-const PLAIN_TEXT_RULE = 'CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes.';
 
 // ============ CORE ============
 

@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { sessionPacing } from '../middleware/sessionPacing.js';
 import { buildAgentContext } from '../utils/promptEngine.js';
+import { NO_DASH_RULE } from '../utils/aiStyle.js';
 import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
 import { assessRegister, moodDirective } from '../services/pulseContext.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
@@ -398,8 +399,9 @@ FORMATTING:
 3. Write in natural conversational paragraphs.
 4. ALL CAPS for ticker symbols only.
 5. Keep it tight. Traders are busy. Say more with less.
+6. ${NO_DASH_RULE}
 
-You are NOT a financial advisor. You're a trading partner. Not financial advice — educational purposes only.`;
+You are NOT a financial advisor. You're a trading partner. Not financial advice, educational purposes only.`;
 
 /**
  * Build context-aware conversation starters based on portfolio state and market conditions.

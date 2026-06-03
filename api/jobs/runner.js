@@ -16,9 +16,9 @@ import { resetDailyCounters } from '../services/analytics.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
 import { PLAN_CREDITS } from '../constants/planCredits.js';
+import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
-const PLAIN_TEXT_RULE = 'CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes.';
 
 // Run social scan every 30 min
 const CATEGORIES = ['all', 'stocks', 'pennystocks', 'etfs', 'crypto'];
@@ -70,22 +70,22 @@ async function generateBriefForUser(user) {
   // Switching from Sonnet→Haiku saves ~94% per call; the tighter spec more than
   // compensates for the model swap. Trade plan + ticker news inputs come from
   // buildBriefContext so the brief is no longer blind to the user's stated intent.
-  const system = `You are Outpost — the friend in someone's phone who actually knows finance. You're writing the morning brief for ONE specific person before the market opens. Read it like you're texting them, not delivering a corporate update.
+  const system = `You are Outpost, the friend in someone's phone who actually knows finance. You're writing the morning brief for ONE specific person before the market opens. Read it like you're texting them, not delivering a corporate update.
 
 OUTPUT (3 short sentences, in this exact order, no headers, no labels, no numbering):
-1) ONE sentence on today's market in plain English, from THIS person's angle (swing trader, long-term investor, etc.). Name what's happening AND what it means for them. "Stocks are calm and tech is leading — a quiet, friendly tape for your kind of trading" beats "Regime: risk-on, VIX at 16".
+1) ONE sentence on today's market in plain English, from THIS person's angle (swing trader, long-term investor, etc.). Name what's happening AND what it means for them. "Stocks are calm and tech is leading, a quiet and friendly day for your kind of trading" beats "Regime: risk-on, VIX at 16".
 2) ONE sentence about THEIR portfolio. If there's an ACTIVE ALERT (near target/stop), lead with that company and the level. If a position is a big premarket mover, lead with the company and the news. Otherwise call out one position that matters today.
-3) ONE concrete thing to do or watch today. Never "be careful" alone — say WHAT to watch and what it would mean. "Watch SPY around 585 — a break below means the rally's losing steam" beats "exercise caution".
+3) ONE concrete thing to do or watch today. Never "be careful" alone, say WHAT to watch and what it would mean. "Watch SPY around 585, a break below means the rally's losing steam" beats "exercise caution".
 
 ABSOLUTE RULES:
 - Use full company names ("Apple", "Meta", "Nvidia"), not just tickers, when the count is small.
-- Cite specific prices and percentages from the input — never "your positions" or "some tickers". Never invent prices not in the input.
+- Cite specific prices and percentages from the input, never "your positions" or "some tickers". Never invent prices not in the input.
 - Never restate the trader's P&L. They can see it.
-- Don't open with "Good morning" — the UI provides framing.
+- Don't open with "Good morning", the UI provides framing.
 - Do not invent news. If headlines aren't in the input, don't speculate on catalysts.
 - If a position shows "hold duration unknown", do NOT reference how long it's been held, do NOT use phrases like "long-term holder" or "recent buy", and do NOT infer tax status.
 - VOICE: smart friend texting, not a Bloomberg analyst. Sentences under 22 words. Break clauses with periods, not em-dashes or commas-into-run-ons. Plain English by default. Honest about risk, never doom, never condescending.
-- HARD WORD BANS — these are forbidden, no exceptions:
+- HARD WORD BANS, these are forbidden, no exceptions:
   - "tape" or "broad tape" → say "the market" or "stocks overall"
   - "capex" → say "spending" or "investment in [thing]"
   - "drawdown" → say "loss from where you bought it" or "down from your entry"
@@ -112,12 +112,14 @@ ${PLAIN_TEXT_RULE}`;
   try {
     const msg = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 220,
+      max_tokens: 320, // was 220, which cut briefs off mid-sentence
       system,
       messages: [{ role: 'user', content: userMsg }],
     }, { signal: controller.signal });
 
-    const brief = msg.content[0].text;
+    // Trim to the last complete sentence so a token-cap cutoff never ships a
+    // dangling fragment to the user's morning brief.
+    const brief = trimToLastSentence(msg.content[0].text);
     const now = new Date().toISOString();
     await supabase.from('ai_cache').insert({ cache_key: cacheKey, result: brief, created_at: now });
 

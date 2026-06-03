@@ -20,11 +20,11 @@ import { getRequestId } from '../middleware/requestId.js';
 import { buildWelcomePrompt, buildWelcomeSystemPrompt, buildFallbackWelcome } from '../services/welcomeMoment.js';
 import { assignVariant } from '../services/promptExperiments.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
+import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const DISCLAIMER = 'Not financial advice. For educational purposes only. Trading involves substantial risk of loss.';
-const PLAIN_TEXT_RULE = 'CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes. Use numbered lists (1. 2. 3.) only when necessary. Never use * or ** or # or - for formatting.';
 
 // Model routing — Sonnet for premium tasks, Haiku for commodity tasks
 const MODEL_SONNET = 'claude-sonnet-4-20250514';
@@ -766,7 +766,9 @@ ${PLAIN_TEXT_RULE}`;
 
     let brief;
     try {
-      brief = await claudeCall(briefSystem, userMsg, 220, { model: 'haiku', cache: true });
+      // Room to finish the thought (was 220, which cut briefs mid-sentence),
+      // then trim back to the last complete sentence as a backstop.
+      brief = trimToLastSentence(await claudeCall(briefSystem, userMsg, 320, { model: 'haiku', cache: true }));
     } catch (aiErr) {
       await refundCredits(req.user.id, 8);
       throw aiErr;
