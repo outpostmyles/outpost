@@ -1284,10 +1284,18 @@ router.post('/deploy-cash', requireAuth, rateLimit(10), dailyAiCeiling(), async 
     const safeQuote = (text, max = 140) =>
       `<user_quoted>${String(text ?? '').slice(0, max).replace(/<\/?user_quoted>/gi, '')}</user_quoted>`;
 
+    // Today's move per candidate, so the model can avoid chasing a spike. This is
+    // the data that was missing: without it the model cannot tell a quiet name from
+    // one up 23% on the day.
+    const todayChg = (t) => {
+      const c = ctxData.priceMap[t]?.changePercent;
+      return (c != null && Number.isFinite(c)) ? `, ${c >= 0 ? '+' : ''}${c.toFixed(1)}% TODAY` : '';
+    };
+
     const positionsLines = ctxData.positions.length
       ? ctxData.positions.map(p => {
           const thesisPart = p.entry_thesis ? ` · thesis: ${safeQuote(p.entry_thesis)}` : ' · no thesis written';
-          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}, ${p.pctOfBook.toFixed(1)}% of book${thesisPart}`;
+          return `  ${p.ticker} — ${p.shares} sh @ $${(p.avg_cost ?? 0).toFixed(2)} avg, current $${p.livePrice.toFixed(2)}${todayChg(p.ticker)}, ${p.pctOfBook.toFixed(1)}% of book${thesisPart}`;
         }).join('\n')
       : '  (no positions yet)';
 
@@ -1302,17 +1310,18 @@ router.post('/deploy-cash', requireAuth, rateLimit(10), dailyAiCeiling(), async 
     const watchlistLines = ctxData.watchlist.length
       ? ctxData.watchlist.map(w => {
           const live = ctxData.priceMap[w.ticker]?.price;
-          const priceStr = live ? ` (current $${live.toFixed(2)})` : '';
+          const priceStr = live ? ` (current $${live.toFixed(2)}${todayChg(w.ticker)})` : '';
           return `  ${w.ticker}${priceStr}${w.notes ? ` — ${safeQuote(w.notes, 100)}` : ''}`;
         }).join('\n')
       : '  (empty)';
 
     // Live prices for tickers the model is likely to recommend but the user
-    // doesn't currently hold. Without this, the model invents prices.
+    // doesn't currently hold. Without this, the model invents prices. Today's move
+    // is included so it does not chase a spike into a name they don't yet own.
     const candidatePrices = Object.entries(ctxData.priceMap)
       .filter(([t]) => !ctxData.positions.some(p => p.ticker === t))
       .filter(([, v]) => v?.price)
-      .map(([t, v]) => `  ${t}: $${v.price.toFixed(2)}`)
+      .map(([t, v]) => `  ${t}: $${v.price.toFixed(2)}${(v.changePercent != null && Number.isFinite(v.changePercent)) ? `, ${v.changePercent >= 0 ? '+' : ''}${v.changePercent.toFixed(1)}% TODAY` : ''}`)
       .join('\n') || '  (none)';
 
     const recentChatLines = ctxData.recentChats.length
@@ -1345,6 +1354,11 @@ If amount or context makes any shape silly (e.g. they have no positions yet → 
 ═════════════════════════════════════════════════════════════════════════════
 HARD RULES BASED ON HORIZON + GOAL — these override the shapes above when they conflict. The whole product loses trust if it tells someone with sub-1-year money to buy speculative stocks.
 ═════════════════════════════════════════════════════════════════════════════
+
+ENTRY QUALITY, applies to EVERY individual-stock recommendation, including "add to a position you already hold":
+- Each candidate below shows its move TODAY. NEVER recommend buying or adding into a sharp single-day spike. A name up more than about 5% today is being chased, not bought. Up 10% or more today is a hard no. Chasing a green candle is the opposite of smart, aggressive or not.
+- "Aggressive" means more equity risk and higher-growth exposure at a SANE entry. It never means "buy whatever just ripped." If a name you like is spiking or extended, do NOT say buy now: say so plainly and suggest setting a price alert to buy on a pullback or a base, or pick a calmer candidate that is flat or pulling back.
+- Good entries beat good stories. Prefer names that are quiet, basing, or down today over names that just jumped, even if the jumpy one has the better narrative.
 
 HORIZON: "this_year" (sub-1-year money) — ABSOLUTE OVERRIDE:
 - DO NOT recommend individual stocks, growth ETFs, or anything market-correlated. Period.
@@ -1512,6 +1526,18 @@ Generate the JSON now.`;
         if (livePrice && livePrice > 0 && opt.estimated_cost) {
           opt.estimated_shares = Math.max(1, Math.floor(opt.estimated_cost / livePrice));
         }
+        continue;
+      }
+
+      // Backstop against chasing: if the model slipped past the entry-quality rule
+      // and recommended a name up hard today, suppress it. Buying a green candle
+      // with fresh cash is the failure the user flagged, so we fail closed and keep
+      // the cash instead.
+      const todayPct = ticker ? ctxData.priceMap[ticker]?.changePercent : null;
+      if (ticker && Number.isFinite(todayPct) && todayPct >= 10) {
+        opt.estimated_cost = 0;
+        opt.estimated_shares = 0;
+        opt._suppressed_reason = `${ticker} is up ${todayPct.toFixed(1)}% today, too hot to chase with fresh cash.`;
         continue;
       }
 
