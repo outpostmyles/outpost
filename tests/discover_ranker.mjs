@@ -49,7 +49,7 @@ test('high-flame catalyst outranks strong sector outranks bargain outranks trend
   const out = buildDiscoverFeed({
     catalystData: catalystData([{ ticker: 'NVDA', changePct: 6, flameRating: 3 }]),
     sector: { heating: [{ name: 'Energy', signal: 'strong', relativeStrength: 4 }] },
-    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: 22 }] },
+    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -22 }] },
     buzz: { buzzing: [{ ticker: 'GME', changePct: 1, watchlistCount: 9000 }] },
   });
   assert.deepEqual(out.map(i => i.type), ['catalyst', 'sector', 'bargain', 'trending']);
@@ -59,7 +59,7 @@ test('low-flame catalyst still outranks bargain but sits below strong sector', (
   const out = buildDiscoverFeed({
     catalystData: catalystData([{ ticker: 'F', changePct: 2, flameRating: 1 }]),
     sector: { heating: [{ name: 'Energy', signal: 'strong', relativeStrength: 4 }] },
-    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: 22 }] },
+    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -22 }] },
   });
   assert.deepEqual(out.map(i => i.type), ['sector', 'catalyst', 'bargain']);
 });
@@ -67,7 +67,7 @@ test('low-flame catalyst still outranks bargain but sits below strong sector', (
 test('early sector signal sorts below bargain', () => {
   const out = buildDiscoverFeed({
     sector: { heating: [{ name: 'Energy', signal: 'early', relativeStrength: 2 }] },
-    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: 22 }] },
+    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -22 }] },
   });
   assert.deepEqual(out.map(i => i.type), ['bargain', 'sector']);
 });
@@ -110,7 +110,7 @@ test('caps heating sectors at 3 and cooling at 2', () => {
 
 test('caps bargains at 4 and trending at 6', () => {
   const out = buildDiscoverFeed({
-    bargain: { picks: Array.from({ length: 7 }, (_, i) => ({ ticker: `B${i}`, pctOffHigh: 10 })) },
+    bargain: { picks: Array.from({ length: 7 }, (_, i) => ({ ticker: `B${i}`, pctOffHigh: -10 })) },
     buzz: { buzzing: Array.from({ length: 9 }, (_, i) => ({ ticker: `Z${i}`, changePct: 1 })) },
   }, 50);
   assert.equal(out.filter(i => i.type === 'bargain').length, 4);
@@ -135,7 +135,7 @@ test('honors the limit cap after sorting', () => {
 test('default limit is 10', () => {
   const out = buildDiscoverFeed({
     buzz: { buzzing: Array.from({ length: 6 }, (_, i) => ({ ticker: `Z${i}`, changePct: 1 })) },
-    bargain: { picks: Array.from({ length: 4 }, (_, i) => ({ ticker: `B${i}`, pctOffHigh: 10 })) },
+    bargain: { picks: Array.from({ length: 4 }, (_, i) => ({ ticker: `B${i}`, pctOffHigh: -10 })) },
     sector: { heating: Array.from({ length: 3 }, (_, i) => ({ name: `H${i}`, signal: 'early' })) },
   });
   // 6 + 4 + 3 = 13 eligible, capped to 10.
@@ -175,11 +175,22 @@ test('cooling sector is red and flagged direction down', () => {
   assert.ok(item.title.includes('cooling'));
 });
 
-test('bargain pct is negated drawdown', () => {
-  const [item] = buildDiscoverFeed({ bargain: { picks: [{ ticker: 'DIS', pctOffHigh: 22 }] } });
+test('bargain pct is the drawdown, passed through as the negative it already is', () => {
+  // pctOffHigh from the source is negative (price below the 52w high). It must
+  // reach the feed still negative, so the UI renders it red ("down 22% off its
+  // high"), not flip it to a green +22% that looks like a gain.
+  const [item] = buildDiscoverFeed({ bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -22 }] } });
   assert.equal(item.pct, -22);
   assert.equal(item.signal, 'BUYABLE');
   assert.equal(item.deepLink, 'bargain');
+});
+
+test('a deep drawdown never renders as a positive (green) pct', () => {
+  // Regression for the sign-flip: a stock 59.7% off its high must show negative,
+  // never +59.7%.
+  const [item] = buildDiscoverFeed({ bargain: { picks: [{ ticker: 'NVTS', pctOffHigh: -59.7 }] } });
+  assert.ok(item.pct < 0, `expected negative drawdown, got ${item.pct}`);
+  assert.equal(item.pct, -59.7);
 });
 
 test('trending detail uses watcher count when present', () => {
@@ -208,7 +219,7 @@ test('ids are unique across a mixed feed', () => {
   const out = buildDiscoverFeed({
     catalystData: catalystData([{ ticker: 'AAPL', changePct: 3, flameRating: 2 }]),
     sector: { heating: [{ name: 'Energy', signal: 'strong' }] },
-    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: 10 }] },
+    bargain: { picks: [{ ticker: 'DIS', pctOffHigh: -10 }] },
     buzz: { buzzing: [{ ticker: 'GME', changePct: 1 }] },
   });
   const ids = out.map(i => i.id);

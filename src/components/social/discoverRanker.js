@@ -128,7 +128,11 @@ export function buildDiscoverFeed(input, limit = 10) {
       detail: b.thesis || `Down sharply on macro fear, fundamentals unchanged.`,
       accent: 'green',
       signal: 'BUYABLE',
-      pct: b.pctOffHigh != null ? -b.pctOffHigh : null,  // negative for drawdown
+      // pctOffHigh is already negative (price is below the 52w high, computed as
+      // (price - high)/high). It is the drawdown, so pass it through as-is. The
+      // old code negated it, which flipped a real -59.7% drawdown into a green
+      // +59.7% that looked like a huge gain on a stock that had actually fallen.
+      pct: b.pctOffHigh != null ? b.pctOffHigh : null,
       meta: {},
       deepLink: 'bargain',
       priority: PRIORITY.BARGAIN,
