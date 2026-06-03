@@ -9,6 +9,7 @@ import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.
 import { getEarningsForTicker, getEarningsForTickers, getEarningsCalendar } from '../utils/finnhub.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { normalizeQuote } from '../utils/polygon.js';
+import { filterTickerNews } from '../utils/newsHygiene.js';
 import { getTaxInsights } from './taxInsights.js';
 import { supabase } from '../db.js';
 import { getPrice } from './pricePool.js';
@@ -649,18 +650,26 @@ export async function getStockNews({ ticker, limit = 5 }) {
   ticker = ticker.toUpperCase().trim();
   limit = Math.min(limit, 10);
 
+  // Over-fetch so the hygiene filter (which drops basket/listicle spam) still
+  // has enough relevant articles to fill `limit`.
+  const rawLimit = Math.min(limit * 3, 30);
   const data = await polyFetch(
-    `/v2/reference/news?ticker=${ticker}&limit=${limit}&order=desc`,
+    `/v2/reference/news?ticker=${ticker}&limit=${rawLimit}&order=desc`,
     15 * 60000,
     `tool_news_${ticker}`
   );
 
-  const articles = (data?.results ?? []).map(a => ({
+  const raw = (data?.results ?? []).map(a => ({
     title: a.title,
     source: a.publisher?.name || 'Unknown',
     published: a.published_utc,
     summary: a.description?.slice(0, 200) || '',
+    tickers: a.tickers || [],
   }));
+  // Keep only news actually about this ticker, then drop the tickers field from
+  // the returned shape (it was only needed for filtering).
+  const articles = filterTickerNews(raw, ticker, { max: limit })
+    .map(({ tickers, ...rest }) => rest);
 
   return { ticker, articles, count: articles.length };
 }

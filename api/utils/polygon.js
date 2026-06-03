@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { memGet, memSet } from '../services/memoryCache.js';
+import { filterTickerNews } from './newsHygiene.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -257,7 +258,7 @@ export async function getRSI(ticker, timespan = 'day') {
 export async function getNews(ticker, limit = 20) {
   try {
     const data = await poly(`/v2/reference/news?ticker=${ticker}&limit=${limit}&order=desc`, 30 * 60000, `news_${ticker}`);
-    return (data?.results ?? []).map(a => ({
+    const mapped = (data?.results ?? []).map(a => ({
       title: a.title,
       description: a.description || '',
       publishedUtc: a.published_utc,
@@ -265,6 +266,9 @@ export async function getNews(ticker, limit = 20) {
       source: a.publisher?.name || 'Unknown',
       tickers: a.tickers || [],
     }));
+    // Drop basket/listicle spam that merely co-tags this ticker, so a request for
+    // one ticker's news cannot surface an article that is really about another.
+    return filterTickerNews(mapped, ticker, { max: limit });
   } catch { return []; }
 }
 
