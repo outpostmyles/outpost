@@ -108,7 +108,6 @@ export const api = {
     editPosition: (id, body) => patch(`/api/portfolio/positions/${id}`, body),
     removePosition: (id, body) => del(`/api/portfolio/positions/${id}`, body),
     closedTrades: () => get('/api/portfolio/closed-trades'),
-    sectors: () => get('/api/portfolio/sectors'),
     snapshots: () => get('/api/portfolio/snapshots'),
     takeSnapshot: () => post('/api/portfolio/snapshot'),
     analyses: () => get('/api/portfolio/analyses'),
@@ -135,6 +134,8 @@ export const api = {
     setGoal: (body) => post('/api/portfolio/goal', body),
     // Sector-enriched holdings (the root for sector exposure + smarter Discovery).
     sectors: () => get('/api/portfolio/sectors'),
+    // "What is happening on your book" — recent headlines across your holdings.
+    developments: () => get('/api/portfolio/developments'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

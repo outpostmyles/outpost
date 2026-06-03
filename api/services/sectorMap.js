@@ -24,6 +24,8 @@ const TICKER_SECTOR = {
   RGTI: 'Technology', IONQ: 'Technology', SOUN: 'Technology', AI: 'Technology', BBAI: 'Technology',
   GTLB: 'Technology', MNDY: 'Technology', SSNC: 'Technology', OKTA: 'Technology', ALAB: 'Technology',
   U: 'Technology', ZM: 'Technology', TWLO: 'Technology', OKLO: 'Technology', APP: 'Technology',
+  LWLG: 'Technology', QUBT: 'Technology', LAES: 'Technology', ENPH: 'Technology', FSLR: 'Technology',
+  SEDG: 'Technology', RUN: 'Technology', NVTS: 'Technology', INDI: 'Technology',
   // Communication Services
   GOOGL: 'Communication Services', GOOG: 'Communication Services', META: 'Communication Services',
   NFLX: 'Communication Services', DIS: 'Communication Services', SNAP: 'Communication Services',
@@ -60,6 +62,7 @@ const TICKER_SECTOR = {
   GE: 'Industrials', RTX: 'Industrials', LMT: 'Industrials', FDX: 'Industrials', UPS: 'Industrials',
   AXON: 'Industrials', ETN: 'Industrials', PWR: 'Industrials', PLUG: 'Industrials', RKLB: 'Industrials',
   LUV: 'Industrials', DAL: 'Industrials', UAL: 'Industrials', CPRT: 'Industrials', ACHR: 'Industrials',
+  FCEL: 'Industrials', EOSE: 'Industrials', CHPT: 'Industrials', BLNK: 'Industrials', BE: 'Industrials',
   // Basic Materials
   FCX: 'Basic Materials', NEM: 'Basic Materials', APD: 'Basic Materials', LIN: 'Basic Materials',
   SHW: 'Basic Materials',

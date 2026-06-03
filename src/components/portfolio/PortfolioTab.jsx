@@ -2527,6 +2527,55 @@ function SectorMixCard({ onTabSwitch }) {
   );
 }
 
+// "ON YOUR BOOK" — recent headlines across the user's holdings, newest first,
+// tagged with each name's move today so the biggest movers and their likely
+// reason surface together. Tap a row to research that company. Stays quiet (renders
+// nothing) when there is no news, so it never reads as a broken empty section.
+function DevelopmentsCard() {
+  const [items, setItems] = useState(null); // null = loading, [] = none
+  useEffect(() => {
+    let alive = true;
+    api.portfolio.developments().then(d => { if (alive) setItems(d.items || []); }).catch(() => { if (alive) setItems([]); });
+    return () => { alive = false; };
+  }, []);
+  if (!items || items.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 8 }}>ON YOUR BOOK</p>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+        {items.map((n, i) => (
+          <div key={i}
+            onClick={() => window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: n.ticker } }))}
+            title={`Research ${n.ticker}`}
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderTop: i ? '1px solid var(--border)' : 'none', cursor: 'pointer' }}>
+            <div style={{ flexShrink: 0, width: 46 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{n.ticker}</span>
+              {n.changePercent != null && (
+                <div style={{ fontSize: 9, fontWeight: 700, color: n.changePercent >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  {n.changePercent >= 0 ? '+' : ''}{Number(n.changePercent).toFixed(1)}%
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.4, margin: 0 }}>{n.title}</p>
+              <p style={{ fontSize: 9, color: 'var(--faint)', margin: '2px 0 0' }}>{n.source}{n.published ? ` · ${devTimeAgo(n.published)}` : ''}</p>
+            </div>
+            <span style={{ fontSize: 9, color: 'var(--blue)', flexShrink: 0, alignSelf: 'center' }}>›</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function devTimeAgo(iso) {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (diff < 1) return 'just now';
+  if (diff < 60) return `${diff}m ago`;
+  if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+  return `${Math.floor(diff / 1440)}d ago`;
+}
+
 function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2679,6 +2728,9 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             <button onClick={load} className="btn btn-muted" style={{ padding: '6px 8px', fontSize: 11 }} aria-label="Refresh">↻</button>
             <button onClick={() => setModal('menu')} className="btn btn-muted" style={{ padding: '6px 8px', fontSize: 11 }} aria-label="More">⋯</button>
           </div>
+
+          {/* What is happening on your book today — headlines across holdings. */}
+          <DevelopmentsCard />
 
           {/* Position list — sorted by attention, with calm positions collapsed
               behind a divider once there are 5+ of them. Plan-coverage nudge

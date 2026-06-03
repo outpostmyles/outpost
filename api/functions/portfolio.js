@@ -13,7 +13,7 @@ import { getFinancials, getAnalystRating } from '../services/fmp.js';
 import { resolveSector } from '../services/sectorMap.js';
 import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
-import { lookupStock } from '../services/agentTools.js';
+import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
 import { getPlanAdherence } from '../services/planAdherence.js';
@@ -1538,6 +1538,43 @@ router.get('/sectors', requireAuth, rateLimit(20), async (req, res) => {
   } catch (err) {
     console.error(`[req:${req.requestId}] [Portfolio] /sectors failed:`, err.message);
     res.json({ holdings: [] }); // non-critical
+  }
+});
+
+// GET /developments — "what is happening on your book": recent headlines across
+// the user's holdings, newest first, each tagged with that holding's move today
+// so the biggest movers and their likely reason surface together. Best-effort and
+// non-critical: a provider hiccup yields fewer items, never an error. (Upcoming
+// earnings are intentionally NOT included; that data source is unreliable on our
+// tier and getUpcomingEarnings is disabled.)
+router.get('/developments', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const { data: positions } = await supabase.from('positions').select('ticker').eq('user_id', req.user.id);
+    const tickers = [...new Set((positions ?? []).map(p => p.ticker))];
+    if (!tickers.length) return res.json({ items: [] });
+    const priceMap = getPrices(tickers);
+
+    const perTicker = await Promise.allSettled(tickers.map(async (t) => {
+      const n = await getStockNews({ ticker: t, limit: 2 });
+      return (n?.articles ?? []).map(a => ({
+        ticker: t,
+        title: a.title,
+        source: a.source,
+        published: a.published,
+        changePercent: priceMap[t]?.changePercent ?? null,
+      }));
+    }));
+
+    const items = perTicker
+      .filter(r => r.status === 'fulfilled')
+      .flatMap(r => r.value)
+      .filter(a => a.title && a.published)
+      .sort((a, b) => new Date(b.published).getTime() - new Date(a.published).getTime())
+      .slice(0, 8);
+    res.json({ items });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /developments failed:`, err.message);
+    res.json({ items: [] }); // non-critical
   }
 });
 

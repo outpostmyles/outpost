@@ -16,6 +16,13 @@ test('covers the holdings that were showing Unknown', () => {
   assert.equal(staticSector('POET'), 'Technology');
 });
 
+test('covers speculative clean-energy / quantum names held in real books', () => {
+  assert.equal(staticSector('FCEL'), 'Industrials');
+  assert.equal(staticSector('EOSE'), 'Industrials');
+  assert.equal(staticSector('LWLG'), 'Technology');
+  assert.equal(staticSector('ENPH'), 'Technology');
+});
+
 test('covers the screener/compare names that were showing Unknown', () => {
   assert.equal(staticSector('GTLB'), 'Technology');
   assert.equal(staticSector('CPRT'), 'Industrials');
