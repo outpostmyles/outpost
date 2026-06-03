@@ -6,6 +6,7 @@ import { TickerIcon, EmptyState, Spinner, DisclaimerBadge } from '../shared/UI.j
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
 import BargainRadarCard from '../home/BargainRadarCard.jsx';
 import DiscoverView from './DiscoverView.jsx';
+import StockDossier from '../research/StockDossier.jsx';
 import ScreenersView from './ScreenersView.jsx';
 
 // ============ FLAME RATING ============
@@ -372,8 +373,9 @@ function WatchlistCard({ item, onRemove, onEdit, showToast }) {
     <div style={{ background: 'var(--surface)', border: `1px solid ${alertHit ? 'var(--green)' : alertNear ? 'var(--amber)' : 'var(--border)'}`, borderRadius: 8, padding: '10px 13px', marginBottom: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <TickerIcon ticker={item.ticker} size={30} />
-        <div style={{ flex: 1 }}>
-          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 1 }}>{item.ticker}</p>
+        <div style={{ flex: 1, cursor: 'pointer' }} title="Open research"
+          onClick={() => window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: item.ticker } }))}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 1 }}>{item.ticker} <span style={{ fontSize: 8.5, color: 'var(--blue)', fontWeight: 700 }}>RESEARCH ›</span></p>
           {item.last_price && (
             <p style={{ fontSize: 11, color: 'var(--muted)' }}>
               ${item.last_price?.toFixed(2)}
@@ -686,7 +688,21 @@ export default function SocialTab({ showToast }) {
   // back-link when accessed that way.
   const [activeSection, setActiveSection] = useState('screeners');
   const [countdown, setCountdown] = useState(30);
+  const [researchTicker, setResearchTicker] = useState(null); // open the dossier over any section
+  const [researchContext, setResearchContext] = useState(null);
   const timerRef = useRef(null);
+
+  // Any row anywhere in Social can open the research dossier by dispatching
+  // 'research_open' (same bridge pattern as agent_prefill). Keeps the wiring out
+  // of every nested card.
+  useEffect(() => {
+    const handler = (e) => {
+      const t = e.detail?.ticker;
+      if (t) { setResearchTicker(String(t).toUpperCase()); setResearchContext(e.detail?.context || null); }
+    };
+    window.addEventListener('research_open', handler);
+    return () => window.removeEventListener('research_open', handler);
+  }, []);
 
   const loadBuzz = useCallback(async () => {
     setLoading(true);
@@ -785,6 +801,11 @@ export default function SocialTab({ showToast }) {
       </div>
 
       <div className="scrollable" style={{ flex: 1 }}>
+        {researchTicker ? (
+          <StockDossier ticker={researchTicker} context={researchContext}
+            onClose={() => { setResearchTicker(null); setResearchContext(null); }} showToast={showToast} />
+        ) : (
+        <>
 
         {/* ============ SCREENERS (default) ============ */}
         {activeSection === 'screeners' && (
@@ -962,6 +983,8 @@ export default function SocialTab({ showToast }) {
               </>
             )}
           </div>
+        )}
+        </>
         )}
       </div>
     </div>

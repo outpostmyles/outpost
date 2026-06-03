@@ -141,6 +141,10 @@ function FeedRow({ item, onClick }) {
     e.stopPropagation();
     window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message: discoverAskPrompt(item) } }));
   };
+  const research = (e) => {
+    e.stopPropagation();
+    window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: item.ticker } }));
+  };
 
   return (
     <div
@@ -193,7 +197,19 @@ function FeedRow({ item, onClick }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'center', paddingRight: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'center', paddingRight: 12 }}>
+        {item.ticker && (
+          <button
+            onClick={research}
+            title="Open research"
+            style={{
+              fontSize: 8, fontWeight: 700, letterSpacing: '0.5px',
+              padding: '5px 9px', borderRadius: 4, cursor: 'pointer',
+              background: 'var(--raised)', color: 'var(--muted)',
+              border: '1px solid var(--border)', whiteSpace: 'nowrap',
+            }}
+          >RESEARCH</button>
+        )}
         <button
           onClick={ask}
           title="Ask Outpost about this"

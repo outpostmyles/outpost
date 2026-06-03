@@ -365,7 +365,7 @@ function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch,
 // book. The screener finds names; this is the room you research one in.
 const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
 
-function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, context, onBack, onWatch, onAsk }) {
+export function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, context, onBack, onWatch, onAsk }) {
   const d = dossier;
   const f = d?.fundamentals || {};
   const hasFund = f && Object.values(f).some(v => v != null);
@@ -549,7 +549,7 @@ function fmtCap(n) {
 }
 
 // Compare 2-3 names side by side, with the best fit for YOUR book called out.
-function CompareView({ data, onBack, onAskAll }) {
+export function CompareView({ data, onBack, onAskAll }) {
   const ds = data?.dossiers || [];
   const best = data?.best || null;
   const cols = `1.1fr ${ds.map(() => '1fr').join(' ')}`;
