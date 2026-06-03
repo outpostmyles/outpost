@@ -29,6 +29,7 @@ export function snapshotReadState({ positions, totalValue = 0, thesisWatches = {
       tgt: !!(p.price_target > 0),
       th: !!(p.entry_thesis && String(p.entry_thesis).trim()),
       pnl: Math.round(pnl),
+      px: price > 0 ? Math.round(price * 100) / 100 : 0, // price at this visit, for grading decisions later
       v: w?.verdict || null,
     };
   }

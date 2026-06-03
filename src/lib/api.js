@@ -141,6 +141,8 @@ export const api = {
     // "Since you were last here": send the current book shape, get the prior anchor
     // back so the read can greet the user with what changed.
     since: (snapshot) => post('/api/portfolio/since', { snapshot }),
+    // Decision memory: your past calls graded by what the price did since.
+    trackRecord: () => get('/api/portfolio/track-record'),
   },
   // Conversational onboarding — 3 questions that anchor the user's identity
   // for every future agent turn. Stored as agent_memory(memory_type='onboarding_anchor').

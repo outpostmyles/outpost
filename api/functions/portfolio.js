@@ -16,6 +16,7 @@ import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
+import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
 import { getPlanAdherence } from '../services/planAdherence.js';
@@ -1647,18 +1648,62 @@ router.post('/since', requireAuth, rateLimit(30), async (req, res) => {
 
     if (shouldReanchor(prior?.at, Date.now())) {
       const nowISO = new Date().toISOString();
-      const payload = { cache_key: key, result: JSON.stringify({ at: nowISO, holdings }), created_at: nowISO };
+      const curr = { at: nowISO, holdings };
+      const payload = { cache_key: key, result: JSON.stringify(curr), created_at: nowISO };
       try {
         const { data: existing } = await supabase.from('ai_cache').select('id').eq('cache_key', key).maybeSingle();
         if (existing) await supabase.from('ai_cache').update(payload).eq('id', existing.id);
         else await supabase.from('ai_cache').insert(payload);
       } catch { /* best effort: continuity is a nicety, never block the page */ }
+
+      // A new visit is also where we log the calls made since the last anchor, so
+      // decision memory accrues over time. Detect-once here (the next anchor will
+      // already reflect them), append to the per-user log, capped. Only when there
+      // is a real prior to diff against: on the very first visit we just set the
+      // baseline, never log the pre-existing book as fresh "opens".
+      try {
+        const events = prior ? detectDecisions(prior, curr, nowISO) : [];
+        if (events.length) {
+          const logKey = `decision_log:${req.user.id}`;
+          const { data: lrow } = await supabase.from('ai_cache').select('id, result').eq('cache_key', logKey).maybeSingle();
+          const existingLog = lrow?.result ? (typeof lrow.result === 'string' ? JSON.parse(lrow.result) : lrow.result) : [];
+          const nextLog = appendDecisions(existingLog, events);
+          const lpayload = { cache_key: logKey, result: JSON.stringify(nextLog), created_at: nowISO };
+          if (lrow?.id) await supabase.from('ai_cache').update(lpayload).eq('id', lrow.id);
+          else await supabase.from('ai_cache').insert(lpayload);
+        }
+      } catch { /* best effort: the log is a bonus, never block the page */ }
     }
 
     res.json({ prior });
   } catch (err) {
     console.error(`[req:${req.requestId}] [Portfolio] /since failed:`, err.message);
     res.json({ prior: null });
+  }
+});
+
+// DECISION MEMORY. The calls you have made (open, add, trim, set a stop, write a
+// thesis, exit), graded by what the price did since. Reads the per-user decision
+// log (accrued by /since on each new visit), prices the tickers live, and returns
+// the most recent graded calls newest first plus how many are being tracked. This
+// is the feedback loop retail never gets: it tells you whether your calls worked.
+router.get('/track-record', requireAuth, rateLimit(20), async (req, res) => {
+  try {
+    const logKey = `decision_log:${req.user.id}`;
+    const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', logKey).maybeSingle();
+    const events = data?.result ? (typeof data.result === 'string' ? JSON.parse(data.result) : data.result) : [];
+    if (!Array.isArray(events) || !events.length) return res.json({ calls: [], tracked: 0 });
+
+    const tickers = [...new Set(events.map(e => e?.ticker).filter(Boolean))];
+    const priceMap = tickers.length ? getPrices(tickers) : {};
+    const livePrices = {};
+    for (const t of tickers) { const p = priceMap[t]?.price; if (p) livePrices[t] = p; }
+
+    const calls = gradeDecisions(events, livePrices, Date.now(), 8);
+    res.json({ calls, tracked: events.length });
+  } catch (err) {
+    console.error(`[req:${req.requestId}] [Portfolio] /track-record failed:`, err.message);
+    res.json({ calls: [], tracked: 0 }); // non-critical
   }
 });
 

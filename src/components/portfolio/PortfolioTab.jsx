@@ -7,6 +7,7 @@ import { sectorExposure } from '../../lib/sectorExposure.js';
 import { sectorGaps } from '../../lib/sectorGaps.js';
 import { buildPortfolioActions } from '../../lib/portfolioActions.js';
 import { snapshotReadState, diffReadState } from '../../lib/readContinuity.js';
+import { callAge } from '../../lib/decisionMemory.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
@@ -2447,6 +2448,48 @@ function devTimeAgo(iso) {
   return `${Math.floor(diff / 1440)}d ago`;
 }
 
+// "HOW YOUR CALLS PLAYED OUT" — decision memory. The calls you made, graded by what
+// the price did since, so you learn whether you are actually good. Builds over time
+// (it logs each new visit), so it is quiet until there is history, then it becomes
+// your story. Tap a call to research that name.
+const CALL_TONE = {
+  good: 'var(--green)',
+  learn: 'var(--amber)',
+  watch: 'var(--red)',
+  neutral: 'var(--faint)',
+};
+function TrackRecordCard() {
+  const [data, setData] = useState(null); // null = loading, { calls, tracked }
+  useEffect(() => {
+    let alive = true;
+    cachedFetch('portfolio_track_record', () => api.portfolio.trackRecord(), 10 * 60000)
+      .then(d => { if (alive) setData(d || { calls: [], tracked: 0 }); })
+      .catch(() => { if (alive) setData({ calls: [], tracked: 0 }); });
+    return () => { alive = false; };
+  }, []);
+  if (!data || !data.calls?.length) return null; // quiet until there is graded history
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <p style={{ fontSize: 9, fontWeight: 700, color: 'var(--faint)', letterSpacing: '1px', marginBottom: 8 }}>HOW YOUR CALLS PLAYED OUT</p>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+        {data.calls.map((c, i) => (
+          <div key={i}
+            onClick={() => window.dispatchEvent(new CustomEvent('research_open', { detail: { ticker: c.ticker } }))}
+            title={`Research ${c.ticker}`}
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '10px 12px', borderTop: i ? '1px solid var(--border)' : 'none', cursor: 'pointer' }}>
+            <span style={{ flexShrink: 0, width: 6, height: 6, borderRadius: 3, marginTop: 5, background: CALL_TONE[c.tone] || 'var(--faint)' }} />
+            <p style={{ flex: 1, fontSize: 11, color: 'var(--text)', lineHeight: 1.45, margin: 0 }}>{c.text}</p>
+            <span style={{ flexShrink: 0, fontSize: 9, color: 'var(--faint)', marginTop: 1 }}>{callAge(c.ageDays)}</span>
+          </div>
+        ))}
+      </div>
+      {data.tracked > data.calls.length && (
+        <p style={{ fontSize: 9, color: 'var(--faint)', margin: '6px 2px 0' }}>Tracking {data.tracked} of your calls. Outpost grades each one as it plays out.</p>
+      )}
+    </div>
+  );
+}
+
 function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -2606,6 +2649,9 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
               one collapsed block (they answer the same question). */}
           <ExposureCard positions={positions} onTabSwitch={onTabSwitch} />
 
+          {/* How your calls played out — decision memory, your story over time.
+              Quiet until there is graded history, then it teaches you your patterns. */}
+          <TrackRecordCard />
 
           {/* Inline growth chart — collapsible, only if we have snapshots */}
           <GrowthChartInline showGrowth={showGrowth} setShowGrowth={setShowGrowth} />
