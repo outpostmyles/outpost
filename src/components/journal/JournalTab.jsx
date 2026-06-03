@@ -14,12 +14,13 @@ import { cachedFetch } from '../../lib/cache.js';
 import { buildCoaching } from '../../lib/coaching.js';
 import { buildGrowthArc } from '../../lib/growthArc.js';
 import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
+import NorthStarCard from '../home/NorthStarCard.jsx';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
 import { filterNotes } from '../../lib/journalSearch.js';
 
 export default function JournalTab({ showToast, onTabSwitch }) {
-  const [subTab, setSubTab] = useState('notes'); // 'notes' | 'timeline'
+  const [subTab, setSubTab] = useState('overview'); // 'overview' | 'story' | 'saved'
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openNote, setOpenNote] = useState(null); // full note object when editing
@@ -158,9 +159,9 @@ export default function JournalTab({ showToast, onTabSwitch }) {
       {/* Sub-tab navigation */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0, background: 'var(--surface)' }}>
         {[
-          { id: 'notes', label: 'NOTES' },
-          { id: 'timeline', label: 'TIMELINE' },
-          { id: 'patterns', label: 'PATTERNS' },
+          { id: 'overview', label: 'PROGRESS' },
+          { id: 'story', label: 'STORY' },
+          { id: 'saved', label: 'SAVED' },
         ].map(t => (
           <button
             key={t.id}
@@ -185,13 +186,18 @@ export default function JournalTab({ showToast, onTabSwitch }) {
         ))}
       </div>
 
-      {subTab === 'notes' ? (
+      {subTab === 'overview' ? (
+        <ProgressOverview onSeeStory={() => setSubTab('story')} onReflect={handleReflect} />
+      ) : subTab === 'story' ? (
+        <TimelineView showToast={showToast} />
+      ) : (
         <>
-          {/* Notes header */}
+          {/* SAVED: bookmarks and notes. Demoted to a shelf, since saving now
+              happens everywhere in the app, not just here. */}
           <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', fontWeight: 700 }}>JOURNAL</p>
-              <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 3 }}>Your saved notes and ideas</p>
+              <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1px', fontWeight: 700 }}>SAVED</p>
+              <p style={{ fontSize: 10, color: 'var(--faint)', marginTop: 3 }}>Bookmarks and notes from around the app</p>
             </div>
             <button
               onClick={handleNewNote}
@@ -204,11 +210,6 @@ export default function JournalTab({ showToast, onTabSwitch }) {
               + NEW NOTE
             </button>
           </div>
-
-          {/* REFLECT — the front door. The few moments worth journaling right now,
-              each one tap into a pre-seeded entry. Renders nothing when there is
-              nothing to reflect on, so it is signal, not a chore. */}
-          <ReflectFeed onReflect={handleReflect} />
 
           {/* Search — pure client-side filter over title + preview. Only shown
               once there are notes to search. Instant, no network per keystroke. */}
@@ -270,11 +271,38 @@ export default function JournalTab({ showToast, onTabSwitch }) {
             )}
           </div>
         </>
-      ) : subTab === 'timeline' ? (
-        <TimelineView showToast={showToast} />
-      ) : (
-        <PatternsView />
       )}
+    </div>
+  );
+}
+
+// ============ PROGRESS OVERVIEW ============
+// The cold-start-proof front page. Leads with where you are headed (the North Star
+// trajectory, meaningful from your first dollar), then the mirror that fills in as
+// you trade: your record, your edge, how you have grown, what to work on. Reflect
+// sits up top so the next entry is one tap. Never an empty page: a brand new user
+// still sees their goal and an honest "this fills in as you trade" below it.
+function ProgressOverview({ onSeeStory, onReflect }) {
+  const [totalValue, setTotalValue] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    cachedFetch('portfolio_value', () => api.portfolio.value(), 60000)
+      .then(d => { if (alive) setTotalValue(d?.totalValue ?? 0); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return (
+    <div style={{ flex: 1, overflowY: 'auto' }}>
+      <NorthStarCard currentValue={totalValue} />
+      <ReflectFeed onReflect={onReflect} />
+      <PatternsView />
+      <div style={{ padding: '0 16px 22px' }}>
+        <button onClick={onSeeStory}
+          style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 13px', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.5px' }}>SEE YOUR FULL STORY</span>
+          <span style={{ fontSize: 11, color: 'var(--faint)' }}>›</span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -391,7 +419,7 @@ function PatternsView() {
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px' }}>
+    <div style={{ padding: '18px 16px' }}>
       {coaching.hasEnough && (coaching.fix || coaching.strength) && <CoachCard coaching={coaching} />}
       {scorecard && <ScorecardSummary s={scorecard} />}
       {growth.hasEnough && growth.lines.length > 0 && <GrowthArcCard lines={growth.lines} />}

@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { cachedFetch, clearCachePrefix } from '../../lib/cache.js';
 import { useAuth } from '../../hooks/useAuth.jsx';
 import { fmt, colorFor, greeting } from '../../utils/market.js';
+import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
 import ActivationChecklist from './ActivationChecklist.jsx';
@@ -38,6 +39,45 @@ function persistDismissedNotices(set) {
   try {
     localStorage.setItem(NOTICE_DISMISS_KEY, JSON.stringify(Array.from(set)));
   } catch {}
+}
+
+// REFLECT on Home: the journal comes to the user. Builds the same reflect prompts
+// the Progress tab uses (a close never reflected on, a thesis that cracked) and
+// surfaces a compact nudge here so they get discovered. Tap to jump to Progress,
+// where the seeded entries wait. Renders nothing when there is nothing to reflect on.
+function ReflectCard({ onTabSwitch, refreshKey }) {
+  const [prompts, setPrompts] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      cachedFetch('home_closed_trades', () => api.portfolio.closedTrades(), 5 * 60000).catch(() => ({ trades: [] })),
+      cachedFetch('portfolio_thesis_watch', () => api.portfolio.thesisWatch(), 30 * 60000).catch(() => ({ watches: {} })),
+      api.journal.reflectedIds().catch(() => ({ ids: [] })),
+    ]).then(([ct, tw, rf]) => {
+      if (!alive) return;
+      setPrompts(buildReflectionPrompts({
+        closes: ct?.trades || [],
+        theses: Object.values(tw?.watches || {}),
+        handled: rf?.ids || [],
+      }));
+    });
+    return () => { alive = false; };
+  }, [refreshKey]);
+
+  if (!prompts.length) return null;
+  const top = prompts[0];
+  const more = prompts.length - 1;
+  return (
+    <div onClick={() => onTabSwitch?.('journal')} title="Open Progress to reflect"
+      style={{ margin: '0 16px 12px', background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, padding: '12px 14px', cursor: 'pointer' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+        <p style={{ fontSize: 9, fontWeight: 800, color: 'var(--blue)', letterSpacing: '1px', margin: 0 }}>REFLECT</p>
+        <span style={{ fontSize: 10, color: 'var(--blue)', fontWeight: 700 }}>{prompts.length} to capture ›</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.45, margin: 0 }}>{top.title}</p>
+      {more > 0 && <p style={{ fontSize: 10, color: 'var(--faint)', margin: '4px 0 0' }}>and {more} more in Progress</p>}
+    </div>
+  );
 }
 
 function NoticesCard({ onTabSwitch, refreshKey }) {
@@ -447,6 +487,12 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           {(data.portfolio?.positions?.length ?? 0) >= 1 && (
             <NorthStarCard currentValue={data.portfolio?.totalValue ?? 0} />
           )}
+
+          {/* REFLECT: the journal comes to you. The few moments worth capturing
+              (a close you never reflected on, a thesis that cracked) surface here so
+              they get seen, instead of waiting in a tab nobody opens. Renders
+              nothing when there is nothing to reflect on. */}
+          <ReflectCard onTabSwitch={onTabSwitch} refreshKey={lastUpdated?.getTime() ?? 0} />
 
           {/* OUTPOST NOTICED — passive observations. Shown only when there
               are non-dismissed notices to surface. Renders nothing in the
