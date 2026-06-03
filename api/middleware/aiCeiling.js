@@ -5,10 +5,14 @@
 // Note: this MUST run AFTER requireAuth — it needs req.user.id. The middleware
 // no-ops (passes through) if req.user is missing rather than crashing.
 import { checkAndIncrementAiCall } from '../services/aiSpendCeiling.js';
+import { config } from '../config.js';
 
 export function dailyAiCeiling() {
   return (req, res, next) => {
     if (!req.user?.id) return next(); // unauth path: let requireAuth handle the 401
+    // Never cap on a local/dev server (you are testing your own app); production
+    // still enforces it.
+    if (config.nodeEnv !== 'production') return next();
     // The 'unlimited' beta tier is exempt from the per-day cap, same as session
     // pacing, so a beta/founder account is never throttled mid-test.
     if (req.user.plan === 'unlimited') return next();

@@ -21,6 +21,7 @@
 import { supabase } from '../db.js';
 import { isMarketHours, isPreMarket, getETTime } from '../utils/marketHours.js';
 import { getMarketData } from '../services/marketData.js';
+import { config } from '../config.js';
 
 // ╔══════════════════════════════════════════════════════════╗
 // ║  CHANGE THIS AS YOU SCALE — the only knob you need      ║
@@ -90,6 +91,10 @@ function getWindow() {
 
 export function sessionPacing() {
   return async (req, res, next) => {
+    // Never pace on a local/dev server: you are testing your own app, you should
+    // not be able to lock yourself out. Production (NODE_ENV=production) still
+    // enforces the budget normally.
+    if (config.nodeEnv !== 'production') return next();
     // Free users have their own gate, and the 'unlimited' beta tier is, by
     // definition, never paced. Everyone in between (starter/pro/elite) is.
     const plan = req.user?.plan ?? 'free';
