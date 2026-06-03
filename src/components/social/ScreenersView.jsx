@@ -176,8 +176,11 @@ export default function ScreenersView({ showToast }) {
   function deepDive(d) {
     const t = d?.ticker || dossierTicker;
     const name = d?.name && d.name !== t ? ` (${d.name})` : '';
-    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message:
-      `Give me a full research read on ${t}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.` } }));
+    const h = d?.holding;
+    const message = h
+      ? `I hold ${h.shares} shares of ${t}${name} at $${h.avgCost}, currently ${h.pnlPct >= 0 ? 'up' : 'down'} ${Math.abs(h.pnlPct)}%.${h.thesis ? ` My thesis was: "${h.thesis}".` : ''} Is that still working given what is going on now? Walk me through whether to hold, add, or trim, and be honest about the risks.`
+      : `Give me a full research read on ${t}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.`;
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message } }));
   }
 
   // ── Compare (2-3 stocks, side by side), overlays everything ──

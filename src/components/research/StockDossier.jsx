@@ -45,8 +45,11 @@ export default function StockDossier({ ticker, context = null, onClose, showToas
   }
   function deepDive() {
     const name = dossier?.name && dossier.name !== ticker ? ` (${dossier.name})` : '';
-    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message:
-      `Give me a full research read on ${ticker}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.` } }));
+    const h = dossier?.holding;
+    const message = h
+      ? `I hold ${h.shares} shares of ${ticker}${name} at $${h.avgCost}, currently ${h.pnlPct >= 0 ? 'up' : 'down'} ${Math.abs(h.pnlPct)}%.${h.thesis ? ` My thesis was: "${h.thesis}".` : ''} Is that still working given what is going on now? Walk me through whether to hold, add, or trim, and be honest about the risks.`
+      : `Give me a full research read on ${ticker}${name}. What does the company actually do, the bull case, the bear case, how the valuation looks, and most importantly whether it fits my portfolio and goals given what you know about me. Be honest about the risks.`;
+    window.dispatchEvent(new CustomEvent('agent_prefill', { detail: { message } }));
   }
   async function compareToHoldings() {
     const d = dossier; if (!d) return;
