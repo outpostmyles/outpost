@@ -266,7 +266,7 @@ function MemoryViewer({ showToast, refreshKey }) {
 let msgIdCounter = 0;
 function nextMsgId() { return `local_${Date.now()}_${++msgIdCounter}`; }
 
-export default function AgentTab({ user, showToast, onOpenerWaiting }) {
+export default function AgentTab({ user, showToast, onOpenerWaiting, active = true }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -282,9 +282,21 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   const [convId, setConvId] = useState(null);            // current conversation
   const [conversations, setConversations] = useState([]); // list for the switcher
   const [showConvList, setShowConvList] = useState(false);
-  const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const scrollerRef = useRef(null);     // the messages scroll container, scrolled directly (reliable)
   const pendingJumpRef = useRef(false); // true → next render should JUMP to the latest message (a fresh load), not smooth-scroll
+  const openOrderRef = useRef({});      // convId → sequence it was last opened, so opened chats bubble to the top of the list
+  const openSeqRef = useRef(0);
+
+  // Scroll the message list to the newest message. Setting scrollTop on the
+  // actual container is more reliable than scrollIntoView on a sentinel, which
+  // could scroll the wrong ancestor or no-op while the panel was hidden.
+  const scrollToBottom = useCallback((smooth = false) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    if (smooth && el.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    else el.scrollTop = el.scrollHeight;
+  }, []);
 
   const makeConvId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `c_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
@@ -333,19 +345,33 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   // Scroll-to-bottom. On a fresh conversation load we JUMP instantly to the most
   // recent message (a chat should open at the latest response, not the top); while
   // a reply streams in we follow it smoothly. The jump waits for `loading` to flip
-  // false because the message list (and bottomRef) is not mounted until then. The
-  // old effect fired during the spinner and silently no-op'd, leaving chats at top.
+  // false because the message list is not mounted until then.
   useEffect(() => {
     if (loading) return;
     if (pendingJumpRef.current) {
       pendingJumpRef.current = false;
-      const jump = () => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-      jump();
-      requestAnimationFrame(jump); // again after layout settles (markdown/long lists)
+      scrollToBottom(false);
+      requestAnimationFrame(() => scrollToBottom(false)); // again after layout settles (markdown/long lists)
     } else {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      scrollToBottom(true);
     }
-  }, [messages, loading]);
+  }, [messages, loading, scrollToBottom]);
+
+  // The agent tab stays mounted and is revealed by toggling display, so the load
+  // time jump runs while the panel is display:none (you cannot scroll a hidden
+  // element, so it no-ops). Re-jump to the latest message whenever the tab becomes
+  // visible, which is why "open the agent and it sat at the top" happened.
+  useEffect(() => {
+    if (!active || loading) return;
+    scrollToBottom(false);
+    requestAnimationFrame(() => scrollToBottom(false));
+  }, [active, loading, scrollToBottom]);
+
+  // Remember the order conversations are opened in, so the one you are looking at
+  // (and the ones you most recently opened) sit at the top of the switcher.
+  useEffect(() => {
+    if (convId) { openSeqRef.current += 1; openOrderRef.current[convId] = openSeqRef.current; }
+  }, [convId]);
 
   // Phase 4 bridge — DeployCashFlow's "None of these feel right? → Talk it
   // out with the agent" dispatches an 'agent_prefill' window event with a
@@ -519,7 +545,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
         <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)', maxHeight: 280, overflowY: 'auto', flexShrink: 0 }}>
           {conversations.length === 0 ? (
             <p style={{ fontSize: 11, color: 'var(--faint)', padding: '12px 16px', fontStyle: 'italic', margin: 0 }}>No conversations yet. Start typing to begin one.</p>
-          ) : conversations.map(c => (
+          ) : [...conversations].sort((a, b) => (openOrderRef.current[b.id] ?? 0) - (openOrderRef.current[a.id] ?? 0)).map(c => (
             <div key={c.id} onClick={() => openConversation(c.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderTop: '1px solid var(--border)', cursor: 'pointer', background: c.id === convId ? 'rgba(59,130,246,0.08)' : 'transparent' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -554,7 +580,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
       )}
 
       {/* Messages */}
-      <div className="scrollable" style={{ flex: 1, padding: '14px 16px 8px', overflowY: 'auto', minHeight: 0 }}>
+      <div ref={scrollerRef} className="scrollable" style={{ flex: 1, padding: '14px 16px 8px', overflowY: 'auto', minHeight: 0 }}>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>
         ) : (
@@ -589,7 +615,6 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
               </div>
             )}
             {err && <p style={{ fontSize: 11, color: 'var(--red)', textAlign: 'center', marginBottom: 12 }}>{err}</p>}
-            <div ref={bottomRef} />
           </>
         )}
       </div>

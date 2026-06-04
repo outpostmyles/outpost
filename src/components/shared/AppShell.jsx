@@ -203,7 +203,7 @@ export default function AppShell() {
             own boundary: a crash here can't take down the rest of the app. */}
         <ErrorBoundary variant="inline">
           <div style={{ display: activeTab === 'agent' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <AgentTab user={user} showToast={showToast} onOpenerWaiting={setAgentWaiting} />
+            <AgentTab user={user} showToast={showToast} onOpenerWaiting={setAgentWaiting} active={activeTab === 'agent'} />
           </div>
         </ErrorBoundary>
         {/* The other tabs share one boundary, keyed by tab so switching away and
