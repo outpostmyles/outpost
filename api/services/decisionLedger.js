@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision } from '../../src/lib/decisionLedger.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -67,6 +67,19 @@ export async function recordDecision(userId, d) {
     if (todayChangePct == null && d.ticker) {
       todayChangePct = num(getPrices([d.ticker])?.[d.ticker]?.changePercent);
     }
+
+    // How big this position is in the book, so the size-based grade and the
+    // "betting too big" pattern actually fire. Computed from the user's current
+    // holdings; best-effort, never blocks (this runs fire-and-forget).
+    let pctOfBook = num(d.pctOfBook);
+    if (pctOfBook == null && d.ticker) {
+      try {
+        const { data: positions } = await supabase.from('positions').select('ticker, shares').eq('user_id', userId);
+        const tickers = [...new Set([...(positions ?? []).map(p => p.ticker), d.ticker])];
+        const prices = tickers.length ? getPrices(tickers) : {};
+        pctOfBook = pctOfBookForDecision({ ticker: d.ticker, price: d.price, shares: d.shares, type: d.type }, positions ?? [], prices);
+      } catch { /* leave null */ }
+    }
     const row = {
       user_id: userId,
       type: d.type,
@@ -76,7 +89,7 @@ export async function recordDecision(userId, d) {
       thesis: d.thesis ? String(d.thesis).slice(0, 2000) : null,
       source: d.source ?? null,
       ai_advice: d.aiAdvice ? String(d.aiAdvice).slice(0, 2000) : null,
-      pct_of_book: num(d.pctOfBook),
+      pct_of_book: pctOfBook,
       today_change_pct: todayChangePct,
       market_regime: ctx.regime,
       vix: ctx.vix,

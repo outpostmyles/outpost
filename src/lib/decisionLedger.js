@@ -239,6 +239,37 @@ export function aggregateBehavior(decisions) {
   return { totalUsers, patterns };
 }
 
+// Compute how big this decision's position is in the book, at decision time, so
+// the size-based grade and the "betting too big" pattern actually fire. positions
+// is the user's current holdings [{ticker, shares}], prices is {ticker:{price}}.
+// For a close, the position is already gone from `positions`, so we add its value
+// back to the denominator to reflect the book at the moment of the decision.
+export function pctOfBookForDecision(decision, positions, prices) {
+  const d = decision || {};
+  const t = String(d.ticker || '').toUpperCase();
+  if (!t) return null;
+  const px = num(d.price) ?? num(prices?.[t]?.price);
+  if (px == null || px <= 0) return null;
+  let book = 0;
+  let mineVal = null;
+  for (const p of arr(positions)) {
+    const pt = String(p?.ticker || '').toUpperCase();
+    const sh = num(p?.shares);
+    const ppx = num(prices?.[pt]?.price);
+    if (!pt || sh == null || sh <= 0 || ppx == null || ppx <= 0) continue;
+    const v = ppx * sh;
+    book += v;
+    if (pt === t) mineVal = v;
+  }
+  if (mineVal == null) {
+    const sh = num(d.shares); // close: value it from the decision's own shares
+    if (sh == null || sh <= 0) return null;
+    mineVal = px * sh;
+    book += mineVal;
+  }
+  return book > 0 ? Math.round((mineVal / book) * 10000) / 100 : null;
+}
+
 // ── THE OBJECTIVE: the product's loss function ───────────────────────────────
 // One number per user for "are they making better decisions": process quality
 // (average grade) penalized by active self-sabotage. Deliberately process-first,

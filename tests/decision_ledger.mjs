@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
-  decisionQualityIndex, aggregateQuality, adviceLift,
+  decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -214,6 +214,27 @@ test('adviceLift withholds a verdict when a side has no resolved trades', () => 
   const r = adviceLift([{ type: 'open', source: 'manual', outcomeStatus: 'win' }]);
   assert.strictEqual(r.lift, null);
   assert.strictEqual(r.advised.winRate, null);
+});
+
+// ── pctOfBookForDecision (completing the capture) ────────────────────────────
+test('pctOfBook for an open uses the position already in the book', () => {
+  const positions = [{ ticker: 'AAPL', shares: 10 }, { ticker: 'MSFT', shares: 5 }];
+  const prices = { AAPL: { price: 100 }, MSFT: { price: 200 } };
+  // AAPL 1000 of 2000 book = 50%
+  assert.equal(pctOfBookForDecision({ type: 'open', ticker: 'AAPL', price: 100 }, positions, prices), 50);
+});
+
+test('pctOfBook for a close adds the sold position back to the book', () => {
+  // AAPL already removed from positions; value it from the decision shares.
+  const positions = [{ ticker: 'MSFT', shares: 5 }];
+  const prices = { AAPL: { price: 100 }, MSFT: { price: 200 } };
+  // AAPL 10*100=1000, book = 1000(MSFT) + 1000 = 2000 => 50%
+  assert.equal(pctOfBookForDecision({ type: 'close', ticker: 'AAPL', price: 100, shares: 10 }, positions, prices), 50);
+});
+
+test('pctOfBookForDecision is null-safe on junk', () => {
+  assert.strictEqual(pctOfBookForDecision(null, null, null), null);
+  assert.strictEqual(pctOfBookForDecision({ ticker: 'AAPL' }, [], {}), null); // no price
 });
 
 let pass = 0, fail = 0;
