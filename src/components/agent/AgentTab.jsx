@@ -207,6 +207,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   const [showConvList, setShowConvList] = useState(false);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const pendingJumpRef = useRef(false); // true → next render should JUMP to the latest message (a fresh load), not smooth-scroll
 
   const makeConvId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `c_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
@@ -216,6 +217,12 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
   }, []);
 
   const openConversation = useCallback(async (id) => {
+    // Stop any reply still streaming in the conversation we're leaving so its
+    // late setState calls can't land on the conversation we're opening. The
+    // server persists that reply independently, so nothing is lost.
+    if (streamRef.current) { streamRef.current.abort(); streamRef.current = null; }
+    setSending(false);
+    pendingJumpRef.current = true; // open at the most recent message, not the top
     setConvId(id);
     setShowConvList(false);
     setErr('');
@@ -246,9 +253,22 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
 
   useEffect(() => { init(); }, [init]);
 
+  // Scroll-to-bottom. On a fresh conversation load we JUMP instantly to the most
+  // recent message (a chat should open at the latest response, not the top); while
+  // a reply streams in we follow it smoothly. The jump waits for `loading` to flip
+  // false because the message list (and bottomRef) is not mounted until then. The
+  // old effect fired during the spinner and silently no-op'd, leaving chats at top.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (loading) return;
+    if (pendingJumpRef.current) {
+      pendingJumpRef.current = false;
+      const jump = () => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      jump();
+      requestAnimationFrame(jump); // again after layout settles (markdown/long lists)
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages, loading]);
 
   // Phase 4 bridge — DeployCashFlow's "None of these feel right? → Talk it
   // out with the agent" dispatches an 'agent_prefill' window event with a

@@ -13,6 +13,7 @@ import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
 import { buildAgentOpener } from '../services/agentOpener.js';
 import { gatherSignalsForUser } from '../services/proactiveDigest.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
+import { groupConversations } from '../../src/lib/agentConversations.js';
 
 // agent_messages carries a conversation_id (added by migration). A null id is
 // the pre-conversations "Earlier" bucket, addressed by the sentinel '__legacy__'.
@@ -496,7 +497,12 @@ router.get('/messages', requireAuth, rateLimit(30), async (req, res) => {
     const convId = req.query.conversation_id;
     let mq = supabase.from('agent_messages').select('*').eq('user_id', req.user.id);
     if (convId) mq = (convId === '__legacy__') ? mq.is('conversation_id', null) : mq.eq('conversation_id', convId);
-    const { data: messages } = await mq.order('created_at', { ascending: true }).limit(50);
+    // Load the MOST RECENT messages, not the oldest. Ordering ascending with a cap
+    // silently hid the newest exchanges once a conversation passed the limit, which
+    // read as "my last response disappeared." Pull newest-first, then flip back to
+    // chronological order for display.
+    const { data: recent } = await mq.order('created_at', { ascending: false }).limit(200);
+    const messages = (recent ?? []).reverse();
 
     if (!messages?.length) {
       const ctx = await buildAgentContext(req.user.id, req.user);
@@ -569,24 +575,16 @@ router.get('/messages', requireAuth, rateLimit(30), async (req, res) => {
 // '__legacy__' bucket. Most-recent activity first.
 router.get('/conversations', requireAuth, rateLimit(30), async (req, res) => {
   try {
+    // Pull the NEWEST messages first so recent conversations are never truncated
+    // out of the list once a heavy user crosses the cap. Ascending + limit used to
+    // keep only the oldest rows, which dropped the most recent chats entirely and
+    // read as "a whole chat went missing."
     const { data: msgs } = await supabase.from('agent_messages')
       .select('conversation_id, role, content, created_at')
       .eq('user_id', req.user.id)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(2000);
-    const byConv = new Map();
-    for (const m of msgs ?? []) {
-      const key = m.conversation_id || '__legacy__';
-      let c = byConv.get(key);
-      if (!c) { c = { id: key, title: '', lastActivity: m.created_at, count: 0 }; byConv.set(key, c); }
-      c.count++;
-      c.lastActivity = m.created_at;
-      if (!c.title && m.content?.trim()) c.title = m.content.trim().slice(0, 60);
-    }
-    const conversations = [...byConv.values()]
-      .map(c => ({ ...c, title: c.title || (c.id === '__legacy__' ? 'Earlier conversation' : 'New conversation') }))
-      .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
-    res.json({ conversations });
+    res.json({ conversations: groupConversations(msgs) });
   } catch (e) {
     console.error('[Agent] conversations list failed:', e.message);
     res.json({ conversations: [] });
