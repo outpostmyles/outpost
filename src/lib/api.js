@@ -307,6 +307,7 @@ export const api = {
     dashboard: () => get('/api/admin/dashboard'),
     reviewQueue: (opts) => get(`/api/admin/review-queue${opts?.threshold != null ? `?threshold=${opts.threshold}` : ''}`),
     markReviewed: (id, verdict) => post(`/api/admin/review-queue/${id}`, { verdict }),
+    aiUsage: (days) => get(`/api/admin/ai-usage${days ? `?days=${days}` : ''}`),
   },
   decisions: {
     mine: () => get('/api/decisions'),

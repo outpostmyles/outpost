@@ -16,6 +16,9 @@ export default function FounderDashboard({ onBack }) {
   // user base is doing. Loaded separately so a failure here never blocks the
   // rest of the dashboard, and so it stays empty-safe before any decisions land.
   const [intel, setIntel] = useState(null);
+  // Real Claude API cost, attributed by feature and model. FOUNDER ONLY: this is
+  // never shown to a user, it exists so we can see where the AI spend goes.
+  const [aiUsage, setAiUsage] = useState(null);
 
   async function load() {
     try {
@@ -32,10 +35,12 @@ export default function FounderDashboard({ onBack }) {
 
   useEffect(() => { load(); }, []);
   useEffect(() => { api.decisions.aggregate().then(setIntel).catch(() => setIntel(null)); }, []);
+  useEffect(() => { api.admin.aiUsage(30).then(setAiUsage).catch(() => setAiUsage(null)); }, []);
 
   function refresh() {
     setRefreshing(true);
     api.decisions.aggregate().then(setIntel).catch(() => {});
+    api.admin.aiUsage(30).then(setAiUsage).catch(() => {});
     load();
   }
 
@@ -138,6 +143,46 @@ export default function FounderDashboard({ onBack }) {
                 : intel.baseRates.buckets.filter(b => b.winRate != null).map(b => (
                     <Row key={b.setup} label={b.setup} value={`${b.winRate}% win (${b.n})`}
                          accent={b.winRate <= 35 ? 'var(--red)' : b.winRate >= 60 ? 'var(--green)' : null} />
+                  ))}
+            </Card>
+          </>
+        )}
+      </div>
+
+      {/* AI COST: real Claude spend, attributed by feature and model from the
+          token usage we capture on every call. This is where the bill scales, so
+          it sits up top. FOUNDER ONLY, never shown to a user. */}
+      <div style={{ padding: '12px 16px 4px' }}>
+        <SectionTitle>AI cost (Claude API)</SectionTitle>
+        {!aiUsage ? (
+          <Card><p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Loading, or no calls captured yet. Rows land here as the app calls Claude. If this stays empty, run migration 019_ai_usage.sql in Supabase.</p></Card>
+        ) : (
+          <>
+            <StatGrid>
+              <Stat label="Last 24h" value={usd(aiUsage.totals?.last24h?.cost)} sub={`${aiUsage.totals?.last24h?.calls ?? 0} calls`} />
+              <Stat label="Last 7d" value={usd(aiUsage.totals?.last7d?.cost)} sub={`${aiUsage.totals?.last7d?.calls ?? 0} calls`} />
+              <Stat label={`Last ${aiUsage.windowDays ?? 30}d`} value={usd(aiUsage.totals?.lastWindow?.cost)} sub={`${aiUsage.totals?.lastWindow?.calls ?? 0} calls`} />
+              <Stat label="Projected / mo" value={usd(aiUsage.projectedMonthly)} sub="from last 7d" accent={'var(--amber)'} />
+            </StatGrid>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>Cost by feature ({aiUsage.windowDays ?? 30}d)</SectionTitle>
+            <Card>
+              {(aiUsage.byFeature ?? []).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>No usage captured yet.</p>
+                : aiUsage.byFeature.map(f => (
+                    <Row key={f.feature} label={f.feature} value={`${usd(f.cost)} (${f.calls} calls)`}
+                         accent={f.cost >= (aiUsage.totals?.lastWindow?.cost || 0) * 0.4 ? 'var(--amber)' : null} />
+                  ))}
+            </Card>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>Cost by model ({aiUsage.windowDays ?? 30}d)</SectionTitle>
+            <Card>
+              {(aiUsage.byModel ?? []).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>No usage captured yet.</p>
+                : aiUsage.byModel.map(m => (
+                    <Row key={m.tier} label={m.tier} value={`${usd(m.cost)} (${m.calls} calls)`} />
                   ))}
             </Card>
           </>
@@ -380,6 +425,15 @@ function Spark({ series, labels }) {
 }
 
 function pct(n, d) { return d > 0 ? Math.round((n / d) * 100) : 0; }
+// Money formatter that keeps precision for tiny beta-scale costs (a few cents)
+// while staying readable once the totals grow.
+function usd(n) {
+  const v = Number(n) || 0;
+  if (v === 0) return '$0';
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
+}
 
 /**
  * Review queue — flagged AI responses that scored low. The founder reviews

@@ -30,6 +30,7 @@ import { dailyAiCeiling } from '../middleware/aiCeiling.js';
 import { recallHistory } from '../services/historyAggregator.js';
 import { getMarketData } from '../services/marketData.js';
 import { getNoticesForUser } from '../services/notices.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 /**
  * Validate ticker exists on a real exchange and prices pass sanity checks.
@@ -388,6 +389,7 @@ router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, r
         system: systemPrompt,
         messages: [{ role: 'user', content: ctxLines }],
       }, { signal: controller.signal });
+      recordClaudeUsage({ feature: 'pulse', model: msg.model, usage: msg.usage, userId: req.user.id });
       pulse = msg.content?.[0]?.text?.trim() || '';
       // Strip wrapping quotes if Claude added them despite the instruction
       pulse = pulse.replace(/^["'`]+|["'`]+$/g, '').trim();
@@ -605,6 +607,7 @@ router.post('/positions/gut-check', requireAuth, rateLimit(20), dailyAiCeiling()
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }, { signal: controller.signal });
+      recordClaudeUsage({ feature: 'gut_check', model: msg.model, usage: msg.usage, userId: req.user.id });
       clearTimeout(timeout);
 
       let question = msg.content?.[0]?.text?.trim() || '';
@@ -940,6 +943,7 @@ Output ONLY the JSON array, no other text.`;
           ],
         }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'parse_screenshot', model: msg.model, usage: msg.usage, userId: req.user.id });
     } finally { clearTimeout(tm); }
 
     // Parse Claude's response

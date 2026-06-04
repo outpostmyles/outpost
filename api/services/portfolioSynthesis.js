@@ -22,6 +22,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { logAndGrade } from './aiQualityLog.js';
+import { recordClaudeUsage } from './aiUsage.js';
 import { pctOfBookOf, bookStamp } from '../../src/lib/bookStats.js';
 import { NO_DASH_RULE } from '../utils/aiStyle.js';
 
@@ -228,6 +229,7 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
         system: SYSTEM,
         messages: [{ role: 'user', content: userMsg }],
       }, { signal: controller.signal });
+      recordClaudeUsage({ feature: 'synthesis', model: msg.model, usage: msg.usage, userId });
       text = msg.content?.[0]?.text?.trim() || null;
     } finally {
       clearTimeout(timeout);

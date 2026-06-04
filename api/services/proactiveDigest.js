@@ -19,6 +19,7 @@ import { getPrices } from './pricePool.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { todayStr } from '../utils/marketHours.js';
+import { recordClaudeUsage } from './aiUsage.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
@@ -294,6 +295,7 @@ RULES:
         content: `Today's noticed signals (already sorted by priority):\n\n${signalLines}\n\nWrite the morning digest now.`,
       }],
     }, { signal: controller.signal });
+    recordClaudeUsage({ feature: 'proactive_digest', model: msg.model, usage: msg.usage, userId });
     prose = msg.content[0].text.trim();
   } catch (err) {
     console.error('[ProactiveDigest] Claude call failed:', err.message);

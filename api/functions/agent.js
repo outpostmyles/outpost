@@ -14,6 +14,7 @@ import { buildAgentOpener } from '../services/agentOpener.js';
 import { gatherSignalsForUser } from '../services/proactiveDigest.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { groupConversations } from '../../src/lib/agentConversations.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 // agent_messages carries a conversation_id (added by migration). A null id is
 // the pre-conversations "Earlier" bucket, addressed by the sentinel '__legacy__'.
@@ -99,9 +100,14 @@ async function refundAgentCredits(userId, amount, reason, requestId) {
 
 // Retry wrapper for Anthropic API calls — handles 429 (rate limit) and 529 (overloaded)
 async function callAnthropicWithRetry(params, options = {}) {
+  // `feature`/`userId` are our cost-tracking tags, not Anthropic request options;
+  // pull them out so only real request options (signal) reach the SDK.
+  const { feature = 'agent', userId = null, ...reqOptions } = options;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await anthropic.messages.create(params, options);
+      const res = await anthropic.messages.create(params, reqOptions);
+      recordClaudeUsage({ feature, model: params.model, usage: res.usage, userId }); // fire-and-forget, fail-safe
+      return res;
     } catch (err) {
       const status = err.status || err?.error?.status;
       const isRetryable = status === 429 || status === 529;
@@ -873,7 +879,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
         ],
         messages,
         ...(msgTier.useTools ? { tools: AGENT_TOOLS } : {}),
-      }, { signal: controller.signal });
+      }, { signal: controller.signal, userId: req.user.id });
 
       // Tool use loop — if Claude wants to call tools, execute them and feed results back
       while (response.stop_reason === 'tool_use' && toolRounds < MAX_TOOL_ROUNDS) {
@@ -941,7 +947,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
           ],
           messages,
           tools: AGENT_TOOLS,
-        }, { signal: controller.signal });
+        }, { signal: controller.signal, userId: req.user.id });
       }
 
       trackAICall(true);
@@ -975,7 +981,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
               ...messages,
               { role: 'user', content: '[SYSTEM: You have used all your tool rounds. Do NOT call any more tools. Synthesize your answer NOW using whatever data you already gathered above. Give the trader a useful response with the data you have.]' },
             ],
-          }, { signal: controller.signal });
+          }, { signal: controller.signal, userId: req.user.id });
           const synthText = synthResponse.content.find(b => b.type === 'text');
           reply = synthText?.text?.trim() || '';
         } catch {
@@ -1245,7 +1251,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
         ],
         messages,
         ...(msgTier.useTools ? { tools: AGENT_TOOLS } : {}),
-      }, { signal: streamController.signal });
+      }, { signal: streamController.signal, userId: req.user.id });
 
       // Tool use loop (non-streaming — tools must complete first)
       while (response.stop_reason === 'tool_use' && toolRounds < MAX_TOOL_ROUNDS) {
@@ -1292,7 +1298,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
             { type: 'text', text: contextBlock },
           ],
           messages, tools: AGENT_TOOLS,
-        }, { signal: streamController.signal });
+        }, { signal: streamController.signal, userId: req.user.id });
       }
 
       // Now stream the final text response
@@ -1327,7 +1333,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
               ...messages,
               { role: 'user', content: '[SYSTEM: You have used all your tool rounds. Synthesize your answer NOW using whatever data you already gathered.]' },
             ],
-          }, { signal: streamController.signal });
+          }, { signal: streamController.signal, userId: req.user.id });
           const synthText = synthResponse.content.find(b => b.type === 'text');
           fullReply = synthText?.text?.trim() || 'I pulled a lot of data but ran into my lookup limit. Ask me a more specific follow-up.';
         } catch {

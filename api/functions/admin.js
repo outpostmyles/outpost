@@ -24,6 +24,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { generateInsights, getAnalyticsSummary } from '../services/analytics.js';
 import { listExperiments, aggregateFeedbackByVariant } from '../services/promptExperiments.js';
 import { runFounderDigest } from '../services/founderDigest.js';
+import { getAiUsageSummary } from '../services/aiUsage.js';
 
 const router = express.Router();
 
@@ -268,6 +269,19 @@ router.post('/founder-digest', requireAuth, requireAdmin, rateLimit(5), async (r
   } catch (err) {
     console.error('[Admin] founder-digest:', err.message);
     res.status(500).json({ error: 'Failed to run founder digest' });
+  }
+});
+
+// GET /api/admin/ai-usage: FOUNDER ONLY. Real Claude API cost attributed by
+// feature and model from captured token usage. This data is never exposed to a
+// user; it exists so the founder can see where the AI spend concentrates.
+router.get('/ai-usage', requireAuth, requireAdmin, rateLimit(20), async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 90);
+    res.json(await getAiUsageSummary({ days }));
+  } catch (err) {
+    console.error('[Admin] ai-usage failed:', err.message);
+    res.status(500).json({ error: 'Could not load AI usage' });
   }
 });
 

@@ -21,6 +21,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { getStockNews, getHistoricalPrice } from './agentTools.js';
 import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
+import { recordClaudeUsage } from './aiUsage.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -174,6 +175,7 @@ export async function evaluateThesis(input) {
       max_tokens: 400, // headroom so the JSON always closes (evidence never cut mid-word)
       messages: [{ role: 'user', content: buildThesisPrompt(input) }],
     });
+    recordClaudeUsage({ feature: 'thesis_watch', model: msg.model, usage: msg.usage, userId: null });
     return parseVerdict(msg.content?.[0]?.text);
   } catch (e) {
     console.error('[ThesisWatch] eval failed:', e?.message);

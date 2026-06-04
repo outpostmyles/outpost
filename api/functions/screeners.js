@@ -26,6 +26,7 @@ import { applyScreenerVerdicts } from '../services/screenerVerdicts.js';
 import { markScreenerNewcomers } from '../services/screenerDiff.js';
 import { applyPriceBound } from '../services/screenerConstraints.js';
 import { staticSector } from '../services/sectorMap.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -75,6 +76,7 @@ export async function runScreenerQuery(query) {
         `Every name must truly match the query's intent: if it names a sector or theme, the company must actually operate in that business; if it sets numeric limits like price or size, respect them. No loose or surface-level matches (do not list a cheap stock for "cheap semiconductors" unless it is actually a semiconductor company). ` +
         `Return ONLY JSON, no prose: {"tickers":["NVDA","AVGO"]}` }],
     });
+    recordClaudeUsage({ feature: 'screener', model: msg.model, usage: msg.usage, userId: null });
     const parsed = parseJson(msg.content?.[0]?.text);
     candTickers = Array.isArray(parsed?.tickers)
       ? parsed.tickers.map(t => String(t).toUpperCase().replace(/[^A-Z]/g, '')).filter(Boolean).slice(0, MAX_CANDIDATES)
@@ -141,6 +143,7 @@ export async function runScreenerQuery(query) {
         `Drop real mismatches and stretches, but keep the genuine fits, aiming for the 5 to 10 strongest rather than an empty list. For each kept name write ONE specific sentence on why it fits, naming its actual business plus the live data, never a generic line. Order strongest fit first. ` +
         `Return ONLY JSON, no prose: {"results":[{"ticker":"NVDA","fits":true,"thesis":"..."}]}` }],
     });
+    recordClaudeUsage({ feature: 'screener', model: msg.model, usage: msg.usage, userId: null });
     parsed = parseJson(msg.content?.[0]?.text);
   } catch (e) {
     console.error('[Screener] vetting failed:', e.message);
@@ -199,6 +202,7 @@ async function mergeQuery(base, refinement) {
         `A user has a stock screen described as: "${base}".\nThey want to refine it with: "${refinement}".\n` +
         `Rewrite it as ONE clear, natural screen description that combines both. Keep it short, no quotes, no preamble. Return only the new description.` }],
     });
+    recordClaudeUsage({ feature: 'screener', model: msg.model, usage: msg.usage, userId: null });
     const text = (msg.content?.[0]?.text || '').trim().replace(/^["']|["']$/g, '').split('\n')[0];
     return sanitizeString(text, 300) || sanitizeString(`${base}. ${refinement}`, 300);
   } catch {

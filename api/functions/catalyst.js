@@ -24,6 +24,7 @@ import {
 } from '../utils/finnhub.js';
 import { memGet, memSet } from '../services/memoryCache.js';
 import { getMarketData } from '../services/marketData.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 import { config } from '../config.js';
 
 const router = express.Router();
@@ -242,6 +243,7 @@ Return ONLY a JSON array of the candidate numbers (1-indexed) in order of expect
         system: [{ type: 'text', text: scoringSystem, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: `Current market: ${regime} regime, VIX ${vix}.\nPick the top 3 catalysts for the "${dropLabel}" drop from these candidates:\n${candidateStr}` }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'catalyst', model: msg.model, usage: msg.usage, userId: null });
     } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;

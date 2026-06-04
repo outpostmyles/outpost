@@ -14,6 +14,7 @@ import { getMarketData, getMoversData } from '../services/marketData.js';
 import { getPrices } from '../services/pricePool.js';
 import { config } from '../config.js';
 import { trackAICall, trackError } from '../services/monitor.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 import { trackFeature, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
 import { dailyAiCeiling } from '../middleware/aiCeiling.js';
 import { getRequestId } from '../middleware/requestId.js';
@@ -101,6 +102,7 @@ async function claudeCall(system, userMsg, maxTokens = 400, opts = {}) {
       messages: [{ role: 'user', content: userMsg }],
     }, { signal: controller.signal });
 
+    recordClaudeUsage({ feature: opts.feature || 'ai', model, usage: msg.usage, userId: opts.userId ?? null });
     trackAICall(true);
 
     // Detect truncation — response was cut off by max_tokens
@@ -193,6 +195,7 @@ router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req,
         system: variant.build(),
         messages: [{ role: 'user', content: buildWelcomePrompt({ style, risk, assets, market, anchors }) }],
       }, { signal: controller.signal });
+      recordClaudeUsage({ feature: 'welcome', model: msg.model, usage: msg.usage, userId: req.user.id });
       trackAICall(true);
       message = msg.content?.[0]?.text?.trim() || buildFallbackWelcome({ style });
     } catch (err) {
@@ -1022,6 +1025,7 @@ router.post('/coach-chat', requireAuth, rateLimit(20), dailyAiCeiling(), async (
         system,
         messages: conv.messages.slice(-12).map(m => ({ role: m.role, content: m.content })),
       });
+      recordClaudeUsage({ feature: 'coach_chat', model: msg.model, usage: msg.usage, userId: req.user.id });
       trackAICall(true);
       reply = msg.content?.[0]?.text?.trim() || '';
     } catch (aiErr) {

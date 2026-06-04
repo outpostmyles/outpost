@@ -17,6 +17,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Resend } from 'resend';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
+import { recordClaudeUsage } from './aiUsage.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const resend = config.resendKey ? new Resend(config.resendKey) : null;
@@ -186,6 +187,7 @@ async function synthesize(metrics) {
         system: SYNTH_SYSTEM,
         messages: [{ role: 'user', content: userMsg }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'founder_digest', model: msg.model, usage: msg.usage, userId: null });
     } finally { clearTimeout(tm); }
     return msg.content?.[0]?.text?.trim() || '(empty response)';
   } catch (err) {

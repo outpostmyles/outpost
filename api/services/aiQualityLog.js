@@ -15,6 +15,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
+import { recordClaudeUsage } from './aiUsage.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 
@@ -56,6 +57,7 @@ async function gradeResponse({ input, output, feature }) {
         system: GRADER_SYSTEM,
         messages: [{ role: 'user', content: `INPUT:\n${input.slice(0, 2000)}\n\nOUTPUT:\n${output.slice(0, 2000)}\n\nFEATURE: ${feature}\n\nReturn ONLY the JSON.` }],
       }, { signal: controller.signal });
+      recordClaudeUsage({ feature: 'quality_grader', model: msg.model, usage: msg.usage, userId: null });
       const text = msg.content?.[0]?.text?.trim() ?? '';
       const match = text.match(/\{[\s\S]*\}/);
       if (!match) return null;

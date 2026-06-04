@@ -14,6 +14,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { getSnapshots } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 import { config } from '../config.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -180,6 +181,7 @@ Return JSON with:
 }`,
         }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'sector_radar', model: msg.model, usage: msg.usage, userId: null });
     } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;

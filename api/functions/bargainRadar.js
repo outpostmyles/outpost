@@ -34,6 +34,7 @@ import {
 } from '../utils/finnhub.js';
 import { SCAN_UNIVERSE } from '../utils/stockUniverse.js';
 import { config } from '../config.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -283,6 +284,7 @@ Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("b
           content: `Evaluate these oversold large-caps. Which are buyable dips and which are real problems?\n\n${lines}\n\nReturn JSON:\n{\n  "verdicts": [\n    { "ticker": "XYZ", "verdict": "buyable" | "avoid", "thesis": "one sentence" }\n  ]\n}`,
         }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'bargain_radar', model: msg.model, usage: msg.usage, userId: null });
     } finally { clearTimeout(tm); }
 
     const text = msg.content?.[0]?.text || '';

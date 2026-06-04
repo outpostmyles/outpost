@@ -16,6 +16,7 @@ import { getPrices, initPricePool } from '../services/pricePool.js';
 import { resetDailyCounters } from '../services/analytics.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 import { PLAN_CREDITS } from '../constants/planCredits.js';
 import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
@@ -115,6 +116,7 @@ ${PLAIN_TEXT_RULE}`;
       system,
       messages: [{ role: 'user', content: userMsg }],
     }, { signal: controller.signal });
+    recordClaudeUsage({ feature: 'jobs', model: msg.model, usage: msg.usage, userId: null });
 
     // Trim to the last complete sentence so a token-cap cutoff never ships a
     // dangling fragment to the user's morning brief.

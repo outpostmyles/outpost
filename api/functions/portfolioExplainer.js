@@ -26,6 +26,7 @@ import { getTickerNews, isFinnhubAvailable } from '../utils/finnhub.js';
 import { todayStr, isWeekday } from '../utils/marketHours.js';
 import { config } from '../config.js';
 import { PLAIN_TEXT_RULE } from '../utils/aiStyle.js';
+import { recordClaudeUsage } from '../services/aiUsage.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -228,6 +229,7 @@ Return JSON in this exact shape:
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userMsg }],
       }, { signal: ctrl.signal });
+      recordClaudeUsage({ feature: 'explainer', model: msg.model, usage: msg.usage, userId: null });
     } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
