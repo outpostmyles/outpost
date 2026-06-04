@@ -238,3 +238,58 @@ export function aggregateBehavior(decisions) {
     .sort((a, b) => b.users - a.users);
   return { totalUsers, patterns };
 }
+
+// ── THE OBJECTIVE: the product's loss function ───────────────────────────────
+// One number per user for "are they making better decisions": process quality
+// (average grade) penalized by active self-sabotage. Deliberately process-first,
+// not P&L (luck-contaminated). 0..100, or null when there is nothing graded yet.
+// Every future product change is measured against whether this moves.
+export function decisionQualityIndex(decisions) {
+  const list = arr(decisions);
+  const s = summarizeDecisions(list);
+  if (s.avgGrade == null) {
+    return { index: null, avgGrade: null, sabotagePenalty: 0, winRate: s.winRate, trend: s.trend, sample: s.total, patterns: [] };
+  }
+  const found = detectBehaviorPatterns(list);
+  const penalty = Math.min(30, found.reduce((p, f) => p + (f.severity >= 80 ? 10 : f.severity >= 65 ? 6 : 3), 0));
+  const index = Math.max(0, Math.min(100, Math.round(s.avgGrade - penalty)));
+  return { index, avgGrade: s.avgGrade, sabotagePenalty: penalty, winRate: s.winRate, trend: s.trend, sample: s.total, patterns: found.map(f => f.key) };
+}
+
+// Population view of the objective: the average decision-quality index across
+// users who have enough activity to score. The product's north-star number.
+export function aggregateQuality(decisions) {
+  const list = arr(decisions);
+  const byUser = new Map();
+  for (const d of list) {
+    if (d.userId == null) continue;
+    if (!byUser.has(d.userId)) byUser.set(d.userId, []);
+    byUser.get(d.userId).push(d);
+  }
+  const indices = [];
+  for (const ds of byUser.values()) {
+    const q = decisionQualityIndex(ds);
+    if (q.index != null) indices.push(q.index);
+  }
+  const avgIndex = indices.length ? Math.round(indices.reduce((s, v) => s + v, 0) / indices.length) : null;
+  return { users: byUser.size, scored: indices.length, avgIndex };
+}
+
+// ── THE REWARD SIGNAL: does following our advice actually help ────────────────
+// Compares resolved decisions the AI prompted (deploy cash, a screener pick, a
+// dossier handoff) against self-directed ones. If advised trades do not beat
+// self-directed ones, the product is not earning its keep, and we would rather
+// know. The honest test of whether Outpost helps.
+const AI_SOURCES = new Set(['deploy_cash', 'screener', 'dossier']);
+export function adviceLift(decisions) {
+  const resolved = arr(decisions).filter(d => d.outcomeStatus && (OPENISH.has(d.type) || d.type === 'close'));
+  const grp = (pred) => {
+    const g = resolved.filter(pred);
+    const wins = g.filter(d => d.outcomeStatus === 'win').length;
+    return { n: g.length, winRate: g.length ? Math.round((wins / g.length) * 100) : null };
+  };
+  const advised = grp(d => AI_SOURCES.has(d.source));
+  const selfDirected = grp(d => !AI_SOURCES.has(d.source));
+  const lift = (advised.winRate != null && selfDirected.winRate != null) ? advised.winRate - selfDirected.winRate : null;
+  return { advised, selfDirected, lift };
+}

@@ -76,6 +76,20 @@ export default function FounderDashboard({ onBack }) {
           <Card><p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Loading, or no decisions captured yet. Rows land here as users trade.</p></Card>
         ) : (
           <>
+            {/* THE OBJECTIVE + THE REWARD: the two numbers the whole machine
+                exists to move. Decision quality is our loss function; advice
+                lift is whether the product actually earns its keep. */}
+            <Card>
+              <Row label="Decision Quality Index (the objective)"
+                   value={intel.quality?.avgIndex != null ? `${intel.quality.avgIndex} / 100` : 'no data yet'}
+                   accent={intel.quality?.avgIndex != null ? (intel.quality.avgIndex >= 65 ? 'var(--green)' : intel.quality.avgIndex >= 50 ? 'var(--amber)' : 'var(--red)') : null} />
+              <Row label="Does our advice help (the reward)"
+                   value={intel.adviceLift?.lift != null
+                     ? `${intel.adviceLift.lift >= 0 ? '+' : ''}${intel.adviceLift.lift} pts  (advised ${intel.adviceLift.advised.winRate}% vs self ${intel.adviceLift.selfDirected.winRate}%)`
+                     : 'not enough resolved trades yet'}
+                   accent={intel.adviceLift?.lift != null ? (intel.adviceLift.lift > 0 ? 'var(--green)' : 'var(--red)') : null} />
+            </Card>
+            <div style={{ height: 10 }} />
             <StatGrid>
               <Stat label="Decisions" value={intel.totalDecisions ?? 0} sub={`${intel.windowDays}d window`} />
               <Stat label="Tickers seen" value={intel.tickersTracked ?? 0} />

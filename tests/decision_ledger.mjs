@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
+  decisionQualityIndex, aggregateQuality, adviceLift,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -168,6 +169,51 @@ test('aggregateBehavior reports how prevalent each mistake is across users', () 
 test('aggregateBehavior is safe on junk and empty', () => {
   assert.deepEqual(aggregateBehavior(null), { totalUsers: 0, patterns: [] });
   assert.deepEqual(aggregateBehavior([{ type: 'open' }]), { totalUsers: 0, patterns: [] }); // no userId => no users
+});
+
+// ── THE OBJECTIVE: decisionQualityIndex ──────────────────────────────────────
+test('decisionQualityIndex is high for disciplined process, low for sabotage', () => {
+  const good = Array.from({ length: 4 }, (_, i) => ({ type: 'open', ticker: `G${i}`, thesis: 'reasoned', pctOfBook: 8, todayChangePct: 0, outcomeStatus: 'win', thesisPlayedOut: 'yes' }));
+  const bad = Array.from({ length: 4 }, (_, i) => ({ type: 'open', ticker: `B${i}`, pctOfBook: 60, todayChangePct: 25, outcomeStatus: 'loss', thesisPlayedOut: 'no' }));
+  const gq = decisionQualityIndex(good);
+  const bq = decisionQualityIndex(bad);
+  assert.ok(gq.index > bq.index, `good ${gq.index} should beat bad ${bq.index}`);
+  assert.ok(bq.sabotagePenalty > 0, 'sabotage should be penalized');
+});
+
+test('decisionQualityIndex is null when nothing is graded yet', () => {
+  const q = decisionQualityIndex([]);
+  assert.strictEqual(q.index, null);
+});
+
+test('aggregateQuality averages the per-user index across the base', () => {
+  const userDs = (u, thesis) => Array.from({ length: 4 }, (_, i) => ({ type: 'open', userId: u, ticker: `${u}${i}`, thesis, pctOfBook: 8, outcomeStatus: 'win', thesisPlayedOut: 'yes' }));
+  const agg = aggregateQuality([...userDs('u1', 'x'), ...userDs('u2', 'y')]);
+  assert.equal(agg.users, 2);
+  assert.equal(agg.scored, 2);
+  assert.ok(agg.avgIndex > 0);
+});
+
+// ── THE REWARD SIGNAL: adviceLift ────────────────────────────────────────────
+test('adviceLift compares AI-sourced outcomes against self-directed ones', () => {
+  const decisions = [
+    // advised (deploy_cash): 2 wins, 0 losses => 100%
+    { type: 'open', source: 'deploy_cash', outcomeStatus: 'win' },
+    { type: 'open', source: 'deploy_cash', outcomeStatus: 'win' },
+    // self-directed (manual): 1 win, 1 loss => 50%
+    { type: 'open', source: 'manual', outcomeStatus: 'win' },
+    { type: 'open', source: 'manual', outcomeStatus: 'loss' },
+  ];
+  const r = adviceLift(decisions);
+  assert.equal(r.advised.winRate, 100);
+  assert.equal(r.selfDirected.winRate, 50);
+  assert.equal(r.lift, 50); // following advice beat self-directed by 50 points
+});
+
+test('adviceLift withholds a verdict when a side has no resolved trades', () => {
+  const r = adviceLift([{ type: 'open', source: 'manual', outcomeStatus: 'win' }]);
+  assert.strictEqual(r.lift, null);
+  assert.strictEqual(r.advised.winRate, null);
 });
 
 let pass = 0, fail = 0;

@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift } from '../../src/lib/decisionLedger.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -150,6 +150,7 @@ export async function getUserReceipts(userId) {
   const decisions = await getUserDecisions(userId);
   return {
     summary: summarizeDecisions(decisions),
+    quality: decisionQualityIndex(decisions),
     patterns: detectBehaviorPatterns(decisions),
     recent: decisions.slice(0, 25).map(d => ({ ...d, grade: gradeDecision(d) })),
   };
@@ -160,12 +161,18 @@ export async function getAggregate({ days = 30, limit = 5000 } = {}) {
   try {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data } = await supabase.from('decisions')
-      .select('user_id, type, ticker, thesis, pct_of_book, today_change_pct, outcome_status, outcome_hold_days, created_at')
+      .select('user_id, type, ticker, thesis, source, pct_of_book, today_change_pct, outcome_status, outcome_pnl_pct, outcome_hold_days, thesis_played_out, created_at')
       .gte('created_at', since)
       .order('created_at', { ascending: false }).limit(limit);
     const decisions = (data ?? []).map(rowToDecision).filter(Boolean);
-    return { windowDays: days, ...aggregateRetail(decisions), behavior: aggregateBehavior(decisions) };
+    return {
+      windowDays: days,
+      ...aggregateRetail(decisions),
+      behavior: aggregateBehavior(decisions),
+      quality: aggregateQuality(decisions),   // the objective: are users getting better
+      adviceLift: adviceLift(decisions),       // the reward: does our advice help
+    };
   } catch (e) {
-    return { windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [], behavior: { totalUsers: 0, patterns: [] }, error: 'unavailable' };
+    return { windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [], behavior: { totalUsers: 0, patterns: [] }, quality: { users: 0, scored: 0, avgIndex: null }, adviceLift: { advised: { n: 0, winRate: null }, selfDirected: { n: 0, winRate: null }, lift: null }, error: 'unavailable' };
   }
 }
