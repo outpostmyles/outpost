@@ -17,6 +17,8 @@ import { recallHistory } from './historyAggregator.js';
 import { calculatePositionSize, calculateRiskReward } from './tradeMath.js';
 import { calcRSI, calcATR, calcSMA } from './indicators.js';
 import { assessPreTradeRisk } from './preTradeRisk.js';
+import { getCachedIntelligence, getUserDecisions } from './decisionLedger.js';
+import { baseRateGuidance, setupBaseRates } from '../../src/lib/decisionLedger.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -1564,7 +1566,7 @@ async function preTradeCheck({ ticker, dollars_to_invest, stop_loss, userId }) {
   const tickerSector = SECTOR_MAP[ticker] || 'Unknown';
   const currentPrice = getPrice(ticker)?.price ?? null;
 
-  return assessPreTradeRisk({
+  const risk = assessPreTradeRisk({
     ticker,
     dollars,
     tickerSector,
@@ -1576,6 +1578,24 @@ async function preTradeCheck({ ticker, dollars_to_invest, stop_loss, userId }) {
     stopLoss: stop_loss,
     riskTolerance,
   });
+
+  // Spend the decision-intelligence base rates on THIS specific buy: how does
+  // this kind of trade (chasing a green day, going oversized, a known retail
+  // trap) actually work out, for retail and for this user. Additive and
+  // best-effort, it never breaks the risk check.
+  try {
+    const intel = await getCachedIntelligence();
+    const todayChg = getPrice(ticker)?.changePercent;
+    const resultingPct = (portfolioValue + dollars) > 0 ? (dollars / (portfolioValue + dollars)) * 100 : 0;
+    const personal = setupBaseRates(await getUserDecisions(userId, { limit: 500 }));
+    const guidance = baseRateGuidance(
+      { ticker, chasing: Number.isFinite(todayChg) && todayChg >= 10, oversized: resultingPct > 35 },
+      { population: intel?.baseRates, personal, retailTraps: intel?.retailTraps },
+    );
+    if (guidance.facts.length || guidance.verdict !== 'ok') return { ...risk, baseRates: guidance };
+  } catch { /* base rates are additive; never break the check */ }
+
+  return risk;
 }
 
 // ============ CLOSED TRADE REFLECTION LOOKUP ============

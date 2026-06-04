@@ -352,3 +352,34 @@ export function setupBaseRates(decisions, { minSample = 5 } = {}) {
   buckets.sort((a, b) => (a.winRate ?? 999) - (b.winRate ?? 999));
   return { overall, buckets };
 }
+
+// ── PRE-TRADE GUIDANCE: spend the base rates on a specific proposed buy ───────
+// Given the shape of a buy the user is about to make (is it chasing, oversized,
+// thesis-less, and is the ticker a known retail trap) plus the population and the
+// user's own base rates, return the relevant "the data says" facts and a verdict
+// (ok | caution | stop). This is the institutional move: intervene BEFORE the
+// trade, with evidence, not after. Pure so it is testable and instant.
+export function baseRateGuidance(setup, { population, personal, retailTraps } = {}) {
+  const facts = [];
+  const flags = [];
+  const t = String(setup?.ticker || '').toUpperCase();
+  const bucketOf = (br, name) => (br?.buckets || []).find(b => b.setup === name && b.winRate != null);
+
+  const trap = (arr(retailTraps)).find(r => String(r?.ticker).toUpperCase() === t);
+  if (trap) { flags.push('retail_trap'); facts.push(`Retail wins only ${trap.retailWinRate}% on ${t} (${trap.resolved} closed).`); }
+
+  const consider = (on, name, label) => {
+    if (!on) return;
+    const p = bucketOf(population, name);
+    if (p) { if (p.winRate <= 40) flags.push(name); facts.push(`${label} wins ${p.winRate}% for retail (${p.n}).`); }
+    const me = bucketOf(personal, name);
+    if (me) facts.push(`Your own record on this: ${me.winRate}% (${me.n}).`);
+  };
+  consider(setup?.chasing, 'chasing (up 10%+ that day)', 'Buying a name already up 10%+ that day');
+  consider(setup?.oversized, 'oversized (>35% of book)', 'Putting one name over 35% of the book');
+  consider(setup?.noThesis, 'no thesis', 'Buying with no thesis');
+
+  const verdict = flags.length === 0 ? 'ok'
+    : (flags.includes('retail_trap') || flags.length >= 2 ? 'stop' : 'caution');
+  return { verdict, flags, facts };
+}

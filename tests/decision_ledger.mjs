@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
-  decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates,
+  decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, baseRateGuidance,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -264,6 +264,47 @@ test('setupBaseRates is safe on junk', () => {
   const r = setupBaseRates(null);
   assert.strictEqual(r.overall.winRate, null);
   assert.deepEqual(r.buckets, []);
+});
+
+// ── PRE-TRADE GUIDANCE (spending the intelligence before the trade) ──────────
+const POP = {
+  buckets: [
+    { setup: 'chasing (up 10%+ that day)', n: 40, winRate: 25 },
+    { setup: 'oversized (>35% of book)', n: 20, winRate: 30 },
+    { setup: 'no thesis', n: 30, winRate: 35 },
+  ],
+};
+
+test('a clean buy gets an ok verdict and no flags', () => {
+  const g = baseRateGuidance({ ticker: 'AAPL', chasing: false, oversized: false, noThesis: false }, { population: POP });
+  assert.equal(g.verdict, 'ok');
+  assert.deepEqual(g.flags, []);
+});
+
+test('chasing surfaces the retail base rate and a caution', () => {
+  const g = baseRateGuidance({ ticker: 'NVDA', chasing: true }, { population: POP });
+  assert.ok(g.flags.includes('chasing (up 10%+ that day)'));
+  assert.equal(g.verdict, 'caution');
+  assert.match(g.facts.join(' '), /25% for retail/);
+});
+
+test('a known retail trap is an immediate stop', () => {
+  const g = baseRateGuidance({ ticker: 'MEME' }, { retailTraps: [{ ticker: 'MEME', retailWinRate: 12, resolved: 8 }] });
+  assert.ok(g.flags.includes('retail_trap'));
+  assert.equal(g.verdict, 'stop');
+});
+
+test('two compounding flags escalate to stop, and personal record is included', () => {
+  const personal = { buckets: [{ setup: 'chasing (up 10%+ that day)', n: 6, winRate: 17 }] };
+  const g = baseRateGuidance({ ticker: 'X', chasing: true, oversized: true }, { population: POP, personal });
+  assert.equal(g.verdict, 'stop'); // chasing + oversized
+  assert.match(g.facts.join(' '), /Your own record on this: 17%/);
+});
+
+test('baseRateGuidance is safe with no intelligence at all', () => {
+  const g = baseRateGuidance({ ticker: 'AAPL', chasing: true }, {});
+  assert.equal(g.verdict, 'ok'); // nothing to flag without data
+  assert.deepEqual(g.facts, []);
 });
 
 let pass = 0, fail = 0;

@@ -222,6 +222,18 @@ export async function buildDecisionIntelligence() {
 }
 
 /**
+ * Read-only: the last cached intelligence build, or null. For consumers like the
+ * pre-trade check that need the base rates cheaply and must never trigger a heavy
+ * recompute on a user's hot path.
+ */
+export async function getCachedIntelligence() {
+  try {
+    const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', INTEL_KEY).maybeSingle();
+    return data?.result ? JSON.parse(data.result) : null;
+  } catch { return null; }
+}
+
+/**
  * The founder read. Cache-first (serves the last build for up to 6h), recomputes
  * and warms the cache on a miss, so the first visit after a deploy is correct and
  * every visit after is instant. Never throws.
