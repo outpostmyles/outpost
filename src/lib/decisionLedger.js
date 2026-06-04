@@ -324,3 +324,31 @@ export function adviceLift(decisions) {
   const lift = (advised.winRate != null && selfDirected.winRate != null) ? advised.winRate - selfDirected.winRate : null;
   return { advised, selfDirected, lift };
 }
+
+// ── BASE RATES BY SETUP: the probabilistic edge institutions live by ─────────
+// Not "how did AAPL do" but "how does THIS KIND of buy work out": no thesis,
+// chasing a green day, oversized, bought into a risk-off tape. Buckets resolved
+// buys by setup and reports each bucket's win rate. This is the intelligence
+// retail can never assemble for itself, and the spine of a real pre-trade check.
+// A win rate is withheld below minSample so we never claim an edge we cannot back.
+export function setupBaseRates(decisions, { minSample = 5 } = {}) {
+  const resolved = arr(decisions).filter(d => OPENISH.has(d.type) && d.outcomeStatus);
+  const bucket = (setup, pred) => {
+    const g = resolved.filter(pred);
+    const wins = g.filter(d => d.outcomeStatus === 'win').length;
+    return { setup, n: g.length, winRate: g.length >= minSample ? Math.round((wins / g.length) * 100) : null };
+  };
+  const hasThesis = (d) => !!(d.thesis && String(d.thesis).trim());
+  const overall = bucket('all buys', () => true);
+  const buckets = [
+    bucket('no thesis', d => !hasThesis(d)),
+    bucket('has thesis', d => hasThesis(d)),
+    bucket('chasing (up 10%+ that day)', d => num(d.todayChangePct) != null && num(d.todayChangePct) >= 10),
+    bucket('oversized (>35% of book)', d => num(d.pctOfBook) != null && num(d.pctOfBook) > 35),
+    bucket('bought in risk-off', d => d.marketRegime === 'Risk Off'),
+    bucket('bought in risk-on', d => d.marketRegime === 'Risk On'),
+  ].filter(b => b.n > 0);
+  // Worst win rate first (the traps lead), unknowns last.
+  buckets.sort((a, b) => (a.winRate ?? 999) - (b.winRate ?? 999));
+  return { overall, buckets };
+}

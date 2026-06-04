@@ -126,6 +126,20 @@ export default function FounderDashboard({ onBack }) {
                     <Row key={t.ticker} label={t.ticker} value={`${t.retailWinRate}% win rate (${t.resolved} closed)`} accent={'var(--red)'} />
                   ))}
             </Card>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>Setup base rates (how each kind of buy works out)</SectionTitle>
+            <Card>
+              {intel.baseRates?.overall?.winRate != null && (
+                <Row label="All buys (baseline)" value={`${intel.baseRates.overall.winRate}% win (${intel.baseRates.overall.n})`} />
+              )}
+              {(intel.baseRates?.buckets ?? []).filter(b => b.winRate != null).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Not enough resolved buys yet to compute base rates.</p>
+                : intel.baseRates.buckets.filter(b => b.winRate != null).map(b => (
+                    <Row key={b.setup} label={b.setup} value={`${b.winRate}% win (${b.n})`}
+                         accent={b.winRate <= 35 ? 'var(--red)' : b.winRate >= 60 ? 'var(--green)' : null} />
+                  ))}
+            </Card>
           </>
         )}
       </div>

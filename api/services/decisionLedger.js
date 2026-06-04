@@ -169,23 +169,74 @@ export async function getUserReceipts(userId) {
   };
 }
 
-/** The founder-only anonymized aggregate across all users (crowding + traps). */
-export async function getAggregate({ days = 30, limit = 5000 } = {}) {
+const INTEL_KEY = 'decision_intelligence';
+const INTEL_TTL_MS = 6 * 3600 * 1000; // serve a cached build for up to 6 hours
+
+const EMPTY_INTEL = (days) => ({
+  windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [],
+  behavior: { totalUsers: 0, patterns: [] },
+  quality: { users: 0, scored: 0, avgIndex: null },
+  adviceLift: { advised: { n: 0, winRate: null }, selfDirected: { n: 0, winRate: null }, lift: null },
+  baseRates: { overall: { setup: 'all buys', n: 0, winRate: null }, buckets: [] },
+});
+
+// THE MACHINE: pull the ledger and roll it into the whole intelligence picture
+// (crowding, behavior, the objective, the reward, and the setup base rates). One
+// place so the live read and the scheduled build can never diverge.
+async function computeFromDb({ days = 30, limit = 20000 } = {}) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const { data } = await supabase.from('decisions')
+    .select('user_id, type, ticker, thesis, source, pct_of_book, today_change_pct, market_regime, outcome_status, outcome_pnl_pct, outcome_hold_days, thesis_played_out, created_at')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false }).limit(limit);
+  const decisions = (data ?? []).map(rowToDecision).filter(Boolean);
+  return {
+    windowDays: days,
+    ...aggregateRetail(decisions),
+    behavior: aggregateBehavior(decisions),
+    quality: aggregateQuality(decisions),   // the objective: are users getting better
+    adviceLift: adviceLift(decisions),       // the reward: does our advice help
+    baseRates: setupBaseRates(decisions),    // the institutional edge: per-setup win rates
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function writeIntel(payload) {
   try {
-    const since = new Date(Date.now() - days * 86400000).toISOString();
-    const { data } = await supabase.from('decisions')
-      .select('user_id, type, ticker, thesis, source, pct_of_book, today_change_pct, outcome_status, outcome_pnl_pct, outcome_hold_days, thesis_played_out, created_at')
-      .gte('created_at', since)
-      .order('created_at', { ascending: false }).limit(limit);
-    const decisions = (data ?? []).map(rowToDecision).filter(Boolean);
-    return {
-      windowDays: days,
-      ...aggregateRetail(decisions),
-      behavior: aggregateBehavior(decisions),
-      quality: aggregateQuality(decisions),   // the objective: are users getting better
-      adviceLift: adviceLift(decisions),       // the reward: does our advice help
-    };
-  } catch (e) {
-    return { windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [], behavior: { totalUsers: 0, patterns: [] }, quality: { users: 0, scored: 0, avgIndex: null }, adviceLift: { advised: { n: 0, winRate: null }, selfDirected: { n: 0, winRate: null }, lift: null }, error: 'unavailable' };
+    const { data: existing } = await supabase.from('ai_cache').select('id').eq('cache_key', INTEL_KEY).maybeSingle();
+    const row = { result: JSON.stringify(payload), created_at: payload.generatedAt };
+    if (existing) await supabase.from('ai_cache').update(row).eq('id', existing.id);
+    else await supabase.from('ai_cache').insert({ cache_key: INTEL_KEY, ...row });
+  } catch { /* cache is best-effort */ }
+}
+
+/**
+ * The nightly job: recompute the whole intelligence picture and cache it. The
+ * jobs runner calls this so reads are instant and the data is never older than a
+ * day. Returns the payload.
+ */
+export async function buildDecisionIntelligence() {
+  const payload = await computeFromDb({ days: 30 });
+  await writeIntel(payload);
+  return payload;
+}
+
+/**
+ * The founder read. Cache-first (serves the last build for up to 6h), recomputes
+ * and warms the cache on a miss, so the first visit after a deploy is correct and
+ * every visit after is instant. Never throws.
+ */
+export async function getAggregate({ days = 30 } = {}) {
+  try {
+    const { data: cached } = await supabase.from('ai_cache')
+      .select('result, created_at').eq('cache_key', INTEL_KEY).maybeSingle();
+    if (cached?.result && cached?.created_at && (Date.now() - new Date(cached.created_at).getTime()) < INTEL_TTL_MS) {
+      try { return { ...JSON.parse(cached.result), cached: true }; } catch { /* recompute below */ }
+    }
+    const payload = await computeFromDb({ days });
+    writeIntel(payload).catch(() => {});
+    return payload;
+  } catch {
+    return EMPTY_INTEL(days);
   }
 }

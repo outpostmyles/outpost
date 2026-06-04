@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
-  decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision,
+  decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -235,6 +235,35 @@ test('pctOfBook for a close adds the sold position back to the book', () => {
 test('pctOfBookForDecision is null-safe on junk', () => {
   assert.strictEqual(pctOfBookForDecision(null, null, null), null);
   assert.strictEqual(pctOfBookForDecision({ ticker: 'AAPL' }, [], {}), null); // no price
+});
+
+// ── BASE RATES BY SETUP (the institutional edge) ─────────────────────────────
+test('setupBaseRates computes a win rate per setup bucket', () => {
+  const noThesisLosers = Array.from({ length: 5 }, () => ({ type: 'open', outcomeStatus: 'loss' }));
+  const thesisWinners = Array.from({ length: 5 }, () => ({ type: 'open', thesis: 'reasoned', outcomeStatus: 'win' }));
+  const r = setupBaseRates([...noThesisLosers, ...thesisWinners]);
+  const noThesis = r.buckets.find(b => b.setup === 'no thesis');
+  const hasThesis = r.buckets.find(b => b.setup === 'has thesis');
+  assert.equal(noThesis.winRate, 0);
+  assert.equal(hasThesis.winRate, 100);
+  assert.equal(r.overall.winRate, 50); // 5 wins of 10 resolved
+  // The worst bucket leads.
+  assert.equal(r.buckets[0].setup, 'no thesis');
+});
+
+test('setupBaseRates withholds a win rate below the minimum sample', () => {
+  const r = setupBaseRates([
+    { type: 'open', thesis: 'x', outcomeStatus: 'win' },
+    { type: 'open', thesis: 'x', outcomeStatus: 'loss' },
+  ]);
+  // Only 2 resolved buys, under the default minSample of 5.
+  assert.strictEqual(r.overall.winRate, null);
+});
+
+test('setupBaseRates is safe on junk', () => {
+  const r = setupBaseRates(null);
+  assert.strictEqual(r.overall.winRate, null);
+  assert.deepEqual(r.buckets, []);
 });
 
 let pass = 0, fail = 0;

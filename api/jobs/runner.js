@@ -2,6 +2,7 @@ import '../config.js';
 import { runBargainScan } from '../functions/bargainRadar.js';
 import { runDailyScreeners } from '../functions/screeners.js';
 import { getRadar } from '../functions/sectorRadar.js';
+import { buildDecisionIntelligence } from '../services/decisionLedger.js';
 import { refreshAllThesisWatches } from '../services/thesisWatch.js';
 import { generateAllExplainers } from '../functions/portfolioExplainer.js';
 import { generateAllDigests } from '../services/proactiveDigest.js';
@@ -271,6 +272,12 @@ scheduleAt(18, 30, async () => {
 }, 'Screener refresh');
 scheduleAt(0, 1, resetCredits, 'Credit resets');
 scheduleAt(0, 0, resetDailyCounters, 'Analytics daily reset');
+// The decision-intelligence machine: roll the whole ledger into the cached
+// aggregate overnight (after the day's trades have resolved), so the founder view
+// and any pre-trade base-rate checks read fresh, precomputed intelligence.
+scheduleAt(2, 0, async () => {
+  try { await buildDecisionIntelligence(); } catch (err) { console.error('[Jobs] Decision intelligence build failed:', err.message); }
+}, 'Decision intelligence');
 resetCredits();
 
 // ─── Price alert monitor ────────────────────────────────────────────────
