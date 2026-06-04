@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { api } from '../../lib/api.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, DisclaimerBadge } from '../shared/UI.jsx';
@@ -49,6 +49,83 @@ function Message({ msg, isLast, onSaveToJournal }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// A confirm card for an agent-PROPOSED change to a position the user holds. The
+// agent only ever drafts; nothing is written until the user reviews this and taps
+// Apply. The fields are editable first, so the user always commits the final word.
+function ProposalCard({ proposal, onApply }) {
+  const has = proposal.fields || {};
+  const [thesis, setThesis] = useState(has.entryThesis ?? '');
+  const [stop, setStop] = useState(has.stopLoss != null ? String(has.stopLoss) : '');
+  const [target, setTarget] = useState(has.priceTarget != null ? String(has.priceTarget) : '');
+  const [busy, setBusy] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+  if (applied) {
+    return (
+      <div style={{ margin: '0 0 12px 35px', maxWidth: '80%', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '8px 11px', fontSize: 11, color: 'var(--green)' }}>
+        Saved to {proposal.ticker}. Review it any time in the Portfolio tab.
+      </div>
+    );
+  }
+
+  const labelStyle = { fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', color: 'var(--faint)', display: 'block', marginBottom: 3 };
+  const inputStyle = { width: '100%', fontSize: 12, padding: '6px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' };
+
+  async function apply() {
+    if (busy) return;
+    setBusy(true);
+    const body = {};
+    if (has.entryThesis !== undefined) body.entryThesis = thesis.trim();
+    if (has.stopLoss !== undefined) body.stopLoss = stop.trim() === '' ? null : parseFloat(stop);
+    if (has.priceTarget !== undefined) body.priceTarget = target.trim() === '' ? null : parseFloat(target);
+    try { await onApply(proposal, body); setApplied(true); }
+    catch { setBusy(false); }
+  }
+
+  return (
+    <div style={{ margin: '0 0 12px 35px', maxWidth: '80%', background: 'var(--raised)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, padding: '11px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 9 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--blue)', background: 'rgba(59,130,246,0.12)', padding: '2px 6px', borderRadius: 4 }}>DRAFT</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Update {proposal.ticker}</span>
+        {proposal.livePrice != null && <span style={{ fontSize: 10, color: 'var(--faint)' }}>now ${proposal.livePrice}</span>}
+      </div>
+
+      {has.entryThesis !== undefined && (
+        <div style={{ marginBottom: 8 }}>
+          <label style={labelStyle}>THESIS</label>
+          <textarea value={thesis} onChange={e => setThesis(e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+        </div>
+      )}
+      {(has.stopLoss !== undefined || has.priceTarget !== undefined) && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          {has.stopLoss !== undefined && (
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>STOP LOSS</label>
+              <input value={stop} onChange={e => setStop(e.target.value)} inputMode="decimal" style={inputStyle} />
+            </div>
+          )}
+          {has.priceTarget !== undefined && (
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>TAKE PROFIT</label>
+              <input value={target} onChange={e => setTarget(e.target.value)} inputMode="decimal" style={inputStyle} />
+            </div>
+          )}
+        </div>
+      )}
+      {proposal.rationale && (
+        <p style={{ fontSize: 10, color: 'var(--faint)', fontStyle: 'italic', margin: '0 0 9px', lineHeight: 1.5 }}>{proposal.rationale}</p>
+      )}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button onClick={() => setDismissed(true)} disabled={busy} className="btn btn-muted" style={{ fontSize: 11, padding: '5px 12px' }}>Dismiss</button>
+        <button onClick={apply} disabled={busy} className="btn btn-blue" style={{ fontSize: 11, padding: '5px 14px', opacity: busy ? 0.6 : 1 }}>{busy ? 'Saving...' : 'Apply'}</button>
+      </div>
+      <p style={{ fontSize: 9, color: 'var(--faint)', margin: '8px 0 0', textAlign: 'center' }}>Nothing is saved until you tap Apply. You can edit the fields first.</p>
     </div>
   );
 }
@@ -344,6 +421,9 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
             toolWarning: data.toolsUsed?.failures > 0
               ? `Some data lookups failed (${data.toolsUsed.failures} of ${data.toolsUsed.failures + data.toolsUsed.successes})`
               : undefined,
+            // Drafts the agent proposed (thesis/stop/target) ride in the done
+            // event; they render as confirm cards under this message.
+            proposals: data.proposals?.length ? data.proposals : undefined,
           } : msg
         ));
         // Show subtle pacing notice when near session limit
@@ -368,6 +448,15 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
         inputRef.current?.focus();
       },
     });
+  }
+
+  // Apply an agent-proposed change. The agent never wrote anything; this is the
+  // user-initiated commit, through the same owner-scoped endpoint the portfolio
+  // editor uses. Throws on failure so the card can re-enable for a retry.
+  async function applyProposal(proposal, body) {
+    if (proposal.kind !== 'position_update') throw new Error('Unknown proposal type');
+    await api.portfolio.editPosition(proposal.positionId, body);
+    showToast(`Saved to ${proposal.ticker}`, 'success');
   }
 
   async function findOpportunity() {
@@ -471,16 +560,20 @@ export default function AgentTab({ user, showToast, onOpenerWaiting }) {
         ) : (
           <>
             {messages.map((msg, i) => (
-              <Message
-                key={msg.id || i}
-                msg={msg}
-                isLast={i === messages.length - 1}
-                onSaveToJournal={(m) => setJournalSave({
-                  content: m.content,
-                  ticker: detectTicker(m.content),
-                  sourceRef: m.id ? String(m.id) : null,
-                })}
-              />
+              <Fragment key={msg.id || i}>
+                <Message
+                  msg={msg}
+                  isLast={i === messages.length - 1}
+                  onSaveToJournal={(m) => setJournalSave({
+                    content: m.content,
+                    ticker: detectTicker(m.content),
+                    sourceRef: m.id ? String(m.id) : null,
+                  })}
+                />
+                {msg.proposals?.map((p, j) => (
+                  <ProposalCard key={`${msg.id || i}-prop-${j}`} proposal={p} onApply={applyProposal} />
+                ))}
+              </Fragment>
             ))}
             {sending && !messages.some(m => m.streaming && m.content) && (
               <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 12 }}>

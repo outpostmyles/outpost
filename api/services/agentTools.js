@@ -19,6 +19,7 @@ import { calcRSI, calcATR, calcSMA } from './indicators.js';
 import { assessPreTradeRisk } from './preTradeRisk.js';
 import { getCachedIntelligence, getUserDecisions } from './decisionLedger.js';
 import { baseRateGuidance, setupBaseRates } from '../../src/lib/decisionLedger.js';
+import { buildPositionProposal, PROPOSAL_REJECTIONS } from '../../src/lib/positionProposal.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -304,6 +305,21 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    name: 'propose_position_update',
+    description: 'Draft a change to a position the user ALREADY HOLDS: its thesis (why they own it), its stop loss, and/or its take profit (price target). This NEVER saves anything. It shows the user a confirm card with your draft, and the change is written only if THEY tap Apply. Use this ONLY when the user explicitly asks you to set, save, write, update, or record one of these (for example "set a thesis for my NVDA", "put a stop on AMD at 150", "what should my target be, save it"). Do NOT call it unprompted, do NOT call it for stocks they do not hold, and do NOT call it for shares or cost basis (those come from their broker). After calling it, tell the user you drafted it for them to confirm and never say you saved or set it. Outpost is long only: a stop must be below the current price and a target above it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ticker: { type: 'string', description: 'Ticker of a position the user holds' },
+        thesis: { type: 'string', description: 'Optional. The thesis text to set (why they own it, what would change their mind). Draft it in the user\'s voice from the conversation.' },
+        stop_loss: { type: 'number', description: 'Optional. Proposed stop loss price. Must be below the current price.' },
+        take_profit: { type: 'number', description: 'Optional. Proposed take profit / price target. Must be above the current price.' },
+        rationale: { type: 'string', description: 'Optional. One short line on why these levels, shown on the confirm card.' },
+      },
+      required: ['ticker'],
+    },
+  },
 ];
 
 /**
@@ -375,11 +391,51 @@ export async function executeTool(toolName, toolInput, context = {}) {
         }
         return { entries };
       }
+      case 'propose_position_update':
+        return context.userId
+          ? await proposePositionUpdate({ ...toolInput, userId: context.userId, sink: context.proposals })
+          : { error: 'User context not available' };
       default: return { error: `Unknown tool: ${toolName}` };
     }
   } catch (err) {
     return { error: `Tool failed: ${err.message}` };
   }
+}
+
+// Draft a change to a HELD position's plan fields (thesis / stop / target). This
+// never writes. It checks the user actually holds the ticker, validates the
+// levels against the live price (long only) via the pure builder, pushes the
+// normalized proposal into the request's proposal sink (the route streams that to
+// the UI as a confirm card), and returns a model-facing acknowledgement that is
+// explicit that NOTHING is saved until the user taps Apply.
+async function proposePositionUpdate({ ticker, thesis, stop_loss, take_profit, rationale, userId, sink }) {
+  if (!ticker || typeof ticker !== 'string') return { error: 'No ticker provided' };
+  const sym = ticker.toUpperCase().trim();
+  const { data: position } = await supabase.from('positions')
+    .select('id, ticker, entry_thesis, price_target, stop_loss')
+    .eq('user_id', userId).eq('ticker', sym).maybeSingle();
+  if (!position) {
+    return { ok: false, proposed: false, note: `${PROPOSAL_REJECTIONS.not_held} (${sym} is not in their portfolio.)` };
+  }
+  const price = getPrice(sym)?.price ?? null;
+  const result = buildPositionProposal({ thesis, stop_loss, take_profit, rationale }, { position, price });
+  if (!result.ok) {
+    return { ok: false, proposed: false, note: PROPOSAL_REJECTIONS[result.error] || 'That change could not be drafted.' };
+  }
+  if (Array.isArray(sink)) sink.push(result.proposal); // hand the draft to the route to surface a confirm card
+  const f = result.proposal.fields;
+  const parts = [];
+  if (f.entryThesis != null) parts.push('a thesis');
+  if (f.stopLoss != null) parts.push(`a stop at $${f.stopLoss}`);
+  if (f.priceTarget != null) parts.push(`a target at $${f.priceTarget}`);
+  const drafted = parts.join(', ');
+  return {
+    ok: true,
+    proposed: true,
+    ticker: sym,
+    drafted,
+    note: `Draft created for ${sym} (${drafted}). A confirm card is now showing for the user. Tell them you drafted it, summarize it in one line, and ask them to review and tap Apply. Do NOT claim it is saved or set; nothing is written until they confirm.`,
+  };
 }
 
 export async function lookupStock({ ticker }) {

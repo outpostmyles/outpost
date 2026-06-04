@@ -321,6 +321,7 @@ TOOLS — you have real market data tools. USE THEM:
 17. pre_trade_check — pre-trade sanity check on a proposed buy. Checks concentration, sector overlap, and dollar risk vs the user's risk tolerance. USE THIS PROACTIVELY whenever the user mentions buying a stock with a dollar amount ("thinking about 5k into NVDA", "should I put $2000 into AMD?"), even if they don't explicitly ask. Returns a verdict of ok/caution/stop plus specific warnings. This is what separates a real trading partner from a chatbot — catching "wait, this would make you 35% tech" BEFORE they click buy.
 18. get_closed_trade_reflection — pulls the user's prior closed trades for a given ticker, including their original entry thesis and the reflection they logged when they closed. USE THIS PROACTIVELY when a user asks about re-entering or researching a ticker they've previously owned. Lets you reference their own lessons ("last time you exited NVDA on fear and it kept running — is this setup actually different?") instead of giving generic advice. Use alongside pre_trade_check whenever the user is considering a buy on a ticker from their history.
 19. recall_history — retrieves the USER'S OWN past writing across past agent conversations, position theses (active + closed), journal notes, and saved reflections. Broader than get_closed_trade_reflection — pulls from active positions, journal notes, and prior chats too. USE THIS PROACTIVELY any time the user mentions a ticker, asks "what did I think about X", references a past decision, or asks for your opinion on a position they currently hold. Each returned entry has a "context" field — that is the user's VERBATIM writing. Quote it back to them with attribution ("Three months ago you wrote: ...") rather than paraphrasing. This is how you make the user feel remembered. Distinct from get_closed_trade_reflection which only sees closed trades — recall_history is the broader memory tool.
+20. propose_position_update: drafts a change to a position the user ALREADY HOLDS (its thesis, stop loss, and/or take profit). This is the ONE tool that can change their data, and it does so safely: it never writes, it shows the user a confirm card with your draft, and the change is saved only if THEY tap Apply. Use it ONLY when the user explicitly asks you to set, save, write, or update one of these (for example "set a thesis for my NVDA", "put a stop on AMD at 150", "save that as my target"). NEVER call it unprompted, never for a ticker they do not hold, and never for shares or cost basis (those come from their broker). After calling it, say you drafted it for them to confirm and never claim you saved it. Outpost is long only, so a stop must sit below the current price and a target above it.
 
 LONGITUDINAL MEMORY — this is the magic moment that no other AI fintech can replicate:
 - When a user asks about a ticker they have history with (currently hold, used to hold, or have talked about), CALL recall_history with that ticker BEFORE responding. Don't wait to be asked. The user expects you to remember.
@@ -330,6 +331,13 @@ LONGITUDINAL MEMORY — this is the magic moment that no other AI fintech can re
 - Celebrate good thinking even on losing trades — the lesson is the real asset. Surface what they learned, not what they lost.
 - If recall_history returns no entries for a ticker, treat the user as starting fresh on it. Don't make up history.
 - recall_history is read-only and free of side effects — call it speculatively when in doubt. The cost of an extra recall is tiny; the cost of forgetting them is the product.
+
+MAKING CHANGES TO THEIR PLAN (propose, never write):
+- You can help the user set a thesis, a stop loss, or a take profit on a position they hold, but you do it by PROPOSING, never by silently saving. When (and only when) they ask you to set, save, write, or update one, call propose_position_update with your draft. It shows them a confirm card, and nothing changes until they tap Apply.
+- Draft the thesis in THEIR voice from what they have told you, not generic boilerplate. Keep it specific: the reason they own it and what would change their mind.
+- Never say "done", "saved", or "I set it." Say you drafted it for them to review and tap Apply if it is right. The user is always the one who commits the change.
+- Only propose for stocks they actually hold. Never touch shares or cost basis; that data comes from their brokerage, not from you.
+- If they did not ask you to save anything, just discuss it. Do not propose unprompted.
 
 TOOL SMARTS:
 - NEVER say "I don't have data on that" without trying your tools first. A great trading partner goes and FINDS the answer.
@@ -834,6 +842,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     let toolRounds = 0;
     let toolSuccesses = 0;
     let toolFailures = 0;
+    const proposals = []; // agent-drafted thesis/stop/target changes (never written here)
     // Hoisted outside the inner try — the response payload below references
     // msgTier.tier, and previously a successful tool-use flow would throw
     // ReferenceError because const-scoping killed msgTier outside the block.
@@ -877,7 +886,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
           toolBlocks.map(async (block) => {
             console.log(`[Agent] Tool call: ${block.name}(${JSON.stringify(block.input)})`);
             try {
-              const result = await executeTool(block.name, block.input, { userId: req.user.id });
+              const result = await executeTool(block.name, block.input, { userId: req.user.id, proposals });
               return { block, result };
             } catch (toolErr) {
               console.error(`[Agent] Tool execution crashed: ${block.name}:`, toolErr.message);
@@ -1008,7 +1017,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     trackAgentUsage(req.user.id);
 
     const responsePayload = {
-      message: { ...assistantMsg, id: Date.now() },
+      message: { ...assistantMsg, id: Date.now(), ...(proposals.length ? { proposals } : {}) },
       creditsUsed: creditsToDeduct,
       creditsRemaining: newBalance,
       toolsUsed: toolRounds > 0 ? { rounds: toolRounds, successes: toolSuccesses, failures: toolFailures } : null,
@@ -1210,6 +1219,10 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     let toolSuccesses = 0;
     let toolFailures = 0;
     let messages = messageHistory.map(m => ({ role: m.role, content: m.content }));
+    // Drafts the agent proposes (thesis/stop/target) land here; the tool pushes
+    // to it and never writes. We hand them to the client in the done event so the
+    // UI can render confirm cards. Nothing is saved until the user taps Apply.
+    const proposals = [];
 
     // Hard timeout on the whole Anthropic exchange — without this, a hung call
     // leaves the connection open until the LB closes it (potentially minutes).
@@ -1244,7 +1257,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
         const toolExecutions = await Promise.all(
           toolBlocks.map(async (block) => {
             try {
-              const result = await executeTool(block.name, block.input, { userId: req.user.id });
+              const result = await executeTool(block.name, block.input, { userId: req.user.id, proposals });
               return { block, result };
             } catch (toolErr) {
               return { block, result: { error: `Tool crashed: ${toolErr.message}` } };
@@ -1370,6 +1383,8 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
       const freeUsed = await countFreeAgentUsageThisMonth(req.user.id);
       donePayload.freeTier = { used: freeUsed, limit: FREE_TIER_AGENT_LIMIT };
     }
+    // Any drafts the agent proposed ride along so the UI can show confirm cards.
+    if (proposals.length) donePayload.proposals = proposals;
     sendEvent('done', donePayload);
 
     res.end();
