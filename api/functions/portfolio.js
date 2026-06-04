@@ -18,6 +18,7 @@ import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
+import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
@@ -701,6 +702,8 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
         try { cash = await adjustCashBalance(req.user.id, -cost); }
         catch (e) { console.warn(`[req:${req.requestId}] [Portfolio] cash debit on add-to-position failed:`, e.message); }
       }
+      // Ledger: an add-to-position is a decision, captured with full context.
+      recordDecision(req.user.id, { type: 'add', ticker, shares, price: avgCost, thesis: entryThesis || held.entry_thesis || null, source }).catch(() => {});
       return res.json({ success: true, position, merged: true, addedShares: shares, cash });
     }
 
@@ -753,6 +756,8 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
         console.warn(`[req:${req.requestId}] [Portfolio] cash debit on buy failed:`, e.message);
       }
     }
+    // Ledger: opening a new position is a decision, captured with full context.
+    recordDecision(req.user.id, { type: 'open', ticker, shares, price: avgCost, thesis: entryThesis || null, source }).catch(() => {});
     res.json({ success: true, position, cash });
   } catch (err) {
     console.error('[Portfolio] /positions POST failed:', err.message);
@@ -1187,6 +1192,12 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       console.warn(`[req:${req.requestId}] [Portfolio] cash credit on close failed:`, e.message);
     }
 
+    // Ledger: record the close with its outcome, and stamp that outcome back
+    // onto the original buy decisions for this ticker so they get graded by how
+    // they actually turned out (closing the loop).
+    const outStatus = pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even';
+    recordDecision(req.user.id, { type: 'close', ticker: pos.ticker, shares: pos.shares, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: outStatus, outcomePnl: pnl, outcomePnlPct: pnlPercent, outcomeHoldDays: holdDays, thesisPlayedOut }).catch(() => {});
+    resolveOpenDecisions(req.user.id, pos.ticker, { pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
     res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash });
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);
