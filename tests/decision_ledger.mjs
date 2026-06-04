@@ -4,7 +4,7 @@
 // hard and proven without a database.
 import assert from 'node:assert/strict';
 import {
-  gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail,
+  gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -151,6 +151,23 @@ test('aggregateRetail is safe on junk', () => {
   const agg = aggregateRetail(null);
   assert.equal(agg.totalDecisions, 0);
   assert.deepEqual(agg.crowded, []);
+});
+
+// ── aggregateBehavior (the population-level founder read) ─────────────────────
+test('aggregateBehavior reports how prevalent each mistake is across users', () => {
+  // Two users, both chase green days (each has 4 buys, all chasing).
+  const chaser = (u) => Array.from({ length: 4 }, (_, i) => ({ type: 'open', userId: u, ticker: `T${i}`, todayChangePct: 20 }));
+  const agg = aggregateBehavior([...chaser('u1'), ...chaser('u2')]);
+  assert.equal(agg.totalUsers, 2);
+  const chasing = agg.patterns.find(p => p.key === 'chasing');
+  assert.ok(chasing);
+  assert.equal(chasing.users, 2);
+  assert.equal(chasing.pctOfUsers, 100);
+});
+
+test('aggregateBehavior is safe on junk and empty', () => {
+  assert.deepEqual(aggregateBehavior(null), { totalUsers: 0, patterns: [] });
+  assert.deepEqual(aggregateBehavior([{ type: 'open' }]), { totalUsers: 0, patterns: [] }); // no userId => no users
 });
 
 let pass = 0, fail = 0;

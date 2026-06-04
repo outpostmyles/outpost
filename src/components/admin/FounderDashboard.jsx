@@ -12,6 +12,10 @@ export default function FounderDashboard({ onBack }) {
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // The decision-ledger aggregate: our private, compiled view of what the whole
+  // user base is doing. Loaded separately so a failure here never blocks the
+  // rest of the dashboard, and so it stays empty-safe before any decisions land.
+  const [intel, setIntel] = useState(null);
 
   async function load() {
     try {
@@ -27,9 +31,11 @@ export default function FounderDashboard({ onBack }) {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => { api.decisions.aggregate().then(setIntel).catch(() => setIntel(null)); }, []);
 
   function refresh() {
     setRefreshing(true);
+    api.decisions.aggregate().then(setIntel).catch(() => {});
     load();
   }
 
@@ -60,6 +66,55 @@ export default function FounderDashboard({ onBack }) {
   return (
     <div className="scrollable" style={{ flex: 1 }}>
       <Header onBack={onBack} onRefresh={refresh} refreshing={refreshing} generatedAt={generatedAt} />
+
+      {/* DECISION INTELLIGENCE: our private, compiled view of what the user base
+          is doing. This is the data asset, for us to learn from, never shown to
+          users. They feel it only as an app that gets smarter. */}
+      <div style={{ padding: '12px 16px 4px' }}>
+        <SectionTitle>Decision Intelligence</SectionTitle>
+        {!intel ? (
+          <Card><p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Loading, or no decisions captured yet. Rows land here as users trade.</p></Card>
+        ) : (
+          <>
+            <StatGrid>
+              <Stat label="Decisions" value={intel.totalDecisions ?? 0} sub={`${intel.windowDays}d window`} />
+              <Stat label="Tickers seen" value={intel.tickersTracked ?? 0} />
+              <Stat label="Users active" value={intel.behavior?.totalUsers ?? 0} />
+              <Stat label="Crowded names" value={intel.crowded?.length ?? 0} />
+            </StatGrid>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>What our users do wrong</SectionTitle>
+            <Card>
+              {(intel.behavior?.patterns ?? []).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>No patterns yet. Needs more decisions per user.</p>
+                : intel.behavior.patterns.map(p => (
+                    <Row key={p.key} label={p.label} value={`${p.pctOfUsers}% of users (${p.users})`} accent={p.pctOfUsers >= 40 ? 'var(--amber)' : null} />
+                  ))}
+            </Card>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>Crowded right now</SectionTitle>
+            <Card>
+              {(intel.crowded ?? []).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>No crowding yet.</p>
+                : intel.crowded.slice(0, 10).map(c => (
+                    <Row key={c.ticker} label={c.ticker} value={`${c.uniqueUsers} users, ${c.opens} buys`} />
+                  ))}
+            </Card>
+
+            <div style={{ height: 10 }} />
+            <SectionTitle>Where retail gets hurt</SectionTitle>
+            <Card>
+              {(intel.retailTraps ?? []).length === 0
+                ? <p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Not enough resolved trades yet to call a trap.</p>
+                : intel.retailTraps.slice(0, 10).map(t => (
+                    <Row key={t.ticker} label={t.ticker} value={`${t.retailWinRate}% win rate (${t.resolved} closed)`} accent={'var(--red)'} />
+                  ))}
+            </Card>
+          </>
+        )}
+      </div>
 
       {/* Top stat grid */}
       <div style={{ padding: '12px 16px 4px' }}>

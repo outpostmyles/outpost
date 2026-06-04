@@ -207,3 +207,34 @@ export function aggregateRetail(decisions, { minSample = 3, topN = 20 } = {}) {
 
   return { totalDecisions: list.length, tickersTracked: rows.length, crowded, retailTraps };
 }
+
+// ── Aggregate behavior: what is the user BASE doing wrong, at scale ───────────
+// Groups decisions by user, runs the per-user pattern detector on each, and
+// reports how prevalent each self-sabotage pattern is across the population.
+// This is the founder's most actionable read: if 60% of users chase green days,
+// that is a guardrail to build, not a coincidence. Privacy-safe (only counts and
+// pattern keys, no per-user identity leaves this function).
+export function aggregateBehavior(decisions) {
+  const list = arr(decisions);
+  const byUser = new Map();
+  for (const d of list) {
+    if (d.userId == null) continue;
+    if (!byUser.has(d.userId)) byUser.set(d.userId, []);
+    byUser.get(d.userId).push(d);
+  }
+  const counts = new Map();
+  for (const ds of byUser.values()) {
+    const seen = new Set();
+    for (const p of detectBehaviorPatterns(ds)) {
+      if (seen.has(p.key)) continue;
+      seen.add(p.key);
+      if (!counts.has(p.key)) counts.set(p.key, { key: p.key, label: p.label, users: 0 });
+      counts.get(p.key).users++;
+    }
+  }
+  const totalUsers = byUser.size;
+  const patterns = [...counts.values()]
+    .map(c => ({ ...c, pctOfUsers: totalUsers ? Math.round((c.users / totalUsers) * 100) : 0 }))
+    .sort((a, b) => b.users - a.users);
+  return { totalUsers, patterns };
+}

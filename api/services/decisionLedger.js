@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior } from '../../src/lib/decisionLedger.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -160,12 +160,12 @@ export async function getAggregate({ days = 30, limit = 5000 } = {}) {
   try {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data } = await supabase.from('decisions')
-      .select('user_id, type, ticker, outcome_status, created_at')
+      .select('user_id, type, ticker, thesis, pct_of_book, today_change_pct, outcome_status, outcome_hold_days, created_at')
       .gte('created_at', since)
       .order('created_at', { ascending: false }).limit(limit);
     const decisions = (data ?? []).map(rowToDecision).filter(Boolean);
-    return { windowDays: days, ...aggregateRetail(decisions) };
+    return { windowDays: days, ...aggregateRetail(decisions), behavior: aggregateBehavior(decisions) };
   } catch (e) {
-    return { windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [], error: 'unavailable' };
+    return { windowDays: days, totalDecisions: 0, tickersTracked: 0, crowded: [], retailTraps: [], behavior: { totalUsers: 0, patterns: [] }, error: 'unavailable' };
   }
 }
