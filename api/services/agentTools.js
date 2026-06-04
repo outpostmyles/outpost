@@ -1635,21 +1635,26 @@ async function preTradeCheck({ ticker, dollars_to_invest, stop_loss, userId }) {
     riskTolerance,
   });
 
-  // Spend the decision-intelligence base rates on THIS specific buy: how does
-  // this kind of trade (chasing a green day, going oversized, a known retail
-  // trap) actually work out, for retail and for this user. Additive and
-  // best-effort, it never breaks the risk check.
-  try {
-    const intel = await getCachedIntelligence();
-    const todayChg = getPrice(ticker)?.changePercent;
-    const resultingPct = (portfolioValue + dollars) > 0 ? (dollars / (portfolioValue + dollars)) * 100 : 0;
-    const personal = setupBaseRates(await getUserDecisions(userId, { limit: 500 }));
-    const guidance = baseRateGuidance(
-      { ticker, chasing: Number.isFinite(todayChg) && todayChg >= 10, oversized: resultingPct > 35 },
-      { population: intel?.baseRates, personal, retailTraps: intel?.retailTraps },
-    );
-    if (guidance.facts.length || guidance.verdict !== 'ok') return { ...risk, baseRates: guidance };
-  } catch { /* base rates are additive; never break the check */ }
+  // Decision-intelligence base rates (how this KIND of trade tends to work out
+  // for retail and for this user, plus the per-ticker retail-trap stats) are
+  // COMPILED, FOUNDER-ONLY data. We are still collecting it and the samples are
+  // tiny, so it must NOT surface in a user-facing answer yet. Gated OFF by
+  // default; flip config.surfaceRetailIntel on to add it back slowly once the
+  // data is concrete. The risk check above (concentration, sector, sizing) uses
+  // only the user's own current book, so it always runs.
+  if (config.surfaceRetailIntel) {
+    try {
+      const intel = await getCachedIntelligence();
+      const todayChg = getPrice(ticker)?.changePercent;
+      const resultingPct = (portfolioValue + dollars) > 0 ? (dollars / (portfolioValue + dollars)) * 100 : 0;
+      const personal = setupBaseRates(await getUserDecisions(userId, { limit: 500 }));
+      const guidance = baseRateGuidance(
+        { ticker, chasing: Number.isFinite(todayChg) && todayChg >= 10, oversized: resultingPct > 35 },
+        { population: intel?.baseRates, personal, retailTraps: intel?.retailTraps },
+      );
+      if (guidance.facts.length || guidance.verdict !== 'ok') return { ...risk, baseRates: guidance };
+    } catch { /* base rates are additive; never break the check */ }
+  }
 
   return risk;
 }

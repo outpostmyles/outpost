@@ -47,4 +47,11 @@ config.brokerage = {
     : false,
 };
 
+// Decision-intelligence base rates and retail-trap stats are COMPILED,
+// FOUNDER-ONLY data. They are still being collected and the per-ticker samples
+// are tiny (e.g. "25% win on 8 closed trades"), so they must NOT appear in
+// user-facing agent answers yet. OFF by default; set SURFACE_RETAIL_INTEL=true to
+// begin adding them back to responses once the data is concrete.
+config.surfaceRetailIntel = process.env.SURFACE_RETAIL_INTEL === 'true';
+
 console.log('✅ Environment validated');
