@@ -383,3 +383,21 @@ export function baseRateGuidance(setup, { population, personal, retailTraps } = 
     : (flags.includes('retail_trap') || flags.length >= 2 ? 'stop' : 'caution');
   return { verdict, flags, facts };
 }
+
+// ── AGENT MEMORY: the trader's real patterns, formatted for the prompt ────────
+// Turns the user's computed decision quality and self-sabotage patterns into a
+// short context block the agent carries into EVERY conversation, so "the AI that
+// remembers" is real: it coaches from this trader's actual recorded history, not
+// generic advice. Returns '' when there is nothing yet (so the agent never
+// invents a pattern that does not exist).
+export function formatUserPatterns({ quality, patterns } = {}) {
+  if (!quality || quality.index == null) return '';
+  const lines = [];
+  const trend = quality.trend && quality.trend !== 'flat' ? ` and ${quality.trend}` : '';
+  lines.push(`Decision quality ${quality.index} out of 100${trend}.`);
+  for (const p of (arr(patterns)).slice(0, 2)) {
+    lines.push(`Recurring habit: ${p.label} (${p.stat}).`);
+  }
+  return `\n\nTHIS TRADER'S REAL PATTERNS (from their own recorded decisions; coach from these specifically, never invent one that is not here):\n`
+    + lines.map(l => `- ${l}`).join('\n');
+}

@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns } from '../../src/lib/decisionLedger.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -231,6 +231,21 @@ export async function getCachedIntelligence() {
     const { data } = await supabase.from('ai_cache').select('result').eq('cache_key', INTEL_KEY).maybeSingle();
     return data?.result ? JSON.parse(data.result) : null;
   } catch { return null; }
+}
+
+/**
+ * A compact "this trader's real patterns" block for the agent's context (decision
+ * quality + top self-sabotage habits), or '' when there is no graded history.
+ * Fail-safe: the agent never breaks or invents a pattern that is not there.
+ */
+export async function getUserPatternBlock(userId) {
+  try {
+    const decisions = await getUserDecisions(userId, { limit: 500 });
+    return formatUserPatterns({
+      quality: decisionQualityIndex(decisions),
+      patterns: detectBehaviorPatterns(decisions),
+    });
+  } catch { return ''; }
 }
 
 /**

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
   decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, baseRateGuidance,
+  formatUserPatterns,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -305,6 +306,27 @@ test('baseRateGuidance is safe with no intelligence at all', () => {
   const g = baseRateGuidance({ ticker: 'AAPL', chasing: true }, {});
   assert.equal(g.verdict, 'ok'); // nothing to flag without data
   assert.deepEqual(g.facts, []);
+});
+
+// ── AGENT MEMORY formatting ──────────────────────────────────────────────────
+test('formatUserPatterns builds a coaching block from real history', () => {
+  const block = formatUserPatterns({
+    quality: { index: 58, trend: 'slipping' },
+    patterns: [
+      { label: 'Holding losers, cutting winners', stat: 'you hold losers ~40d vs winners ~7d' },
+      { label: 'Chasing green days', stat: '3 of your buys were up 10%+ that day' },
+    ],
+  });
+  assert.match(block, /Decision quality 58 out of 100 and slipping/);
+  assert.match(block, /Holding losers, cutting winners/);
+  assert.match(block, /Chasing green days/);
+  assert.match(block, /coach from these specifically/);
+});
+
+test('formatUserPatterns returns empty when there is no graded history', () => {
+  assert.equal(formatUserPatterns({ quality: { index: null }, patterns: [] }), '');
+  assert.equal(formatUserPatterns({}), '');
+  assert.equal(formatUserPatterns(), '');
 });
 
 let pass = 0, fail = 0;

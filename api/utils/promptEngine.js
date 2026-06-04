@@ -2,6 +2,7 @@ import { supabase } from '../db.js';
 import { getMarketData, getMoversData } from '../services/marketData.js';
 import { getPrices } from '../services/pricePool.js';
 import { getCashBalance } from '../services/cashBalance.js';
+import { getUserPatternBlock } from '../services/decisionLedger.js';
 import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
@@ -352,6 +353,12 @@ export async function buildAgentContext(userId, user) {
     }
   } catch {}
 
+  // The trader's real, recorded patterns (decision quality + self-sabotage), so
+  // the agent coaches from their actual history in every conversation. Empty
+  // until there is graded history; fail-safe.
+  let decisionPatterns = '';
+  try { decisionPatterns = await getUserPatternBlock(userId); } catch {}
+
   return {
     ...base,
     currentDate: dateStr,
@@ -368,6 +375,7 @@ export async function buildAgentContext(userId, user) {
     planAdherence: planAdherenceStr,
     performanceAttribution: attributionStr,
     northStar,
+    decisionPatterns,
   };
 }
 
