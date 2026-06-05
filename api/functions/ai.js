@@ -221,6 +221,93 @@ router.post('/welcome', requireAuth, rateLimit(5), dailyAiCeiling(), async (req,
   }
 });
 
+/**
+ * First read: the product's signature moment, given away free during onboarding.
+ * The user names a stock; we read it the way Outpost reads a book every morning:
+ * calm, specific, grounded in the live price, and tied to the user's own stated
+ * goal or fear (their onboarding anchors). The point is the FEELING of being read
+ * accurately, before any paywall.
+ *
+ *  - Free. No credit deduction, no plan gate. A one-time gift like /welcome.
+ *  - Does not require onboarding_complete (the user is mid-flow).
+ *  - Grounded: it may use the live price and the user's words ONLY. It must not
+ *    invent catalysts, news, or numbers. Better to be calm and general than wrong.
+ *  - Haiku, hard 8s cap, always returns SOMETHING (a static fallback on outage).
+ */
+router.post('/first-read', requireAuth, rateLimit(8), dailyAiCeiling(), async (req, res) => {
+  const ticker = sanitizeTicker(req.body?.ticker);
+  if (!ticker) return res.status(400).json({ error: 'Valid ticker required' });
+
+  let snap = null;
+  try { snap = await getSnapshot(ticker); } catch { /* price is optional */ }
+  const price = Number.isFinite(snap?.price) ? snap.price : null;
+  const changePct = Number.isFinite(snap?.changePercent) ? snap.changePercent : null;
+  const market = getMarketData();
+
+  // The user's own words from the 3 onboarding questions, so the read can land
+  // personal ("you said you got into this to...") instead of generic.
+  let anchors = [];
+  try {
+    const { data } = await supabase
+      .from('agent_memory')
+      .select('content')
+      .eq('user_id', req.user.id)
+      .eq('memory_type', 'onboarding_anchor')
+      .order('created_at', { ascending: true });
+    anchors = (data ?? []).map(row => {
+      const m = row.content?.match(/^Q\d+:\s*(.+?)\s*\|\s*A:\s*([\s\S]+)$/);
+      return m ? { question: m[1].trim(), answer: m[2].trim() } : null;
+    }).filter(Boolean);
+  } catch { /* anchors are optional */ }
+
+  const priceLine = price != null
+    ? `near $${price}${changePct != null ? `, ${changePct >= 0 ? 'up' : 'down'} ${Math.abs(changePct).toFixed(1)}% today` : ''}`
+    : 'on the board';
+  const fallback = `${ticker} is ${priceLine}. Add it and I will watch it with you every day, and remind you what you were thinking the next time it moves hard.`;
+
+  const system = [
+    'You are Outpost, a calm, sharp trading partner for a retail investor who just signed up.',
+    'Write their FIRST read on a single stock: 2 to 3 short sentences, plain language, no jargon, no hype, no emojis.',
+    'You may use ONLY two things: the live price line you are given, and the user\'s own words from onboarding.',
+    'Do NOT invent catalysts, news, earnings dates, analyst views, or any number you were not given. If you have no real reason, speak to temperament and process, not events.',
+    'Never tell them to buy, sell, or hold. You are showing them how you think, not giving a signal.',
+    'If their own words are provided, connect the read to what they told you (their goal or their fear), so it lands personal.',
+    'End on what you will do for them going forward (watch it, remember their reasoning, flag what actually matters). Confident, warm, never salesy.',
+  ].join(' ');
+
+  const anchorText = anchors.length
+    ? anchors.map(a => `- They were asked "${a.question}" and said: "${a.answer.slice(0, 240)}"`).join('\n')
+    : '(no onboarding answers on file; keep it about temperament and process)';
+  const userMsg = [
+    `Stock: ${ticker}`,
+    `Live price: ${priceLine}`,
+    `Market backdrop: ${market?.regime || 'neutral'} tape.`,
+    `The user's own words:\n${anchorText}`,
+    'Write their first read now.',
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const msg = await anthropic.messages.create({
+      model: MODEL_HAIKU,
+      max_tokens: 200,
+      system,
+      messages: [{ role: 'user', content: userMsg }],
+    }, { signal: controller.signal });
+    recordClaudeUsage({ feature: 'onboarding_first_read', model: msg.model, usage: msg.usage, userId: req.user.id });
+    trackAICall(true);
+    const read = msg.content?.[0]?.text?.trim() || fallback;
+    res.json({ ticker, price, changePct, read, disclaimer: DISCLAIMER });
+  } catch (err) {
+    trackAICall(false);
+    console.warn('[AI/first-read] Falling back to static read:', err.message);
+    res.json({ ticker, price, changePct, read: fallback, disclaimer: DISCLAIMER });
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 // Market summary — shared, cached up to 1 hour but invalidated when data changes significantly
 router.get('/summary', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {

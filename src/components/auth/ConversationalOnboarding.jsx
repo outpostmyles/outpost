@@ -64,6 +64,15 @@ export default function ConversationalOnboarding() {
   const [welcomeLoading, setWelcomeLoading] = useState(false);
   const [welcomeRated, setWelcomeRated] = useState(false);
 
+  // The "watch it work" finale: a real, free read on a stock the user names. This
+  // is the product's signature moment, the FEELING of being read accurately, given
+  // away before any paywall.
+  const [frTicker, setFrTicker] = useState('');
+  const [frResult, setFrResult] = useState(null); // { ticker, read, price, changePct }
+  const [frLoading, setFrLoading] = useState(false);
+  const [frError, setFrError] = useState('');
+  const [frRated, setFrRated] = useState(false);
+
   // Pull questions from the server on mount. Server is source of truth so we
   // can rotate copy without a frontend redeploy.
   useEffect(() => {
@@ -165,6 +174,30 @@ export default function ConversationalOnboarding() {
         variant: welcomeVariant,
         responsePreview: (welcomeMsg || '').slice(0, 200),
       });
+    } catch {}
+  }
+
+  // Run the first read on a named ticker. The endpoint is free and always returns
+  // SOMETHING (a static fallback on an AI outage), so this rarely errors.
+  async function runFirstRead(rawTicker) {
+    const t = String(rawTicker ?? frTicker).toUpperCase().replace(/[^A-Z.]/g, '').slice(0, 6);
+    if (!t) { setFrError('Type a ticker, like NVDA.'); return; }
+    setFrError(''); setFrLoading(true); setFrResult(null); setFrRated(false);
+    try {
+      const r = await api.ai.firstRead({ ticker: t });
+      setFrResult({ ticker: t, read: r?.read || '', price: r?.price ?? null, changePct: r?.changePct ?? null });
+    } catch {
+      setFrError('Could not read that one. Try another ticker.');
+    } finally {
+      setFrLoading(false);
+    }
+  }
+
+  async function rateFirstRead(rating) {
+    if (frRated) return;
+    setFrRated(true);
+    try {
+      await api.ai.feedback({ feature: 'first_read', rating, responsePreview: (frResult?.read || '').slice(0, 200) });
     } catch {}
   }
 
@@ -363,6 +396,98 @@ export default function ConversationalOnboarding() {
     );
   }
 
+  // ─── Phase: first read (the "watch it work" finale) ─────────────────────
+  if (phase === 'firstread') {
+    const SUGGESTED = ['NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD'];
+    return (
+      <Shell>
+        <ProgressBar />
+        <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 8 }}>The last 20 seconds</p>
+        <h1 style={{ fontSize: 21, fontWeight: 700, color: 'var(--text)', marginBottom: 8, letterSpacing: '-0.3px' }}>Now watch it work.</h1>
+        <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 20 }}>
+          Name a stock you own or are watching. I will read it the way I will every morning. Calm, specific, no hype.
+        </p>
+
+        {!frResult && !frLoading && (
+          <>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <input
+                value={frTicker}
+                onChange={e => setFrTicker(e.target.value.toUpperCase().replace(/[^A-Z.]/g, '').slice(0, 6))}
+                onKeyDown={e => { if (e.key === 'Enter') runFirstRead(); }}
+                placeholder="Ticker, e.g. NVDA"
+                autoFocus
+                style={{ flex: 1, padding: '12px 14px', fontSize: 15, letterSpacing: '0.5px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: 'inherit' }}
+              />
+              <button onClick={() => runFirstRead()} disabled={!frTicker} className="btn btn-blue" style={{ padding: '0 18px', opacity: frTicker ? 1 : 0.4 }}>Read it</button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 20 }}>
+              {SUGGESTED.map(t => (
+                <button key={t} onClick={() => { setFrTicker(t); runFirstRead(t); }} style={{
+                  padding: '6px 12px', fontSize: 11, fontWeight: 600, letterSpacing: '0.5px',
+                  background: 'var(--raised)', color: 'var(--muted)', border: '1px solid var(--border)',
+                  borderRadius: 20, cursor: 'pointer', fontFamily: 'inherit',
+                }}>{t}</button>
+              ))}
+            </div>
+            {frError && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{frError}</p>}
+            <button onClick={completeOnboarding} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '6px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
+              {submitting ? 'Opening…' : 'Skip, open Outpost'}
+            </button>
+          </>
+        )}
+
+        {frLoading && (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '28px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, color: 'var(--faint)', fontSize: 11 }}>
+            <div style={{ width: 24, height: 24, border: '2px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <span>Reading {frTicker}…</span>
+            <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+          </div>
+        )}
+
+        {frResult && !frLoading && (
+          <>
+            <div style={{ background: 'linear-gradient(180deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02))', border: '1px solid rgba(59,130,246,0.18)', borderRadius: 10, padding: '15px 16px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', animation: 'frDot 2s ease-in-out infinite' }} />
+                  <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '1.3px', fontWeight: 700, margin: 0 }}>OUTPOST READS {frResult.ticker}</p>
+                </div>
+                {frResult.price != null && (
+                  <p style={{ fontSize: 10, color: 'var(--faint)', margin: 0 }}>
+                    ${frResult.price}{frResult.changePct != null && <span style={{ color: frResult.changePct >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 6 }}>{frResult.changePct >= 0 ? '+' : ''}{frResult.changePct.toFixed(1)}%</span>}
+                  </p>
+                )}
+              </div>
+              <p style={{ fontSize: 13.5, color: 'var(--text)', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: 0 }}>{frResult.read}</p>
+              <style>{`@keyframes frDot { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
+            </div>
+
+            {!frRated && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 14 }}>
+                <p style={{ fontSize: 10, color: 'var(--faint)', marginRight: 4 }}>Did that land?</p>
+                <button onClick={() => rateFirstRead('up')} className="btn btn-muted" style={{ padding: '6px 12px', fontSize: 12 }} aria-label="Yes">👍</button>
+                <button onClick={() => rateFirstRead('down')} className="btn btn-muted" style={{ padding: '6px 12px', fontSize: 12 }} aria-label="No">👎</button>
+              </div>
+            )}
+            {frRated && <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginBottom: 14 }}>Noted. This is how it learns your taste.</p>}
+
+            <button onClick={completeOnboarding} disabled={submitting} className="btn btn-blue" style={{ width: '100%', padding: 12 }}>
+              {submitting ? 'Opening…' : 'Open Outpost'}
+            </button>
+            <button onClick={() => { setFrResult(null); setFrTicker(''); setFrError(''); }} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
+              Read another stock
+            </button>
+          </>
+        )}
+
+        <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 18, lineHeight: 1.5, letterSpacing: '0.2px' }}>
+          Educational use only. Not financial advice.
+        </p>
+      </Shell>
+    );
+  }
+
   // ─── Phase: welcome ─────────────────────────────────────────────────────
   return (
     <Shell>
@@ -395,12 +520,12 @@ export default function ConversationalOnboarding() {
       )}
 
       {error && <p style={{ fontSize: 11, color: 'var(--red)', textAlign: 'center', paddingBottom: 8 }}>{error}</p>}
-      <button onClick={completeOnboarding} disabled={submitting || welcomeLoading} className="btn btn-blue" style={{ width: '100%', padding: 12, opacity: welcomeLoading ? 0.4 : 1 }}>
-        {submitting ? 'Opening…' : 'Open Outpost'}
+      <button onClick={() => setPhase('firstread')} disabled={welcomeLoading} className="btn btn-blue" style={{ width: '100%', padding: 12, opacity: welcomeLoading ? 0.4 : 1 }}>
+        Now watch it read a real stock →
       </button>
-      <p style={{ fontSize: 9, color: 'var(--faint)', textAlign: 'center', marginTop: 14, lineHeight: 1.5, letterSpacing: '0.2px' }}>
-        Educational use only. Not financial advice.
-      </p>
+      <button onClick={completeOnboarding} disabled={submitting || welcomeLoading} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
+        {submitting ? 'Opening…' : 'Skip, open Outpost'}
+      </button>
     </Shell>
   );
 }

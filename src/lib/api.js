@@ -104,6 +104,7 @@ export const api = {
     proactiveDigest: (opts) => get(`/api/ai/proactive-digest${opts?.force ? '?force=true' : ''}`),
     today: () => get('/api/ai/today'),
     welcome: (body) => post('/api/ai/welcome', body),
+    firstRead: (body) => post('/api/ai/first-read', body),
     feedback: (body) => post('/api/settings/ai-feedback', body),
     thesisAssist: (body) => post('/api/ai/thesis-assist', body),
     exitReflectionAssist: (body) => post('/api/ai/exit-reflection-assist', body),
