@@ -764,7 +764,12 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       }
     }
     // Ledger: opening a new position is a decision, captured with full context.
-    recordDecision(req.user.id, { type: 'open', ticker, shares, price: avgCost, thesis: entryThesis || null, source }).catch(() => {});
+    // Frontier #2: capture whether they pre-committed a falsification (a reversal
+    // condition, "I am wrong if X"), so the Machine can later measure whether the
+    // traders who write their exit up front actually do better. The contract itself
+    // is already captured on the position, surfaced to the agent, and watched by
+    // thesisWatch; this records it as a graded behavior in the ledger.
+    recordDecision(req.user.id, { type: 'open', ticker, shares, price: avgCost, thesis: entryThesis || null, source, meta: reversalCondition ? { hasFalsification: true } : null }).catch(() => {});
     res.json({ success: true, position, cash });
   } catch (err) {
     console.error('[Portfolio] /positions POST failed:', err.message);
