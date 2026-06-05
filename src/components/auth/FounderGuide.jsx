@@ -100,7 +100,7 @@ export default function FounderGuide({ onBack, onGetStarted }) {
       {/* Why I built it */}
       <Section eyebrow="WHY I BUILT IT" heading="It's the tool I needed.">
         <P lead>
-          There's one trade in every retail trader's history they wish they hadn't made. Not the bad pick. The bad reaction. Sold on a 6% dip because the chat group was panicking. Held something broken because admitting it was hard. Bought a top because the narrative was loud and they never wrote down what would change their mind.
+          There's one trade in every retail trader's history they wish they hadn't made. Not the bad pick. The bad reaction. Sold on a 6% dip because the group chat was panicking. Held something broken because admitting it was hard. Bought a top because the narrative was loud and they never wrote down what would change their mind.
         </P>
         <P>
           I've made all three. Outpost is the partner I built so I make fewer of them.
