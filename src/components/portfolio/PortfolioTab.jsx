@@ -2664,7 +2664,10 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
           {/* Synthesis — advisor opening read on the whole book. Hides itself
               if there are no positions or the AI call failed. Refreshes when
               the position list changes (refreshKey = positions.length). */}
-          <SynthesisCard refreshKey={positions.length} />
+          {/* Key off the actual book composition (ticker + shares + cost), not just
+              the count, so the read refreshes after an add or trim too, not only on
+              open/close. The server cache already invalidates on this same change. */}
+          <SynthesisCard refreshKey={positions.map(p => `${p.ticker}:${p.shares}:${p.avg_cost}`).join('|')} />
 
           {/* 3-stat hero — Today / Total P&L / Value get equal weight */}
           <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
