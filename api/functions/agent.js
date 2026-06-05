@@ -171,7 +171,8 @@ function injectLiveBook(messages, ctx) {
     const last = messages[messages.length - 1];
     if (!last || last.role !== 'user' || typeof last.content !== 'string') return messages;
     const book = raw.map(p => `${p.ticker} ${p.shares}@$${p.avg_cost}`).join(', ');
-    const note = `[Your live record of their book right now, authoritative and reflecting any edit they just made. Use these exact shares and average costs; they override anything said earlier in this chat: ${book}]`;
+    const cashStr = ctx?.cash && ctx.cash !== 'Unknown' ? `. Cash available to deploy: ${ctx.cash}` : '';
+    const note = `[Your live record of their book right now, authoritative and reflecting any edit they just made. Use these exact shares, average costs, and cash; they override anything said earlier in this chat: ${book}${cashStr}]`;
     messages[messages.length - 1] = { ...last, content: `${note}\n\n${last.content}` };
     return messages;
   } catch { return messages; }
@@ -833,6 +834,7 @@ Style: ${ctx.tradingStyle}, Risk: ${ctx.riskTolerance}
 Positions: ${ctx.positions}
 Watchlist: ${ctx.watchlist}
 Unrealized P&L: ${ctx.totalUnrealizedPnl} (${ctx.gainers} gainers, ${ctx.losers} losers)
+Cash / buying power: ${ctx.cash}. This is their ACTUAL tracked cash. Use this exact figure when they ask what they can deploy or how much dry powder they have. Never estimate, round, or invent a cash number, and never assume they spent it all. Account value (holdings + cash): ${ctx.accountValue}.
 ${ctx.tradePlansStr || ''}
 LIVE MARKET DATA (this is real-time, use ONLY this for market discussion):
 Regime: ${ctx.regime}, VIX: ${ctx.vix} (${ctx.vixLabel}), Fear & Greed: ${ctx.fearGreed} (${ctx.fearGreedLabel})
@@ -1211,6 +1213,7 @@ Style: ${ctx.tradingStyle}, Risk: ${ctx.riskTolerance}
 Positions: ${ctx.positions}
 Watchlist: ${ctx.watchlist}
 Unrealized P&L: ${ctx.totalUnrealizedPnl} (${ctx.gainers} gainers, ${ctx.losers} losers)
+Cash / buying power: ${ctx.cash}. This is their ACTUAL tracked cash. Use this exact figure when they ask what they can deploy or how much dry powder they have. Never estimate, round, or invent a cash number, and never assume they spent it all. Account value (holdings + cash): ${ctx.accountValue}.
 ${ctx.tradePlansStr || ''}
 LIVE MARKET DATA (this is real-time, use ONLY this for market discussion):
 Regime: ${ctx.regime}, VIX: ${ctx.vix} (${ctx.vixLabel}), Fear & Greed: ${ctx.fearGreed} (${ctx.fearGreedLabel})

@@ -52,7 +52,7 @@ export async function buildUserContext(userId, user) {
     // Market data comes from memory — zero Polygon calls
     const market = getMarketData();
 
-    const [positions, watchlist] = await Promise.allSettled([
+    const [positions, watchlist, cashResult] = await Promise.allSettled([
       // Phase 2 added reversal_condition + thesis_written_at — the agent
       // needs both visible in its base context, otherwise it has to call
       // recall_history for data that's already on the row. Also pulling
@@ -60,10 +60,15 @@ export async function buildUserContext(userId, user) {
       // Deploy Cash" when relevant.
       supabase.from('positions').select('ticker,shares,avg_cost,company_name,entry_thesis,reversal_condition,thesis_written_at,price_target,stop_loss,trade_notes,purchased_at,created_at,source').eq('user_id', userId),
       supabase.from('watchlist').select('ticker').eq('user_id', userId).limit(10),
+      // Cash is the user's real buying power. Without it the agent guesses how
+      // much dry powder they have, which is exactly the kind of "you got their
+      // book wrong" mistake that breaks trust.
+      getCashBalance(userId),
     ]);
 
     const pos = positions.status === 'fulfilled' ? (positions.value.data ?? []) : [];
     const watch = watchlist.status === 'fulfilled' ? (watchlist.value.data ?? []).map(w => w.ticker) : [];
+    const cash = cashResult.status === 'fulfilled' ? (Number(cashResult.value) || 0) : 0;
 
     // Get live prices from pool for accurate P&L
     const priceMap = pos.length > 0 ? getPrices(pos.map(p => p.ticker)) : {};
@@ -155,6 +160,10 @@ export async function buildUserContext(userId, user) {
       _rawPositions: pos,
       hiddenBet,
       watchlist: watch.length > 0 ? watch.join(', ') : 'Empty',
+      cash: `$${cash.toFixed(2)}`,
+      cashRaw: cash,
+      holdingsValue: `$${(pos.reduce((s, p) => s + (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0)).toFixed(0)}`,
+      accountValue: `$${(pos.reduce((s, p) => s + (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0) + cash).toFixed(0)}`,
       totalUnrealizedPnl: totalUnrealizedPnl !== 0 ? `${totalUnrealizedPnl > 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(0)}` : '$0',
       gainers,
       losers,
@@ -182,6 +191,7 @@ export async function buildUserContext(userId, user) {
       positionTickers: [],
       _rawPositions: [],
       watchlist: 'Unavailable',
+      cash: 'Unknown', cashRaw: 0, holdingsValue: 'Unknown', accountValue: 'Unknown',
       totalUnrealizedPnl: '$0',
       gainers: 0,
       losers: 0,
