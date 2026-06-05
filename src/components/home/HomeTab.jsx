@@ -262,7 +262,7 @@ function PulseCard({ refreshKey }) {
 
   return (
     <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)' }}>
-      <div style={{
+      <div className="ai-glow" style={{
         background: 'linear-gradient(180deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02))',
         border: '1px solid rgba(59,130,246,0.18)',
         borderRadius: 10,

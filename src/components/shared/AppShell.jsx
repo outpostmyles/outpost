@@ -178,11 +178,15 @@ export default function AppShell() {
   const usagePct = user ? Math.min(100, Math.round(((user.credits_used_this_month ?? 0) / totalCredits) * 100)) : 0;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'radial-gradient(1100px 460px at 50% -240px, rgba(59,130,246,0.08), transparent 72%), var(--bg)' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', justifyContent: 'center', background: 'radial-gradient(1100px 460px at 50% -240px, rgba(59,130,246,0.08), transparent 72%), var(--bg)' }}>
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
         @keyframes asTape { from{transform:translateX(0)} to{transform:translateX(-50%)} }
       `}</style>
+      {/* Centered console: on a wide screen the app sits in a focused column with
+          the deck showing in the margins, instead of stretching full width. On a
+          phone it is simply full width. */}
+      <div style={{ width: '100%', maxWidth: 900, height: '100%', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
@@ -291,6 +295,7 @@ export default function AppShell() {
             );
           })}
         </div>
+      </div>
       </div>
     </div>
   );

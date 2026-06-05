@@ -2350,7 +2350,7 @@ function ExposureCard({ positions, onTabSwitch }) {
                       <span style={{ color: 'var(--muted)' }}>{s.pct}%</span>
                     </div>
                     <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: 'var(--blue)', borderRadius: 3 }} />
+                      <div className="grow-in" style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: 'var(--blue)', borderRadius: 3 }} />
                     </div>
                   </div>
                 ))}
