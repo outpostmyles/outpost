@@ -10,7 +10,7 @@ import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
 import { assessRegister, moodDirective } from '../services/pulseContext.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
 import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
-import { buildAgentOpener } from '../services/agentOpener.js';
+import { buildAgentOpener, openerFingerprint } from '../services/agentOpener.js';
 import { gatherSignalsForUser } from '../services/proactiveDigest.js';
 import { todayStr as etTodayStr } from '../utils/marketHours.js';
 import { groupConversations } from '../../src/lib/agentConversations.js';
@@ -639,12 +639,19 @@ router.get('/opener', requireAuth, rateLimit(30), async (req, res) => {
     // later open re-checks if something develops during the session.
     if (!signals.length) return res.json({ posted: false, waiting: false });
 
+    // Earn its place: if the top signal is the SAME thing we already opened with
+    // (a thesis still breaking, a stop still broken), do not re-post the same line.
+    // Stay quiet until something actually changes. Date stays unstamped so a new
+    // signal later today can still post.
+    const fp = openerFingerprint(signals);
+    if (fp && fp === parsed.fp) return res.json({ posted: false, waiting: false });
+
     const opener = buildAgentOpener(signals, { hasPositions });
     const { error: insErr } = await supabase.from('agent_messages')
       .insert({ user_id: req.user.id, role: 'assistant', content: opener, conversation_id: 'opener_' + today, created_at: new Date().toISOString() });
     if (insErr) return res.json({ posted: false, waiting: false });
 
-    const memContent = JSON.stringify({ date: today, seen: false });
+    const memContent = JSON.stringify({ date: today, seen: false, fp });
     if (mem?.id) {
       await supabase.from('agent_memory').update({ content: memContent }).eq('id', mem.id).eq('user_id', req.user.id);
     } else {
@@ -670,7 +677,7 @@ router.post('/opener/seen', requireAuth, rateLimit(30), async (req, res) => {
       try { parsed = JSON.parse(mem.content) || {}; } catch {}
       if (parsed.date === today && !parsed.seen) {
         await supabase.from('agent_memory')
-          .update({ content: JSON.stringify({ date: today, seen: true }) })
+          .update({ content: JSON.stringify({ ...parsed, seen: true }) }) // keep fp so the dedupe survives
           .eq('id', mem.id).eq('user_id', req.user.id);
       }
     }

@@ -44,3 +44,19 @@ export function buildAgentOpener(signals, { hasPositions = true } = {}) {
   // Don't stack two questions if the signal's detail already ends in one.
   return /\?\s*$/.test(detail) ? detail : `${detail} ${invite}`;
 }
+
+/**
+ * A stable identity for the opener the top signal would produce, so the route can
+ * avoid re-posting the SAME opener day after day when a situation persists (a
+ * thesis that stays "breaking", a stop that stays broken). Keyed on the signal
+ * kind and ticker, NOT the exact wording, so a 1% drift in the detail does not
+ * read as a new thing to say. Empty string when there is nothing to open with.
+ */
+export function openerFingerprint(signals) {
+  const list = Array.isArray(signals) ? signals : [];
+  if (!list.length) return '';
+  const top = list[0] || {};
+  const kind = String(top.kind || 'signal');
+  const ticker = top.ticker || (String(top.detail || '').match(/\b[A-Z]{2,5}\b/) || [''])[0];
+  return `${kind}:${ticker}`.toUpperCase();
+}

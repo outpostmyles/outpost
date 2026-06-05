@@ -1,7 +1,7 @@
 // Pins the proactive-opener phrasing (api/services/agentOpener.js): the agent's
 // first move that turns the day's top signal into an invitation to talk.
 import assert from 'node:assert/strict';
-import { buildAgentOpener } from '../api/services/agentOpener.js';
+import { buildAgentOpener, openerFingerprint } from '../api/services/agentOpener.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -53,6 +53,28 @@ test('unknown signal kind falls back to a generic invite', () => {
 
 test('non-array input is treated as a quiet day, not a crash', () => {
   assert.match(buildAgentOpener(null), /Quiet across your book|on your radar/);
+});
+
+test('openerFingerprint is empty for a quiet day and stable across wording drift', () => {
+  assert.equal(openerFingerprint([]), '');
+  assert.equal(openerFingerprint(null), '');
+  // Same situation, different exact detail (price drifted), should fingerprint the same.
+  const a = openerFingerprint([{ kind: 'position_below_stop', ticker: 'NVDA', detail: 'NVDA broke below your $180 stop, now $176.' }]);
+  const b = openerFingerprint([{ kind: 'position_below_stop', ticker: 'NVDA', detail: 'NVDA broke below your $180 stop, now $172.' }]);
+  assert.equal(a, b);
+  assert.equal(a, 'POSITION_BELOW_STOP:NVDA');
+});
+
+test('openerFingerprint changes when the situation changes (so a new thing still posts)', () => {
+  const stop = openerFingerprint([{ kind: 'position_below_stop', ticker: 'NVDA', detail: 'x' }]);
+  const target = openerFingerprint([{ kind: 'position_near_target', ticker: 'NVDA', detail: 'x' }]);
+  const otherName = openerFingerprint([{ kind: 'position_below_stop', ticker: 'AMD', detail: 'x' }]);
+  assert.notEqual(stop, target);   // different kind
+  assert.notEqual(stop, otherName); // different ticker
+});
+
+test('openerFingerprint falls back to a ticker pulled from the detail when none is set', () => {
+  assert.equal(openerFingerprint([{ kind: 'big_mover', detail: 'TSLA up 8% today.' }]), 'BIG_MOVER:TSLA');
 });
 
 let pass = 0, fail = 0;
