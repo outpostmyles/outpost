@@ -4,10 +4,31 @@
 // that fences recalled user text in <user_quoted> tags and strips any tags the
 // user tried to inject), plus the small text utilities.
 import assert from 'node:assert/strict';
-import { detectTickers, wrapQuote, wordCount, truncate } from '../api/services/historyAggregator.js';
+import { detectTickers, wrapQuote, wordCount, truncate, decisionToAddEvent } from '../api/services/historyAggregator.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
+
+test('decisionToAddEvent turns an add into a timeline event so building a position shows up', () => {
+  const e = decisionToAddEvent({ id: 'd1', type: 'add', ticker: 'NBIS', shares: 5, price: 228.4, created_at: '2026-06-05T16:00:00Z' });
+  assert.equal(e.source, 'position_add');
+  assert.equal(e.ticker, 'NBIS');
+  assert.equal(e.title, 'Added 5 NBIS @ $228.40');
+  assert.equal(e.meta.kind, 'add');
+  assert.equal(e.date, '2026-06-05T16:00:00Z');
+});
+
+test('decisionToAddEvent labels a trim as trimmed, not added', () => {
+  const e = decisionToAddEvent({ id: 'd2', type: 'trim', ticker: 'DELL', shares: 2.85, price: 394.39, created_at: '2026-06-05T15:00:00Z' });
+  assert.equal(e.meta.kind, 'trim');
+  assert.equal(e.title, 'Trimmed 2.85 DELL @ $394.39');
+});
+
+test('decisionToAddEvent ignores non-add/trim and undated rows', () => {
+  assert.equal(decisionToAddEvent({ id: 'x', type: 'open', ticker: 'AAPL', created_at: '2026-06-05' }), null);
+  assert.equal(decisionToAddEvent({ id: 'x', type: 'add', ticker: 'AAPL' }), null); // no date
+  assert.equal(decisionToAddEvent(null), null);
+});
 
 test('detectTickers picks up $-prefixed mentions, any case', () => {
   assert.deepEqual(detectTickers('$AAPL').sort(), ['AAPL']);

@@ -208,6 +208,51 @@ export function positionToOpenEvent(p) {
   };
 }
 
+/**
+ * Pure: an 'add' or 'trim' decision row -> a history event, so building up a
+ * position over time (or trimming it) shows up in the user's story, not just the
+ * first open. Without this, adding shares to a name you already hold left no trace
+ * in the timeline. Exported for tests. Returns null on an unusable row.
+ */
+export function decisionToAddEvent(d) {
+  if (!d || (d.type !== 'add' && d.type !== 'trim') || !d.created_at) return null;
+  const sh = Number(d.shares);
+  const px = Number(d.price);
+  const isAdd = d.type === 'add';
+  const shStr = Number.isFinite(sh) && sh > 0 ? `${sh % 1 === 0 ? sh : sh.toFixed(2)} ` : '';
+  const pxStr = Number.isFinite(px) && px > 0 ? ` @ $${px.toFixed(2)}` : '';
+  return {
+    id: `posadd:${d.id}`,
+    source: 'position_add',
+    date: d.created_at,
+    ticker: d.ticker,
+    title: `${isAdd ? 'Added' : 'Trimmed'} ${shStr}${d.ticker}${pxStr}`,
+    excerpt: isAdd ? `Added to your ${d.ticker} position.` : `Trimmed part of your ${d.ticker} position.`,
+    quote: null,
+    outcome: null,
+    pnl: null,
+    holdDays: null,
+    meta: { shares: Number.isFinite(sh) ? sh : null, price: Number.isFinite(px) ? px : null, kind: d.type },
+  };
+}
+
+// Source: the decision ledger, type 'add' or 'trim'. These are book changes on a
+// position you already hold, which the positions-table open event cannot show.
+async function fetchPositionAdds({ userId, ticker, dateFrom, dateTo, limit }) {
+  let q = supabase.from('decisions')
+    .select('id,type,ticker,shares,price,created_at')
+    .eq('user_id', userId)
+    .in('type', ['add', 'trim'])
+    .order('created_at', { ascending: false })
+    .limit(Math.min(limit ?? DEFAULT_LIMIT, HARD_CAP_PER_SOURCE));
+  if (ticker) q = q.eq('ticker', ticker);
+  if (dateFrom) q = q.gte('created_at', dateFrom);
+  if (dateTo) q = q.lte('created_at', dateTo);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map(decisionToAddEvent).filter(Boolean);
+}
+
 async function fetchActivePositions({ userId, ticker, dateFrom, dateTo, limit }) {
   let q = supabase.from('positions')
     .select('id,ticker,company_name,shares,avg_cost,entry_thesis,reversal_condition,thesis_written_at,purchased_at,created_at')
@@ -441,7 +486,7 @@ async function fetchDeployCashSessions({ userId, ticker, dateFrom, dateTo, limit
 export async function getUserHistory(options) {
   const {
     userId, ticker, topic, dateFrom, dateTo,
-    sources = ['agent', 'position_open', 'position_close', 'thesis', 'journal', 'deploy_cash'],
+    sources = ['agent', 'position_open', 'position_add', 'position_close', 'thesis', 'journal', 'deploy_cash'],
     limit = DEFAULT_LIMIT,
   } = options;
   if (!userId) throw new Error('userId required');
@@ -466,6 +511,9 @@ export async function getUserHistory(options) {
   else tasks.push(Promise.resolve([]));
 
   if (sources.includes('deploy_cash')) tasks.push(fetchDeployCashSessions({ userId, ticker, dateFrom, dateTo, limit: perSourceLimit }));
+  else tasks.push(Promise.resolve([]));
+
+  if (sources.includes('position_add')) tasks.push(fetchPositionAdds({ userId, ticker, dateFrom, dateTo, limit: perSourceLimit }));
   else tasks.push(Promise.resolve([]));
 
   // allSettled, not all: a single failing source (a bad row, a transient DB

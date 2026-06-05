@@ -1235,6 +1235,7 @@ function timeAgo(iso) {
 const SOURCE_LABEL = {
   agent: 'AGENT CHAT',
   position_open: 'POSITION OPENED',
+  position_add: 'ADDED TO POSITION',
   position_close: 'POSITION CLOSED',
   thesis: 'THESIS WRITTEN',
   journal: 'JOURNAL NOTE',
@@ -1243,6 +1244,7 @@ const SOURCE_LABEL = {
 const SOURCE_COLOR = {
   agent: '#a78bfa',          // soft violet — conversations
   position_open: 'var(--green)',
+  position_add: '#34d399',   // teal-green for building or trimming a position
   position_close: 'var(--amber)',
   thesis: 'var(--blue)',
   journal: 'var(--muted)',
@@ -1250,8 +1252,8 @@ const SOURCE_COLOR = {
 };
 
 const SOURCE_FILTER_OPTIONS = [
-  { id: 'all', label: 'ALL', sources: ['agent', 'position_open', 'position_close', 'thesis', 'journal', 'deploy_cash'] },
-  { id: 'positions', label: 'POSITIONS', sources: ['position_open', 'position_close', 'thesis'] },
+  { id: 'all', label: 'ALL', sources: ['agent', 'position_open', 'position_add', 'position_close', 'thesis', 'journal', 'deploy_cash'] },
+  { id: 'positions', label: 'POSITIONS', sources: ['position_open', 'position_add', 'position_close', 'thesis'] },
   { id: 'chats', label: 'CHATS', sources: ['agent'] },
   { id: 'notes', label: 'NOTES', sources: ['journal'] },
   { id: 'deploys', label: 'DEPLOYS', sources: ['deploy_cash'] },
@@ -1408,7 +1410,9 @@ function TimelineEntry({ ev }) {
   const dateLine = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const yearLine = d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() : '';
   const sourceColor = SOURCE_COLOR[ev.source] || 'var(--faint)';
-  const sourceLabel = SOURCE_LABEL[ev.source] || ev.source.toUpperCase();
+  const sourceLabel = (ev.source === 'position_add' && ev.meta?.kind === 'trim')
+    ? 'TRIMMED POSITION'
+    : (SOURCE_LABEL[ev.source] || ev.source.toUpperCase());
 
   // Outcome chip on closed positions
   let outcomeChip = null;

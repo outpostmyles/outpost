@@ -156,6 +156,28 @@ function extractRecommendedTickers(messageHistory, userPositionTickers = []) {
 }
 
 /**
+ * Re-state the user's live book on the CURRENT turn, right before the model
+ * answers. The model weights the most recent tokens most heavily, and the system
+ * context (with holdings) sits far away at the top, so deep in a long chat the
+ * model can drift onto stale numbers from earlier in the conversation. Prepending
+ * a compact, authoritative holdings line to the latest user message keeps "what do
+ * I own" exact, even right after the user edits their portfolio mid-conversation.
+ * Mutates and returns the messages array. Never throws.
+ */
+function injectLiveBook(messages, ctx) {
+  try {
+    const raw = ctx?._rawPositions;
+    if (!Array.isArray(messages) || !messages.length || !Array.isArray(raw) || !raw.length) return messages;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'user' || typeof last.content !== 'string') return messages;
+    const book = raw.map(p => `${p.ticker} ${p.shares}@$${p.avg_cost}`).join(', ');
+    const note = `[Your live record of their book right now, authoritative and reflecting any edit they just made. Use these exact shares and average costs; they override anything said earlier in this chat: ${book}]`;
+    messages[messages.length - 1] = { ...last, content: `${note}\n\n${last.content}` };
+    return messages;
+  } catch { return messages; }
+}
+
+/**
  * Pick 2-3 random "featured sectors" for this request to encourage variety.
  * Changes on each API call so the agent gets different starting points.
  */
@@ -386,6 +408,7 @@ DATA ACCURACY:
 2. NEVER fabricate news, earnings, or price moves. If you don't have it and tools can't find it, say so honestly.
 3. Your training data is outdated. The live data in your context is your ONLY source of truth for current markets.
 4. When quoting prices or percentages, use the EXACT numbers from your context or tool results. Don't round aggressively or estimate.
+5. THEIR BOOK IS SACRED (this is the whole product). Your context shows the user's CURRENT HOLDINGS, re-read live from their account on every single message, so it already reflects any buy, sell, trim, or edit they just made. Those exact share counts and average costs are the single source of truth about what they own. NEVER state a holding, share count, or average cost that contradicts the live holdings, not even if an earlier message in this chat (yours or theirs) said something different. People edit their book mid-conversation; when the live holdings and the conversation disagree, the live holdings win, every time. If a ticker the user mentions is not in their live holdings, say you don't see it in their book yet instead of inventing a position or a cost basis. If the user corrects you about what they own, re-read the live holdings, defer to them instantly, and do not argue or re-guess. Getting their own positions wrong is the one mistake that breaks their trust completely.
 
 TRADE PLANS AND MEMORY:
 1. If they have price targets or stop losses, mention them ONLY when price is actually getting close (within 10%). Don't nag about targets that are far away.
@@ -866,6 +889,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     try {
       // Build messages for Anthropic — the conversation loop supports tool_use
       let messages = messageHistory.map(m => ({ role: m.role, content: m.content }));
+      messages = injectLiveBook(messages, ctx);
 
       // Three-tier model routing — use cheapest model that gives a good answer
       const trimmed = content.trim();
