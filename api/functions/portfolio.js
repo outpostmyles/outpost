@@ -20,6 +20,7 @@ import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
+import { computeSale } from '../../src/lib/saleMath.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
@@ -1106,6 +1107,36 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     const livePrice = getPrices([pos.ticker])?.[pos.ticker]?.price;
     const rawSell = req.body?.sellPrice ? parseFloat(req.body.sellPrice) : null;
     const sellPrice = (rawSell && isFinite(rawSell) && rawSell > 0) ? rawSell : (livePrice ?? pos.avg_cost ?? 0);
+
+    // PARTIAL SELL (trim): the caller asked to sell only SOME shares. Reduce the
+    // position, archive the sold portion to closed_trades atomically, and record a
+    // `trim` decision so the Machine finally sees cutting (esp. cutting winners),
+    // which a full-only close has never captured. Selling the whole lot falls
+    // through to the atomic full close below, untouched.
+    const reqSellShares = req.body?.sellShares != null ? Number(req.body.sellShares) : null;
+    if (reqSellShares != null && Number.isFinite(reqSellShares) && reqSellShares > 0 && reqSellShares < (pos.shares ?? 0)) {
+      const sale = computeSale({ avgCost: pos.avg_cost, shares: pos.shares, sellShares: reqSellShares, sellPrice, purchasedAt: pos.purchased_at, nowMs: Date.now() });
+      if (!sale.ok) return res.status(400).json({ error: 'Invalid number of shares to sell' });
+      const { data: closed, error: trimErr } = await supabase.rpc('partial_close_position', {
+        p_position_id: req.params.id,
+        p_user_id: req.user.id,
+        p_sell_shares: sale.sharesSold,
+        p_sell_price: parseFloat(sellPrice.toFixed(2)),
+        p_pnl: sale.pnl,
+        p_pnl_percent: sale.pnlPercent,
+        p_hold_days: sale.holdDays,
+      });
+      if (trimErr) throw trimErr;
+      if (!closed) return res.status(404).json({ error: 'Position not found' }); // raced with another trim/close
+      let cashAfter = null;
+      try { cashAfter = await adjustCashBalance(req.user.id, sale.proceeds); } catch (e) {
+        console.warn(`[req:${req.requestId}] [Portfolio] cash credit on trim failed:`, e.message);
+      }
+      const trimStatus = sale.pnl > 0 ? 'win' : sale.pnl < 0 ? 'loss' : 'even';
+      recordDecision(req.user.id, { type: 'trim', ticker: pos.ticker, shares: sale.sharesSold, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: trimStatus, outcomePnl: sale.pnl, outcomePnlPct: sale.pnlPercent, outcomeHoldDays: sale.holdDays }).catch(() => {});
+      return res.json({ success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter });
+    }
+
     const costBasis = (pos.avg_cost ?? 0) * (pos.shares ?? 0);
     const proceeds = sellPrice * (pos.shares ?? 0);
     const pnl = proceeds - costBasis;

@@ -26,6 +26,7 @@ const SUITE = [
   'composure', 'coach_reachout', 'quote_normalize', 'book_stats', 'ai_style', 'news_hygiene',
   'brokerage_sync', 'decision_ledger', 'agent_conversations', 'position_proposal',
   'ai_pricing', 'ai_usage_summary', 'synthesis_freshness', 'founder_brief', 'process_scorecard',
+  'sale_math',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via
