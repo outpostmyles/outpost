@@ -16,6 +16,14 @@ export const NO_DASH_RULE = 'Never use em-dashes or en-dashes (the long dash or 
 // that had drifted apart cannot diverge again.
 export const PLAIN_TEXT_RULE = `CRITICAL: Respond in plain text only. No markdown, no asterisks, no bold, no italic, no headers, no bullet dashes. Use numbered lists (1. 2. 3.) only when necessary. Never use * or ** or # for formatting. ${NO_DASH_RULE}`;
 
+// The single most important rule for any data-grounded read. The model knows real
+// facts about real tickers from its training (Navitas and Nvidia, an India deal,
+// an insider sale) and will state them as current fact even when the prompt says
+// "do not invent", because it does not consider its own memory to be invention.
+// This closes that gap by naming the exact categories and the stakes. Reuse it in
+// every prompt that reads a specific company off live input.
+export const GROUNDING_RULE = 'GROUNDING, your most important rule: use ONLY the facts written in this input. You likely hold knowledge about this company from your training (deals, partnerships, acquisitions, products, executives, insider buys or sales, lawsuits, prior catalysts, past prices). That knowledge is outdated and unverified, so it is off limits here. If a specific company event is not written in this input, it does not exist for your answer. Never mention a deal, partnership, acquisition, insider transaction, product launch, executive, lawsuit, earnings detail, analyst rating change, or headline unless it appears in the input. Stating one from memory is a factual error that can move real money, not analysis. When the input shows no company news, say plainly that there is no company-specific news and read the price action instead.';
+
 /**
  * Trim AI output back to its last complete sentence. A short max_tokens cap can
  * cut a generated brief mid-sentence ("...watch SPY around 585 and cons"), which

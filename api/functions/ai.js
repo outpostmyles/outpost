@@ -21,7 +21,7 @@ import { getRequestId } from '../middleware/requestId.js';
 import { buildWelcomePrompt, buildWelcomeSystemPrompt, buildFallbackWelcome } from '../services/welcomeMoment.js';
 import { assignVariant } from '../services/promptExperiments.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
-import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
+import { PLAIN_TEXT_RULE, NO_DASH_RULE, GROUNDING_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -445,6 +445,8 @@ VOICE:
 - "No action needed" is a perfectly valid and often correct answer. Say it without apology.
 - Use full company names when natural, not just tickers. Skip the P&L recap — they can see it.
 
+${GROUNDING_RULE}
+
 CRITICAL RULES:
 1. When the answer is to hold, use phrases like "no action needed", "keep holding", or "stay put" so downstream routing reads the verdict correctly.
 2. Read the TREND, not just today's number. Fear gauge falling from 35 → 28 is improving, not worsening.
@@ -487,6 +489,8 @@ VOICE:
 - Smart friend texting, not a Bloomberg analyst. Short sentences. Plain English by default. Break clauses with periods, not commas. Sentences under 18 words.
 - Validate before correcting. Honest about real risk, but never doom. Never condescending. Use full company names when natural, not just tickers.
 - "No action needed" beats inventing fake action items.
+
+${GROUNDING_RULE}
 
 ABSOLUTE RULES:
 - Each sentence is one clean thought ending in a period. Never one giant run-on.
