@@ -11,6 +11,7 @@ import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
 import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns } from '../../src/lib/decisionLedger.js';
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
+import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -249,7 +250,15 @@ export async function getUserPatternBlock(userId) {
     // Frontier #4: their specific edge and leak, so the agent coaches from where
     // THIS person makes money vs bleeds, not just generic self-sabotage flags.
     const model = formatTraderModel(buildTraderModel(decisions));
-    return [patterns, model].filter(Boolean).join('\n\n');
+    // Frontier #3: what their recent selling actually cost or saved vs holding,
+    // computed against live prices. Makes "cutting winners" a real dollar figure.
+    let counterfactual = '';
+    const sells = decisions.filter(d => (d.type === 'close' || d.type === 'trim') && d.ticker).slice(0, 40);
+    if (sells.length >= 2) {
+      const tickers = [...new Set(sells.map(d => d.ticker))];
+      counterfactual = formatCounterfactual(summarizeCounterfactuals(sells, tickers.length ? getPrices(tickers) : {}));
+    }
+    return [patterns, model, counterfactual].filter(Boolean).join('\n\n');
   } catch { return ''; }
 }
 
