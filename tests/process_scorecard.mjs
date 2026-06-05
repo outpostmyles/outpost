@@ -23,6 +23,14 @@ test('grades on the index with the right letter band', () => {
   assert.equal(c.trend, 'flat');
 });
 
+test('a thin record is provisional (no hard letter for three trades); a real one is not', () => {
+  const thin = buildProcessScorecard({ quality: { index: 30, sample: 4 }, summary: { total: 4 }, patterns: [] });
+  assert.equal(thin.provisional, true);
+  assert.equal(thin.score, 30); // the number is still there, just presented gently
+  const real = buildProcessScorecard({ quality: { index: 30, sample: 28 }, summary: { total: 28 }, patterns: [] });
+  assert.equal(real.provisional, false);
+});
+
 test('focus is the worst habit by severity', () => {
   const patterns = [
     { key: 'no_thesis', severity: 70, label: 'Buying without a reason', stat: '60% no thesis', detail: '...' },

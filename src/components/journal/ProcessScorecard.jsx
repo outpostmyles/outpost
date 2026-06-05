@@ -41,18 +41,25 @@ export default function ProcessScorecard() {
   return (
     <div style={wrap}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <p style={kicker}>PROCESS SCORE</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <p style={kicker}>PROCESS SCORE</p>
+          {card.provisional && <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--faint)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 5px' }}>EARLY READ</span>}
+        </div>
         <span style={{ fontSize: 10, fontWeight: 700, color: tb.color, letterSpacing: '0.3px' }}>{tb.arrow} {tb.text}</span>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
-        <span style={{ fontSize: 40, fontWeight: 800, lineHeight: 1, color: gradeColor(card.letter) }}>{card.letter}</span>
+        <span style={{ fontSize: 40, fontWeight: 800, lineHeight: 1, color: card.provisional ? 'var(--muted)' : gradeColor(card.letter) }}>{card.letter}</span>
         <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{card.score}<span style={{ fontSize: 11, color: 'var(--faint)' }}>/100</span></span>
         {card.winRate != null && (
           <span style={{ fontSize: 10, color: 'var(--faint)', marginLeft: 'auto' }}>{card.winRate}% win rate · {card.sample} decisions</span>
         )}
       </div>
-      <p style={{ fontSize: 10.5, color: 'var(--faint)', margin: '0 0 12px' }}>How you traded, not how it paid. The part you control.</p>
+      <p style={{ fontSize: 10.5, color: 'var(--faint)', margin: '0 0 12px' }}>
+        {card.provisional
+          ? 'Early read. This is a starting line, not a verdict, and it firms up as you log more decisions.'
+          : 'How you traded, not how it paid. The part you control.'}
+      </p>
 
       <div style={{ marginBottom: 10 }}>
         <p style={{ fontSize: 9, color: 'var(--green)', fontWeight: 700, letterSpacing: '0.6px', margin: '0 0 3px' }}>WHAT YOU'RE NAILING</p>

@@ -40,13 +40,18 @@ export function buildProcessScorecard(receipts) {
     ? { label: patterns[0].label, stat: patterns[0].stat, detail: patterns[0].detail }
     : { label: 'Nothing major', stat: 'no self-sabotage pattern showing', detail: 'Keep your process consistent and the score takes care of itself.' };
 
+  const sample = quality.sample ?? summary.total ?? 0;
   return {
     hasData: true,
+    // On a thin record we have a number but not the right to slap a hard letter on
+    // someone for three trades. Provisional softens the presentation (no scarlet F)
+    // and reads as a starting line until there is a real track record.
+    provisional: sample < 10,
     score: quality.index,
     letter: letterFor(quality.index),
     trend: quality.trend || 'flat',                 // improving | slipping | flat
     winRate: summary.winRate ?? null,               // shown small, secondary to process
-    sample: quality.sample ?? summary.total ?? 0,
+    sample,
     strength: pickStrength(summary, patterns),
     focus,
   };
