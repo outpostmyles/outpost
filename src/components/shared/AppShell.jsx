@@ -38,6 +38,28 @@ function Logo() {
   );
 }
 
+// Live book tape: the user's holdings scrolling with today's move, terminal style.
+// Two copies in a row so the marquee loops seamlessly. Edges feathered with a mask.
+function BookTape({ items }) {
+  const Row = () => (
+    <>
+      {items.map((it, i) => (
+        <span key={it.ticker + i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 13px' }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.5px' }}>{it.ticker}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: it.pct >= 0 ? 'var(--green)' : 'var(--red)' }}>{it.pct >= 0 ? '+' : ''}{it.pct.toFixed(1)}%</span>
+        </span>
+      ))}
+    </>
+  );
+  return (
+    <div style={{ overflow: 'hidden', borderBottom: '1px solid var(--border)', background: 'rgba(122,162,255,0.015)', padding: '5px 0', whiteSpace: 'nowrap', flexShrink: 0, position: 'relative', zIndex: 5, maskImage: 'linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent)', WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent)' }}>
+      <div style={{ display: 'inline-block', animation: 'asTape 42s linear infinite' }}>
+        <Row /><Row />
+      </div>
+    </div>
+  );
+}
+
 export default function AppShell() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('home');
@@ -52,6 +74,10 @@ export default function AppShell() {
   // hasn't seen yet. This is what makes the agent reach out and actually pull
   // them in, rather than waiting to be opened.
   const [agentWaiting, setAgentWaiting] = useState(false);
+  // A live ticker tape of the user's own book (ticker + today's move), scrolling
+  // in the header strip like a trading terminal. Populated from the same
+  // portfolio poll that drives urgent alerts, so it costs no extra fetch.
+  const [bookTape, setBookTape] = useState([]);
 
   useEffect(() => {
     const interval = setInterval(() => { setMarketStatus(getMarketStatus()); setTime(new Date()); }, 30000);
@@ -83,6 +109,9 @@ export default function AppShell() {
           return false;
         });
         setHasUrgentAlert(urgent);
+        setBookTape(positions
+          .filter(p => p.ticker && Number.isFinite(p.todayChangePercent))
+          .map(p => ({ ticker: p.ticker, pct: p.todayChangePercent })));
       } catch {}
     };
 
@@ -155,13 +184,23 @@ export default function AppShell() {
         radial-gradient(1200px 520px at 50% -200px, rgba(59,130,246,0.13), transparent 70%),
         radial-gradient(1000px 520px at 92% 108%, rgba(45,212,238,0.06), transparent 70%),
         var(--bg)` }}>
-      <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }`}</style>
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+        @keyframes asTape { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+        @keyframes asBlink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+        @keyframes asScan { 0%{transform:translateY(-60%)} 100%{transform:translateY(360%)} }
+      `}</style>
+
+      {/* Scanline sweep: a faint cyan light bar drifting down the deck. Pure
+          ambiance, pointer-events off, sits under the bars and over the content. */}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '22%', pointerEvents: 'none', zIndex: 1, background: 'linear-gradient(180deg, transparent, rgba(45,212,238,0.05), transparent)', animation: 'asScan 8s linear infinite' }} />
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Logo />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--text)' }}>OUTPOST</span>
+          <span style={{ display: 'inline-block', width: 7, height: 14, marginLeft: -2, background: 'var(--cyan)', borderRadius: 1, boxShadow: '0 0 8px rgba(45,212,238,0.8)', animation: 'asBlink 1.2s step-end infinite' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 3, background: `${marketStatus.color}12`, border: `1px solid ${marketStatus.color}28` }}>
@@ -190,6 +229,11 @@ export default function AppShell() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Live book tape: the user's own positions scrolling like a terminal. */}
+      {activeTab !== 'settings' && activeTab !== 'admin' && bookTape.length > 0 && (
+        <BookTape items={bookTape} />
       )}
 
       {/* Toast */}
