@@ -311,7 +311,11 @@ export function aggregateQuality(decisions) {
 // dossier handoff) against self-directed ones. If advised trades do not beat
 // self-directed ones, the product is not earning its keep, and we would rather
 // know. The honest test of whether Outpost helps.
-const AI_SOURCES = new Set(['deploy_cash', 'screener', 'dossier']);
+// The sources that mean Outpost prompted the trade. Exported so the position
+// endpoint validates against the SAME list and the two can never drift: a buy the
+// app suggested must be recordable as advised, or this whole number quietly lies.
+export const AI_SOURCES = ['deploy_cash', 'screener', 'dossier'];
+const AI_SOURCE_SET = new Set(AI_SOURCES);
 export function adviceLift(decisions) {
   const resolved = arr(decisions).filter(d => d.outcomeStatus && (OPENISH.has(d.type) || d.type === 'close'));
   const grp = (pred) => {
@@ -319,8 +323,8 @@ export function adviceLift(decisions) {
     const wins = g.filter(d => d.outcomeStatus === 'win').length;
     return { n: g.length, winRate: g.length ? Math.round((wins / g.length) * 100) : null };
   };
-  const advised = grp(d => AI_SOURCES.has(d.source));
-  const selfDirected = grp(d => !AI_SOURCES.has(d.source));
+  const advised = grp(d => AI_SOURCE_SET.has(d.source));
+  const selfDirected = grp(d => !AI_SOURCE_SET.has(d.source));
   const lift = (advised.winRate != null && selfDirected.winRate != null) ? advised.winRate - selfDirected.winRate : null;
   return { advised, selfDirected, lift };
 }

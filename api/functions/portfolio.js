@@ -19,6 +19,7 @@ import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
+import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
 import { detectDecisions, gradeDecisions, appendDecisions } from '../../src/lib/decisionMemory.js';
 import { config } from '../config.js';
 import { getTaxInsights } from '../services/taxInsights.js';
@@ -663,8 +664,10 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     const stopLoss = req.body.stopLoss ? sanitizeNumber(req.body.stopLoss, 0, 1000000) : null;
     const tradeNotes = sanitizeString(req.body.tradeNotes || '', 1000);
 
-    // Phase 4 — provenance ('manual' | 'deploy_cash' | 'import' | 'screenshot')
-    const VALID_SOURCES = ['manual', 'deploy_cash', 'import', 'screenshot'];
+    // Provenance. The AI sources come from the decision ledger so this list and
+    // the advice-lift list cannot drift: a screener or dossier buy must be
+    // recordable as advised, not silently downgraded to manual.
+    const VALID_SOURCES = ['manual', 'import', 'screenshot', ...AI_SOURCES];
     const source = VALID_SOURCES.includes(req.body.source) ? req.body.source : 'manual';
 
     // Validate ticker is a real stock + prices pass sanity checks

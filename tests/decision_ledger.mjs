@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
   decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, baseRateGuidance,
-  formatUserPatterns,
+  formatUserPatterns, AI_SOURCES,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -215,6 +215,20 @@ test('adviceLift withholds a verdict when a side has no resolved trades', () => 
   const r = adviceLift([{ type: 'open', source: 'manual', outcomeStatus: 'win' }]);
   assert.strictEqual(r.lift, null);
   assert.strictEqual(r.advised.winRate, null);
+});
+
+test('AI_SOURCES is the exported single source of truth, so every AI buy counts as advised', () => {
+  assert.ok(Array.isArray(AI_SOURCES));
+  for (const s of ['deploy_cash', 'screener', 'dossier']) assert.ok(AI_SOURCES.includes(s), `AI_SOURCES must include ${s}`);
+  // screener and dossier were silently dropped to manual at the position endpoint
+  // before; here they must land on the advised side of the lift.
+  const r = adviceLift([
+    { type: 'open', source: 'screener', outcomeStatus: 'win' },
+    { type: 'open', source: 'dossier', outcomeStatus: 'loss' },
+    { type: 'open', source: 'manual', outcomeStatus: 'win' },
+  ]);
+  assert.equal(r.advised.n, 2);
+  assert.equal(r.selfDirected.n, 1);
 });
 
 // ── pctOfBookForDecision (completing the capture) ────────────────────────────
