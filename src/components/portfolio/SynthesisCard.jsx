@@ -49,6 +49,24 @@ export default function SynthesisCard({ refreshKey = 0 }) {
   // Failure or no text — fail closed, don't show a broken card
   if (!data?.text) return null;
 
+  // Quiet day: a short standing-status line, not the full read. It earns far less
+  // space than the synthesis paragraph and never repeats the same paragraph daily.
+  // The refresh control still forces a full read on demand.
+  if (data.mode === 'quiet') {
+    return (
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <p style={{ fontSize: 11.5, color: 'var(--faint)', margin: 0, lineHeight: 1.5 }}>{data.text}</p>
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing}
+          aria-label="Get a full read"
+          title="Get a full read"
+          style={{ background: 'none', border: 'none', cursor: refreshing ? 'default' : 'pointer', color: 'var(--faint)', fontSize: 13, padding: '0 4px', fontFamily: 'inherit', opacity: refreshing ? 0.5 : 1, flexShrink: 0 }}
+        >↻</button>
+      </div>
+    );
+  }
+
   const generatedAt = data.generatedAt ? new Date(data.generatedAt) : null;
   const timeStr = generatedAt
     ? generatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })

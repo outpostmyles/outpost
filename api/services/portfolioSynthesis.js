@@ -24,6 +24,7 @@ import { supabase } from '../db.js';
 import { logAndGrade } from './aiQualityLog.js';
 import { recordClaudeUsage } from './aiUsage.js';
 import { pctOfBookOf, bookStamp } from '../../src/lib/bookStats.js';
+import { materialFingerprint, summaryDelta, quietLine } from '../../src/lib/synthesisFreshness.js';
 import { NO_DASH_RULE, GROUNDING_RULE } from '../utils/aiStyle.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -146,10 +147,13 @@ function buildSummary(positions, totals) {
  * Build the user-facing prompt body from the summary. Compact, structured,
  * no raw position dumps even at 100+ positions.
  */
-function buildUserMessage(summary) {
-  const lines = [
-    `POSITIONS: ${summary.positionCount} | TOTAL VALUE: $${summary.totalValue.toFixed(0)} | TOTAL P&L: $${summary.totalPnl.toFixed(0)} | TODAY: $${summary.todayChange.toFixed(0)}`,
-  ];
+function buildUserMessage(summary, delta = []) {
+  const lines = [];
+  if (delta && delta.length) {
+    lines.push(`WHAT IS NEW SINCE YOUR LAST READ (lead with this, do not repeat your prior framing): ${delta.join('; ')}.`);
+    lines.push('');
+  }
+  lines.push(`POSITIONS: ${summary.positionCount} | TOTAL VALUE: $${summary.totalValue.toFixed(0)} | TOTAL P&L: $${summary.totalPnl.toFixed(0)} | TODAY: $${summary.todayChange.toFixed(0)}`);
 
   if (summary.topConcentration.length) {
     lines.push(`TOP CONCENTRATION: ${summary.topConcentration.map(c => `${c.ticker} ${c.pctOfBook}% of book`).join(', ')}`);
@@ -185,39 +189,37 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
     return { text: null, generatedAt: null, fromCache: false, summary: null, empty: true };
   }
 
-  const cacheKey = `portfolio_synthesis_${userId}`;
-  // Fingerprint of the book right now. The cache is only valid while this is
-  // unchanged, so a synthesis can never describe a book the user no longer has.
-  const stamp = bookStamp(positions);
-
-  // Check cache first
-  if (!force) {
-    const { data: cached } = await supabase
-      .from('ai_cache')
-      .select('result, created_at')
-      .eq('cache_key', cacheKey)
-      .maybeSingle();
-
-    if (cached?.result && cached?.created_at) {
-      const ageMs = Date.now() - new Date(cached.created_at).getTime();
-      if (ageMs < TTL_MS) {
-        try {
-          const parsed = JSON.parse(cached.result);
-          // Serve the cache only if the book has not changed since it was
-          // written. A mismatch (add, close, re-average) falls through and
-          // regenerates. Entries written before stamping simply regenerate once.
-          if (parsed.bookStamp === stamp) return { ...parsed, fromCache: true };
-        } catch {}
-      }
-    }
-  }
-
   const summary = buildSummary(positions, totals);
   if (!summary) {
     return { text: null, generatedAt: null, fromCache: false, summary: null, empty: true };
   }
 
-  const userMsg = buildUserMessage(summary);
+  const cacheKey = `portfolio_synthesis_${userId}`;
+  // The read has to EARN its place. The fingerprint is composition (bookStamp)
+  // plus the bucketed structural signals (materialFingerprint): a full read fires
+  // only when this moves, so the user never sees the same paragraph day after day.
+  const fingerprint = `${bookStamp(positions)}::${materialFingerprint(summary)}`;
+
+  // Last cached full read: its fingerprint and the summary it described.
+  let cached = null;
+  try {
+    const { data } = await supabase.from('ai_cache').select('result, created_at').eq('cache_key', cacheKey).maybeSingle();
+    if (data?.result) { cached = JSON.parse(data.result); cached.createdAt = data.created_at; }
+  } catch {}
+
+  if (!force && cached?.text && cached?.fingerprint === fingerprint) {
+    const ageMs = Date.now() - new Date(cached.createdAt || 0).getTime();
+    // Within the window, keep showing the read (a reopen should not make it vanish).
+    if (ageMs < TTL_MS) return { ...cached, mode: cached.mode || 'full', fromCache: true };
+    // Past the window with nothing material changed: go quiet with a short standing
+    // line instead of regenerating the same paragraph. No model call, so it is free.
+    return { text: quietLine(summary), mode: 'quiet', generatedAt: new Date().toISOString(), fromCache: false, summary };
+  }
+
+  // Something material changed (or first read, or forced): speak a fresh full read,
+  // leading with what is new since the last one so it never reads generically.
+  const delta = summaryDelta(cached?.summary, summary);
+  const userMsg = buildUserMessage(summary, delta);
 
   let text = null;
   try {
@@ -237,14 +239,20 @@ export async function getPortfolioSynthesis({ userId, positions, totals, force =
     }
   } catch (err) {
     console.error('[portfolioSynthesis] generation failed:', err.message);
-    return { text: null, generatedAt: null, fromCache: false, summary, error: err.message };
+    // Fall back to the derived quiet line rather than a blank card.
+    return { text: quietLine(summary), mode: 'quiet', generatedAt: new Date().toISOString(), fromCache: false, summary, error: err.message };
+  }
+
+  if (!text) {
+    return { text: quietLine(summary), mode: 'quiet', generatedAt: new Date().toISOString(), fromCache: false, summary };
   }
 
   const result = {
     text,
+    mode: 'full',
     generatedAt: new Date().toISOString(),
     summary,
-    bookStamp: stamp,
+    fingerprint,
   };
 
   // Persist to cache (upsert)
