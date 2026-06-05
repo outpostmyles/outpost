@@ -1,95 +1,96 @@
-// Pins the founder brief (src/lib/founderBrief.js): the grader-quality rollup and
-// the composed copy-paste block with its recommendations layer.
+// Pins the founder brief (src/lib/founderBrief.js): the grader-quality rollup, the
+// window-over-window flag-rate trend, and the composed block (four questions,
+// confidence and sample gating so seeded data cannot fool us, observation only).
 import assert from 'node:assert/strict';
-import { summarizeQuality, buildFounderBrief } from '../src/lib/founderBrief.js';
+import { summarizeQuality, buildQualityTrend, buildFounderBrief } from '../src/lib/founderBrief.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
 
-test('summarizeQuality is empty-safe', () => {
-  const q = summarizeQuality([]);
-  assert.equal(q.graded, 0);
-  assert.equal(q.flaggedPct, 0);
-  assert.deepEqual(q.byFeature, []);
-});
+const NOW = Date.parse('2026-06-15T12:00:00Z');
+const DAY = 86400000;
+const qrow = (feature, score, ageDays, failures = []) => ({ feature, score, failures, created_at: new Date(NOW - ageDays * DAY).toISOString() });
 
-test('summarizeQuality aggregates per feature, worst first, with the dominant failure', () => {
-  const rows = [
-    { feature: 'portfolio_synthesis', score: 60, failures: ['MAGNITUDE_CALIBRATED'] },
-    { feature: 'portfolio_synthesis', score: 68, failures: ['MAGNITUDE_CALIBRATED', 'NO_INVENTED_DETAILS'] },
-    { feature: 'analysis_quick', score: 95, failures: [] },
-    { feature: 'analysis_quick', score: 50, failures: ['NO_INVENTED_DETAILS'] },
-  ];
-  const q = summarizeQuality(rows, { flagThreshold: 70 });
-  assert.equal(q.graded, 4);
-  assert.equal(q.flagged, 3); // 60, 68, 50 are under 70
-  assert.equal(q.byFeature[0].feature, 'portfolio_synthesis'); // avg 64, worse than analysis_quick avg 72
-  assert.equal(q.byFeature[0].avgScore, 64);
-  assert.equal(q.byFeature[0].topFailure, 'MAGNITUDE_CALIBRATED');
-  assert.equal(q.topFailures[0].tag, 'MAGNITUDE_CALIBRATED'); // 2 vs others
-});
-
-test('failure tags are normalized to the TAG prefix so they aggregate', () => {
-  // The grader stores "TAG: long explanation"; the rollup must tally by TAG only.
+test('summarizeQuality normalizes "TAG: explanation" so tags aggregate', () => {
   const q = summarizeQuality([
-    { feature: 'analysis_quick', score: 40, failures: ['NO_INVENTED_DETAILS: cites a fake insider sale'] },
-    { feature: 'analysis_deep', score: 55, failures: ['NO_INVENTED_DETAILS: invents an India deal'] },
-  ], { flagThreshold: 70 });
+    { feature: 'analysis_quick', score: 40, failures: ['NO_INVENTED_DETAILS: a fake insider sale'] },
+    { feature: 'analysis_deep', score: 55, failures: ['NO_INVENTED_DETAILS: an invented India deal'] },
+  ]);
   assert.equal(q.topFailures[0].tag, 'NO_INVENTED_DETAILS');
-  assert.equal(q.topFailures[0].count, 2); // aggregated across the two long strings
+  assert.equal(q.topFailures[0].count, 2);
   assert.equal(q.byFeature[0].topFailure, 'NO_INVENTED_DETAILS');
 });
 
-test('non-numeric scores are skipped, not counted', () => {
-  const q = summarizeQuality([{ feature: 'x', score: null }, { feature: 'x', score: 80, failures: [] }]);
-  assert.equal(q.graded, 1);
+test('summarizeQuality skips null scores (Number(null) is 0, not NaN)', () => {
+  assert.equal(summarizeQuality([{ feature: 'x', score: null }, { feature: 'x', score: 80 }]).graded, 1);
 });
 
-test('buildFounderBrief degrades gracefully with no data', () => {
-  const { text, recommendations } = buildFounderBrief({});
+test('buildQualityTrend computes a recent-vs-prior flag rate delta', () => {
+  const rows = [
+    // recent 7d: 1 of 2 flagged (50%)
+    qrow('s', 60, 1, ['T']), qrow('s', 90, 2),
+    // prior: 1 of 4 flagged (25%)
+    qrow('s', 50, 10, ['T']), qrow('s', 90, 11), qrow('s', 95, 12), qrow('s', 88, 13),
+  ];
+  const t = buildQualityTrend(rows, { now: NOW, windowDays: 7 });
+  assert.equal(t.recent.flaggedPct, 50);
+  assert.equal(t.prior.flaggedPct, 25);
+  assert.equal(t.flagRateDelta, 25); // worse recently
+  assert.equal(t.graded, 6); // overall still aggregates everything
+});
+
+test('buildQualityTrend leaves the delta null when a window is empty', () => {
+  const t = buildQualityTrend([qrow('s', 60, 1, ['T'])], { now: NOW, windowDays: 7 });
+  assert.equal(t.flagRateDelta, null); // no prior-window rows to compare
+});
+
+test('brief is observation-only and degrades gracefully with nothing', () => {
+  const { text, observations } = buildFounderBrief({});
   assert.match(text, /OUTPOST FOUNDER BRIEF/);
-  assert.match(text, /No decisions captured yet/);
-  assert.match(text, /No usage captured yet/);
-  assert.match(text, /No graded outputs yet/);
-  assert.ok(recommendations.length >= 1);
-  assert.match(recommendations[0], /Nothing urgent/);
+  assert.match(text, /Nothing here is applied automatically or shown to users/);
+  assert.match(text, /IS THE AI ANY GOOD\?/);
+  assert.match(text, /IS OUTPOST HELPING\?/);
+  assert.match(text, /WHAT DO USERS STRUGGLE WITH\?/);
+  assert.match(text, /OPERATIONS/);
+  assert.ok(observations.some(o => /notepad, not an actor/.test(o)));
 });
 
-test('buildFounderBrief composes the sections and recommends the worst surface, biggest cost, top habit', () => {
+test('a thin userbase trips the pre-beta banner', () => {
+  const { text } = buildFounderBrief({ engagement: { totalUsers: 12 }, generatedAt: 'now' });
+  assert.match(text, /\[PRE-BETA\] Only 12 real accounts/);
+  assert.match(text, /wiring check, not signal/);
+});
+
+test('quality section flags thin samples and reads the trend', () => {
+  const qualityTrend = buildQualityTrend([
+    qrow('portfolio_synthesis', 60, 1, ['NO_FORCED_ACTION: pushed a trim']),
+    qrow('portfolio_synthesis', 95, 10),
+  ], { now: NOW, windowDays: 7 });
+  const { text } = buildFounderBrief({ qualityTrend, engagement: { totalUsers: 100 } });
+  assert.match(text, /\[thin: 2 graded\]|not enough data/); // small sample is flagged, never presented as solid
+});
+
+test('advice lift reads "not enough" until the sample is real, the make-or-break watch', () => {
+  const intel = { adviceLift: { lift: 11, advised: { n: 3, winRate: 60 }, selfDirected: { n: 2, winRate: 50 } }, totalDecisions: 30, quality: { avgIndex: 40, scored: 5 }, behavior: { patterns: [] } };
+  const { text, observations } = buildFounderBrief({ intel, engagement: { totalUsers: 100 } });
+  assert.match(text, /Advice lift: not enough resolved AI-sourced trades/);
+  assert.ok(observations.some(o => /make or break/.test(o)));
+});
+
+test('with real volume the worst surface and the top struggle drive the notes', () => {
+  const qualityTrend = buildQualityTrend(
+    Array.from({ length: 12 }, (_, i) => qrow('portfolio_synthesis', 60, i % 6, ['NO_FORCED_ACTION: trim push'])),
+    { now: NOW, windowDays: 7 },
+  );
   const intel = {
-    totalDecisions: 200, tickersTracked: 30,
-    quality: { avgIndex: 23, scored: 8 },
-    adviceLift: { lift: 11, advised: { winRate: 62 }, selfDirected: { winRate: 51 } },
-    behavior: { totalUsers: 10, patterns: [{ label: 'Holding losers, cutting winners', pctOfUsers: 80, users: 8 }] },
-    retailTraps: [{ ticker: 'SNAP', retailWinRate: 18 }],
+    adviceLift: { lift: 8, advised: { n: 20, winRate: 60 }, selfDirected: { n: 18, winRate: 52 } },
+    totalDecisions: 300, quality: { avgIndex: 41, scored: 40 },
+    behavior: { patterns: [{ key: 'hold_losers', label: 'Holding losers, cutting winners', pctOfUsers: 75 }] },
   };
-  const usage = {
-    windowDays: 30,
-    totals: { last24h: { cost: 0.42, calls: 38 }, last7d: { cost: 3.1, calls: 200 }, lastWindow: { cost: 9.4, calls: 800 } },
-    projectedMonthly: 13.3,
-    byFeature: [{ feature: 'agent', cost: 6.1, calls: 400 }, { feature: 'synthesis', cost: 0.9, calls: 50 }],
-    byModel: [{ tier: 'sonnet', cost: 7.8 }, { tier: 'haiku', cost: 1.6 }],
-  };
-  const quality = summarizeQuality([
-    { feature: 'portfolio_synthesis', score: 60, failures: ['MAGNITUDE_CALIBRATED'] },
-    { feature: 'portfolio_synthesis', score: 64, failures: ['MAGNITUDE_CALIBRATED'] },
-    { feature: 'portfolio_synthesis', score: 66, failures: ['MAGNITUDE_CALIBRATED'] },
-    { feature: 'portfolio_synthesis', score: 68, failures: ['MAGNITUDE_CALIBRATED'] },
-    { feature: 'portfolio_synthesis', score: 62, failures: ['MAGNITUDE_CALIBRATED'] },
-  ]);
-  const { text, recommendations } = buildFounderBrief({ intel, usage, quality, engagement: { totalUsers: 12, active7d: 5, agentMessages: 140 }, generatedAt: '2026-06-04T22:00:00Z' });
-
-  assert.match(text, /DECISION INTELLIGENCE/);
-  assert.match(text, /Decision quality index: 23\/100/);
-  assert.match(text, /AI COST/);
-  assert.match(text, /Projected monthly: \$13.30/);
-  assert.match(text, /AI QUALITY/);
-  assert.match(text, /ENGAGEMENT/);
-  assert.match(text, /RECOMMENDATIONS/);
-
-  assert.ok(recommendations.some(r => /portfolio_synthesis has the most flagged outputs/.test(r)));
-  assert.ok(recommendations.some(r => /agent is 65% of AI spend/.test(r)));
-  assert.ok(recommendations.some(r => /80% of users show "Holding losers/.test(r)));
+  const { text, observations } = buildFounderBrief({ intel, qualityTrend, engagement: { totalUsers: 120, active7d: 60, agentMessages: 400 } });
+  assert.match(text, /Advice lift: \+8 pts/);
+  assert.ok(observations.some(o => /portfolio_synthesis produces the most flagged output/.test(o)));
+  assert.ok(observations.some(o => /75% of users show "Holding losers/.test(o)));
 });
 
 let pass = 0, fail = 0;

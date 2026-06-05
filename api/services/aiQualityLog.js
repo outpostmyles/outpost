@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { recordClaudeUsage } from './aiUsage.js';
-import { summarizeQuality } from '../../src/lib/founderBrief.js';
+import { summarizeQuality, buildQualityTrend } from '../../src/lib/founderBrief.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 
@@ -127,5 +127,24 @@ export async function getQualityAggregate({ days = 30, flagThreshold = 70 } = {}
     return summarizeQuality(data ?? [], { flagThreshold });
   } catch {
     return summarizeQuality([], { flagThreshold });
+  }
+}
+
+/**
+ * Founder-only: the quality picture plus a recent-vs-prior flag-rate trend, so the
+ * brief can show whether a prompt fix actually lowered the flag rate. Never throws.
+ */
+export async function getQualityTrend({ days = 30, windowDays = 7, flagThreshold = 70 } = {}) {
+  try {
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const { data } = await supabase.from('ai_response_log')
+      .select('feature, score, failures, created_at')
+      .gte('created_at', since)
+      .not('score', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    return buildQualityTrend(data ?? [], { now: Date.now(), windowDays, flagThreshold });
+  } catch {
+    return buildQualityTrend([], { now: Date.now(), windowDays, flagThreshold });
   }
 }

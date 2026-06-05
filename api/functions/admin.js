@@ -26,7 +26,7 @@ import { listExperiments, aggregateFeedbackByVariant } from '../services/promptE
 import { runFounderDigest } from '../services/founderDigest.js';
 import { getAiUsageSummary } from '../services/aiUsage.js';
 import { getAggregate } from '../services/decisionLedger.js';
-import { getQualityAggregate } from '../services/aiQualityLog.js';
+import { getQualityTrend } from '../services/aiQualityLog.js';
 import { buildFounderBrief } from '../../src/lib/founderBrief.js';
 
 const router = express.Router();
@@ -295,17 +295,18 @@ router.get('/brief', requireAuth, requireAdmin, rateLimit(20), async (req, res) 
   try {
     const days = 30;
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-    const [intel, usage, quality, usersRes, activeRes, msgRes] = await Promise.all([
+    const [intel, usage, qualityTrend, usersRes, activeRes, msgRes, errRes] = await Promise.all([
       getAggregate({ days }).catch(() => null),
       getAiUsageSummary({ days }).catch(() => null),
-      getQualityAggregate({ days }).catch(() => null),
+      getQualityTrend({ days, windowDays: 7 }).catch(() => null),
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }),
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }).gte('last_login', sevenDaysAgo),
       supabase.from('agent_messages').select('id', { count: 'exact', head: true }),
+      supabase.from('errors').select('id', { count: 'exact', head: true }).gte('timestamp', sevenDaysAgo),
     ]);
-    const engagement = { totalUsers: usersRes?.count ?? 0, active7d: activeRes?.count ?? 0, agentMessages: msgRes?.count ?? 0 };
+    const engagement = { totalUsers: usersRes?.count ?? 0, active7d: activeRes?.count ?? 0, agentMessages: msgRes?.count ?? 0, errors7d: errRes?.count ?? 0 };
     const generatedAt = new Date().toISOString();
-    const brief = buildFounderBrief({ intel, usage, quality, engagement, generatedAt });
+    const brief = buildFounderBrief({ intel, usage, qualityTrend, engagement, generatedAt });
     res.json({ ...brief, generatedAt });
   } catch (err) {
     console.error('[Admin] brief failed:', err.message);
