@@ -117,7 +117,7 @@ test('advisedCoverage reports which advice channels actually reach the ledger', 
   const c = advisedCoverage(ds);
   assert.equal(c.advisedTotal, 2);
   assert.deepEqual(c.sourcesSeen, ['deploy_cash']);
-  assert.deepEqual(c.missingSources, ['screener', 'dossier']);
+  assert.deepEqual(c.missingSources, ['screener', 'dossier', 'agent']);
   assert.equal(c.narrow, true);
 });
 
@@ -128,7 +128,7 @@ test('advisedCoverage is not narrow once two channels show up, and zero is zero'
   const none = advisedCoverage([buy({ source: null }), buy({ source: 'manual' })]);
   assert.equal(none.advisedTotal, 0);
   assert.equal(none.narrow, false);
-  assert.deepEqual(none.missingSources, ['deploy_cash', 'screener', 'dossier']);
+  assert.deepEqual(none.missingSources, ['deploy_cash', 'screener', 'dossier', 'agent']);
 });
 
 let pass = 0, fail = 0;

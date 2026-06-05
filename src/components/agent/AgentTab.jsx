@@ -58,9 +58,11 @@ function Message({ msg, isLast, onSaveToJournal }) {
 // Apply. The fields are editable first, so the user always commits the final word.
 function ProposalCard({ proposal, onApply }) {
   const has = proposal.fields || {};
+  const isBuy = proposal.kind === 'buy';
   const [thesis, setThesis] = useState(has.entryThesis ?? '');
   const [stop, setStop] = useState(has.stopLoss != null ? String(has.stopLoss) : '');
   const [target, setTarget] = useState(has.priceTarget != null ? String(has.priceTarget) : '');
+  const [shares, setShares] = useState(has.shares != null ? String(has.shares) : '');
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -69,18 +71,27 @@ function ProposalCard({ proposal, onApply }) {
   if (applied) {
     return (
       <div style={{ margin: '0 0 12px 35px', maxWidth: '80%', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '8px 11px', fontSize: 11, color: 'var(--green)' }}>
-        Saved to {proposal.ticker}. Review it any time in the Portfolio tab.
+        {isBuy ? `Added ${proposal.ticker} to your portfolio. See it in the Portfolio tab.` : `Saved to ${proposal.ticker}. Review it any time in the Portfolio tab.`}
       </div>
     );
   }
 
   const labelStyle = { fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', color: 'var(--faint)', display: 'block', marginBottom: 3 };
   const inputStyle = { width: '100%', fontSize: 12, padding: '6px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' };
+  const shareNum = parseFloat(shares);
+  const estCost = isBuy && Number.isFinite(shareNum) && proposal.livePrice != null ? Math.round(shareNum * proposal.livePrice) : null;
 
   async function apply() {
     if (busy) return;
     setBusy(true);
     const body = {};
+    if (isBuy) {
+      body.ticker = proposal.ticker;
+      if (proposal.companyName) body.companyName = proposal.companyName;
+      body.shares = Number.isFinite(shareNum) ? shareNum : has.shares;
+      body.avgCost = has.avgCost ?? proposal.livePrice;
+      body.source = proposal.source || 'agent';
+    }
     if (has.entryThesis !== undefined) body.entryThesis = thesis.trim();
     if (has.stopLoss !== undefined) body.stopLoss = stop.trim() === '' ? null : parseFloat(stop);
     if (has.priceTarget !== undefined) body.priceTarget = target.trim() === '' ? null : parseFloat(target);
@@ -92,9 +103,19 @@ function ProposalCard({ proposal, onApply }) {
     <div style={{ margin: '0 0 12px 35px', maxWidth: '80%', background: 'var(--raised)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, padding: '11px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 9 }}>
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--blue)', background: 'rgba(59,130,246,0.12)', padding: '2px 6px', borderRadius: 4 }}>DRAFT</span>
-        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Update {proposal.ticker}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{isBuy ? 'Buy' : 'Update'} {proposal.ticker}</span>
         {proposal.livePrice != null && <span style={{ fontSize: 10, color: 'var(--faint)' }}>now ${proposal.livePrice}</span>}
       </div>
+
+      {isBuy && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>SHARES</label>
+            <input value={shares} onChange={e => setShares(e.target.value)} inputMode="decimal" style={inputStyle} />
+          </div>
+          {estCost != null && <span style={{ fontSize: 11, color: 'var(--faint)', paddingBottom: 7 }}>about ${estCost}</span>}
+        </div>
+      )}
 
       {has.entryThesis !== undefined && (
         <div style={{ marginBottom: 8 }}>
@@ -123,9 +144,9 @@ function ProposalCard({ proposal, onApply }) {
       )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={() => setDismissed(true)} disabled={busy} className="btn btn-muted" style={{ fontSize: 11, padding: '5px 12px' }}>Dismiss</button>
-        <button onClick={apply} disabled={busy} className="btn btn-blue" style={{ fontSize: 11, padding: '5px 14px', opacity: busy ? 0.6 : 1 }}>{busy ? 'Saving...' : 'Apply'}</button>
+        <button onClick={apply} disabled={busy} className="btn btn-blue" style={{ fontSize: 11, padding: '5px 14px', opacity: busy ? 0.6 : 1 }}>{busy ? (isBuy ? 'Adding...' : 'Saving...') : (isBuy ? 'Buy' : 'Apply')}</button>
       </div>
-      <p style={{ fontSize: 9, color: 'var(--faint)', margin: '8px 0 0', textAlign: 'center' }}>Nothing is saved until you tap Apply. You can edit the fields first.</p>
+      <p style={{ fontSize: 9, color: 'var(--faint)', margin: '8px 0 0', textAlign: 'center' }}>Nothing is {isBuy ? 'bought' : 'saved'} until you tap {isBuy ? 'Buy' : 'Apply'}. You can edit the fields first.</p>
     </div>
   );
 }
@@ -480,6 +501,13 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
   // user-initiated commit, through the same owner-scoped endpoint the portfolio
   // editor uses. Throws on failure so the card can re-enable for a retry.
   async function applyProposal(proposal, body) {
+    if (proposal.kind === 'buy') {
+      // The agent drafted a buy; this is the user-initiated commit. Tagged
+      // source 'agent' (carried in body) so it counts as advised in the ledger.
+      await api.portfolio.addPosition(body);
+      showToast(`Added ${proposal.ticker}`, 'success');
+      return;
+    }
     if (proposal.kind !== 'position_update') throw new Error('Unknown proposal type');
     await api.portfolio.editPosition(proposal.positionId, body);
     showToast(`Saved to ${proposal.ticker}`, 'success');

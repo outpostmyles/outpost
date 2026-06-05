@@ -330,7 +330,7 @@ export function aggregateQuality(decisions) {
 // The sources that mean Outpost prompted the trade. Exported so the position
 // endpoint validates against the SAME list and the two can never drift: a buy the
 // app suggested must be recordable as advised, or this whole number quietly lies.
-export const AI_SOURCES = ['deploy_cash', 'screener', 'dossier'];
+export const AI_SOURCES = ['deploy_cash', 'screener', 'dossier', 'agent'];
 const AI_SOURCE_SET = new Set(AI_SOURCES);
 export function adviceLift(decisions) {
   const resolved = arr(decisions).filter(d => d.outcomeStatus && (OPENISH.has(d.type) || d.type === 'close'));

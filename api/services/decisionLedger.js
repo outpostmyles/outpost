@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns, perLotOutcome } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns, perLotOutcome, AI_SOURCES } from '../../src/lib/decisionLedger.js';
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
 import { classifyEmotion } from '../../src/lib/emotionRead.js';
@@ -202,7 +202,7 @@ const EMPTY_INTEL = (days) => ({
   integrity: {
     bias: { biasedHigh: false, resolutionRate: null, resolved: 0, unresolved: 0, unresolvedMedianAgeDays: null, why: 'no decisions yet' },
     adviceLift: { trust: false, caveat: 'no decisions yet', advisedResolution: null, selfResolution: null, advisedResolved: 0, selfResolved: 0 },
-    coverage: { advisedTotal: 0, sourcesSeen: [], missingSources: ['deploy_cash', 'screener', 'dossier'], narrow: false },
+    coverage: { advisedTotal: 0, sourcesSeen: [], missingSources: [...AI_SOURCES], narrow: false },
   },
 });
 

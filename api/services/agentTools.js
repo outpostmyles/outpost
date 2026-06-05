@@ -22,6 +22,7 @@ import { baseRateGuidance, setupBaseRates } from '../../src/lib/decisionLedger.j
 import { classifyEmotion, emotionWarning } from '../../src/lib/emotionRead.js';
 import { getMarketData } from './marketData.js';
 import { buildPositionProposal, PROPOSAL_REJECTIONS } from '../../src/lib/positionProposal.js';
+import { buildBuyProposal, BUY_PROPOSAL_REJECTIONS } from '../../src/lib/buyProposal.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -322,6 +323,24 @@ export const AGENT_TOOLS = [
       required: ['ticker'],
     },
   },
+  {
+    name: 'propose_buy',
+    description: 'Draft a NEW buy the trader is about to make on your suggestion: a ticker, a size (either a dollar amount to invest or a share count), and optionally a thesis, a stop loss, and a price target. This NEVER buys anything. It shows the user a confirm card with your draft, and the position is created only if THEY tap Apply. Use this ONLY when the user explicitly asks you to set up, size, or draft a specific buy (for example "set me up to buy $2000 of NVDA", "size a starter position in COST with a stop"). Do NOT call it unprompted, do NOT use it to nudge them into buying, and do NOT call it for stocks they already hold (use propose_position_update for those). After calling it, tell the user you drafted it for them to review and never say you bought or added it. Outpost is long only, so a stop must be below the current price and a target above it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ticker: { type: 'string', description: 'Ticker to buy' },
+        company_name: { type: 'string', description: 'Optional. Company name, if known.' },
+        dollars: { type: 'number', description: 'Optional. Dollar amount to invest; converted to whole shares at the live price. Provide this OR shares.' },
+        shares: { type: 'number', description: 'Optional. Exact share count to buy. Provide this OR dollars.' },
+        thesis: { type: 'string', description: 'Optional. The entry thesis, in the user\'s voice from the conversation (why buy, what would change their mind).' },
+        stop_loss: { type: 'number', description: 'Optional. Proposed stop loss price. Must be below the current price.' },
+        take_profit: { type: 'number', description: 'Optional. Proposed price target. Must be above the current price.' },
+        rationale: { type: 'string', description: 'Optional. One short line on why this buy and these levels, shown on the confirm card.' },
+      },
+      required: ['ticker'],
+    },
+  },
 ];
 
 /**
@@ -397,6 +416,10 @@ export async function executeTool(toolName, toolInput, context = {}) {
         return context.userId
           ? await proposePositionUpdate({ ...toolInput, userId: context.userId, sink: context.proposals })
           : { error: 'User context not available' };
+      case 'propose_buy':
+        return context.userId
+          ? await proposeBuy({ ...toolInput, userId: context.userId, sink: context.proposals })
+          : { error: 'User context not available' };
       default: return { error: `Unknown tool: ${toolName}` };
     }
   } catch (err) {
@@ -437,6 +460,38 @@ async function proposePositionUpdate({ ticker, thesis, stop_loss, take_profit, r
     ticker: sym,
     drafted,
     note: `Draft created for ${sym} (${drafted}). A confirm card is now showing for the user. Tell them you drafted it, summarize it in one line, and ask them to review and tap Apply. Do NOT claim it is saved or set; nothing is written until they confirm.`,
+  };
+}
+
+// Draft a NEW buy. Like proposePositionUpdate this never writes: it prices the
+// ticker, validates the size and the long-only levels via the pure builder, pushes
+// the normalized proposal into the request's sink (the route streams it to the UI
+// as a confirm card), and returns a model-facing acknowledgement that is explicit
+// that NOTHING is bought until the user taps Apply. An applied buy is recorded with
+// source 'agent', so chat-driven advice finally reaches the reward signal.
+async function proposeBuy({ ticker, company_name, dollars, shares, thesis, stop_loss, take_profit, rationale, userId, sink }) {
+  const clean = sanitizeToolTicker(ticker);
+  if (!clean) return { ok: false, proposed: false, note: 'That ticker could not be read, so nothing was drafted.' };
+  const price = getPrice(clean)?.price ?? null;
+  const result = buildBuyProposal(
+    { ticker: clean, company_name, dollars, shares, thesis, stop_loss, take_profit, rationale },
+    { price },
+  );
+  if (!result.ok) {
+    return { ok: false, proposed: false, note: BUY_PROPOSAL_REJECTIONS[result.error] || 'That buy could not be drafted.' };
+  }
+  if (Array.isArray(sink)) sink.push(result.proposal); // hand the draft to the route to surface a confirm card
+  const f = result.proposal.fields;
+  const parts = [`${f.shares} share${f.shares === 1 ? '' : 's'} (about $${f.estCost})`];
+  if (f.stopLoss != null) parts.push(`a stop at $${f.stopLoss}`);
+  if (f.priceTarget != null) parts.push(`a target at $${f.priceTarget}`);
+  const drafted = parts.join(', ');
+  return {
+    ok: true,
+    proposed: true,
+    ticker: clean,
+    drafted,
+    note: `Draft buy created for ${clean}: ${drafted}. A confirm card is now showing for the user. Tell them you drafted it, summarize it in one line, and ask them to review and tap Apply. Do NOT claim it is bought or added; nothing is purchased until they confirm.`,
   };
 }
 

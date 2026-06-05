@@ -219,7 +219,7 @@ test('adviceLift withholds a verdict when a side has no resolved trades', () => 
 
 test('AI_SOURCES is the exported single source of truth, so every AI buy counts as advised', () => {
   assert.ok(Array.isArray(AI_SOURCES));
-  for (const s of ['deploy_cash', 'screener', 'dossier']) assert.ok(AI_SOURCES.includes(s), `AI_SOURCES must include ${s}`);
+  for (const s of ['deploy_cash', 'screener', 'dossier', 'agent']) assert.ok(AI_SOURCES.includes(s), `AI_SOURCES must include ${s}`);
   // screener and dossier were silently dropped to manual at the position endpoint
   // before; here they must land on the advised side of the lift.
   const r = adviceLift([
