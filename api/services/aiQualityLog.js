@@ -16,6 +16,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { recordClaudeUsage } from './aiUsage.js';
+import { summarizeQuality } from '../../src/lib/founderBrief.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 
@@ -106,5 +107,25 @@ export async function logAndGrade({
     });
   } catch (err) {
     console.error('[aiQualityLog] log failed:', err.message);
+  }
+}
+
+/**
+ * Founder-only: roll the graded outputs over the last `days` into a per-feature
+ * quality picture (avg score, flagged count, dominant failure tag) for the brief.
+ * Never throws.
+ */
+export async function getQualityAggregate({ days = 30, flagThreshold = 70 } = {}) {
+  try {
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const { data } = await supabase.from('ai_response_log')
+      .select('feature, score, failures, created_at')
+      .gte('created_at', since)
+      .not('score', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    return summarizeQuality(data ?? [], { flagThreshold });
+  } catch {
+    return summarizeQuality([], { flagThreshold });
   }
 }

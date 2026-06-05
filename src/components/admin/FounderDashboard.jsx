@@ -19,6 +19,8 @@ export default function FounderDashboard({ onBack }) {
   // Real Claude API cost, attributed by feature and model. FOUNDER ONLY: this is
   // never shown to a user, it exists so we can see where the AI spend goes.
   const [aiUsage, setAiUsage] = useState(null);
+  // The "open sheet": everything compiled into one plain-text block to copy to Claude.
+  const [brief, setBrief] = useState(null);
 
   async function load() {
     try {
@@ -36,11 +38,13 @@ export default function FounderDashboard({ onBack }) {
   useEffect(() => { load(); }, []);
   useEffect(() => { api.decisions.aggregate().then(setIntel).catch(() => setIntel(null)); }, []);
   useEffect(() => { api.admin.aiUsage(30).then(setAiUsage).catch(() => setAiUsage(null)); }, []);
+  useEffect(() => { api.admin.brief().then(setBrief).catch(() => setBrief(null)); }, []);
 
   function refresh() {
     setRefreshing(true);
     api.decisions.aggregate().then(setIntel).catch(() => {});
     api.admin.aiUsage(30).then(setAiUsage).catch(() => {});
+    api.admin.brief().then(setBrief).catch(() => {});
     load();
   }
 
@@ -71,6 +75,22 @@ export default function FounderDashboard({ onBack }) {
   return (
     <div className="scrollable" style={{ flex: 1 }}>
       <Header onBack={onBack} onRefresh={refresh} refreshing={refreshing} generatedAt={generatedAt} />
+
+      {/* FOUNDER BRIEF: everything compiled into one plain-text block to copy or
+          screenshot and hand to Claude, with a recommendations list. FOUNDER ONLY. */}
+      <div style={{ padding: '12px 16px 4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <SectionTitle>Founder brief (copy to Claude)</SectionTitle>
+          {brief?.text && <CopyButton text={brief.text} />}
+        </div>
+        {!brief?.text ? (
+          <Card><p style={{ padding: 14, fontSize: 11, color: 'var(--faint)' }}>Compiling the brief…</p></Card>
+        ) : (
+          <Card>
+            <pre style={{ margin: 0, padding: 12, fontSize: 10.5, lineHeight: 1.5, color: 'var(--muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace', maxHeight: 360, overflowY: 'auto' }}>{brief.text}</pre>
+          </Card>
+        )}
+      </div>
 
       {/* DECISION INTELLIGENCE: our private, compiled view of what the user base
           is doing. This is the data asset, for us to learn from, never shown to
@@ -421,6 +441,17 @@ function Spark({ series, labels }) {
       </svg>
       <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'right', marginTop: 4 }}>peak {max}</p>
     </div>
+  );
+}
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} }}
+      className="btn btn-blue"
+      style={{ fontSize: 10, padding: '4px 10px' }}
+    >{copied ? 'Copied' : 'Copy'}</button>
   );
 }
 
