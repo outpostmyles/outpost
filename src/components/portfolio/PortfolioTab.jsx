@@ -11,7 +11,7 @@ import { callAge } from '../../lib/decisionMemory.js';
 import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
-import { TickerIcon, Spinner, EmptyState, Modal, FormField, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
+import { TickerIcon, Spinner, EmptyState, Modal, FormField, FeedbackButtons, SkeletonCard, CountUp } from '../shared/UI.jsx';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
 import StockDossier from '../research/StockDossier.jsx';
@@ -2671,21 +2671,21 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>TODAY</p>
-                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.todayChange), letterSpacing: '-0.4px' }}>{data?.todayChange >= 0 ? '+' : ''}${fmt(Math.abs(data?.todayChange))}</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.todayChange), letterSpacing: '-0.4px' }}><CountUp value={data?.todayChange} format={(v) => `${v >= 0 ? '+' : ''}$${fmt(Math.abs(v))}`} /></p>
                 <p style={{ fontSize: 10, color: colorFor(data?.todayChange) }}>
                   {data?.totalValue > 0 ? `${data.todayChange >= 0 ? '+' : ''}${fmt((data.todayChange / (data.totalValue - data.todayChange)) * 100, 2)}%` : '—'}
                 </p>
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>TOTAL P&L</p>
-                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.totalPnl), letterSpacing: '-0.4px' }}>{data?.totalPnl >= 0 ? '+' : ''}${fmt(Math.abs(data?.totalPnl))}</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: colorFor(data?.totalPnl), letterSpacing: '-0.4px' }}><CountUp value={data?.totalPnl} format={(v) => `${v >= 0 ? '+' : ''}$${fmt(Math.abs(v))}`} /></p>
                 <p style={{ fontSize: 10, color: colorFor(data?.totalPnl) }}>
                   {data?.totalCost > 0 ? `${data.totalPnl >= 0 ? '+' : ''}${fmt((data.totalPnl / data.totalCost) * 100, 1)}%` : '—'}
                 </p>
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 8, color: 'var(--faint)', letterSpacing: '0.8px', marginBottom: 2 }}>VALUE</p>
-                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px' }}>${fmtCompact(data?.accountValue ?? data?.totalValue)}</p>
+                <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px' }}><CountUp value={data?.accountValue ?? data?.totalValue} format={(v) => `$${fmtCompact(v)}`} /></p>
                 <p style={{ fontSize: 10, color: 'var(--faint)' }}>{positions.length} position{positions.length === 1 ? '' : 's'}</p>
               </div>
             </div>

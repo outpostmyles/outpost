@@ -300,6 +300,10 @@ textarea.input { resize: none; }
 /* Entrance */
 .rise { animation: rise 0.4s cubic-bezier(0.16,1,0.3,1) both; }
 
+/* Bar fill: a progress/score fill sweeps in from the left on mount. Transform
+   based, so it works on any fill width with no per-component state and no reflow. */
+.grow-in { transform-origin: left center; animation: growIn 0.75s cubic-bezier(0.16,1,0.3,1) both; }
+
 @media (hover: none) and (pointer: coarse) {
   .input { font-size: 16px; }
 }
@@ -310,4 +314,5 @@ textarea.input { resize: none; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes growIn { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(2000%); } }

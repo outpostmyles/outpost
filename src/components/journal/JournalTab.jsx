@@ -482,7 +482,7 @@ function ComposureCard() {
               <span style={{ fontSize: 10, color: 'var(--faint)' }}>{s.value}</span>
             </div>
             <div style={{ height: 5, background: 'var(--raised)', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ width: `${s.value}%`, height: '100%', background: subColor(s.value), borderRadius: 3 }} />
+              <div className="grow-in" style={{ width: `${s.value}%`, height: '100%', background: subColor(s.value), borderRadius: 3 }} />
             </div>
             <p style={{ fontSize: 9, color: 'var(--faint)', margin: '3px 0 0' }}>{s.note}</p>
           </div>

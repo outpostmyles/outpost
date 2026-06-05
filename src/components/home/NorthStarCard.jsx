@@ -87,7 +87,7 @@ export default function NorthStarCard({ currentValue }) {
       ) : (
         <>
           <div style={{ height: 8, background: 'var(--raised)', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
-            <div style={{ width: `${prog.pct}%`, height: '100%', background: prog.reached ? 'var(--green)' : 'var(--blue)', borderRadius: 4, transition: 'width 0.4s' }} />
+            <div className="grow-in" style={{ width: `${prog.pct}%`, height: '100%', background: prog.reached ? 'var(--green)' : 'var(--blue)', borderRadius: 4, transition: 'width 0.4s' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
             <p style={{ fontSize: 13, color: 'var(--text)', fontWeight: 700, margin: 0 }}>

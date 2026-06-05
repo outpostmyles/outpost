@@ -6,7 +6,7 @@ import { fmt, colorFor, greeting } from '../../utils/market.js';
 import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
 import { buildCoachReachout } from '../../lib/coachReachout.js';
 import { renderPlainText } from '../../utils/renderText.js';
-import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard } from '../shared/UI.jsx';
+import { TickerIcon, EmptyState, DisclaimerBadge, FeedbackButtons, SkeletonCard, CountUp } from '../shared/UI.jsx';
 import ActivationChecklist from './ActivationChecklist.jsx';
 import PortfolioExplainerCard from './PortfolioExplainerCard.jsx';
 import TodayCard from './TodayCard.jsx';
@@ -674,7 +674,7 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
             {data.portfolio?.totalValue > 0 ? (
               <>
                 <p style={{ fontSize: 28, fontWeight: 700, fontFamily: 'JetBrains Mono', color: 'var(--text)', letterSpacing: '-1px', marginBottom: 5 }}>
-                  ${fmt(data.portfolio.totalValue)}
+                  <CountUp value={data.portfolio.totalValue} format={(v) => `$${fmt(v)}`} />
                 </p>
                 <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
                   <span style={{ color: 'var(--faint)' }}>P&L <span style={{ color: colorFor(data.portfolio.totalPnl), fontWeight: 700 }}>{data.portfolio.totalPnl >= 0 ? '+' : ''}${fmt(data.portfolio.totalPnl)}</span></span>

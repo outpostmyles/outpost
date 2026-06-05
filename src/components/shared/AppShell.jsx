@@ -178,29 +178,17 @@ export default function AppShell() {
   const usagePct = user ? Math.min(100, Math.round(((user.credits_used_this_month ?? 0) / totalCredits) * 100)) : 0;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: `
-        linear-gradient(rgba(110,150,255,0.02) 1px, transparent 1px) 0 0 / 46px 46px,
-        linear-gradient(90deg, rgba(110,150,255,0.02) 1px, transparent 1px) 0 0 / 46px 46px,
-        radial-gradient(1200px 520px at 50% -200px, rgba(59,130,246,0.13), transparent 70%),
-        radial-gradient(1000px 520px at 92% 108%, rgba(45,212,238,0.06), transparent 70%),
-        var(--bg)` }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'radial-gradient(1100px 460px at 50% -240px, rgba(59,130,246,0.08), transparent 72%), var(--bg)' }}>
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
         @keyframes asTape { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-        @keyframes asBlink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
-        @keyframes asScan { 0%{transform:translateY(-60%)} 100%{transform:translateY(360%)} }
       `}</style>
-
-      {/* Scanline sweep: a faint cyan light bar drifting down the deck. Pure
-          ambiance, pointer-events off, sits under the bars and over the content. */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '22%', pointerEvents: 'none', zIndex: 1, background: 'linear-gradient(180deg, transparent, rgba(45,212,238,0.05), transparent)', animation: 'asScan 8s linear infinite' }} />
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Logo />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--text)' }}>OUTPOST</span>
-          <span style={{ display: 'inline-block', width: 7, height: 14, marginLeft: -2, background: 'var(--cyan)', borderRadius: 1, boxShadow: '0 0 8px rgba(45,212,238,0.8)', animation: 'asBlink 1.2s step-end infinite' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 3, background: `${marketStatus.color}12`, border: `1px solid ${marketStatus.color}28` }}>

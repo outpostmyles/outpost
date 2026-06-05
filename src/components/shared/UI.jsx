@@ -1,5 +1,35 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getTickerColor, getInitials } from '../../utils/market.js';
+
+/**
+ * CountUp: animate a number from its last value to the new one, easing out, so
+ * hero figures tick up like a terminal readout instead of snapping. First mount
+ * counts from zero (the "data loading in" moment); later updates animate from the
+ * previous value. `format(n)` renders each frame, so callers keep their own $ and
+ * percent formatting. Cheap: one rAF loop that stops when it lands.
+ */
+export function CountUp({ value, format, duration = 650, style, className }) {
+  const target = Number(value) || 0;
+  const [n, setN] = useState(0);
+  const fromRef = useRef(0);
+  const rafRef = useRef();
+  useEffect(() => {
+    const from = fromRef.current;
+    if (from === target) { setN(target); return; }
+    let start = null;
+    const step = (ts) => {
+      if (start == null) start = ts;
+      const t = Math.min(1, (ts - start) / duration);
+      const e = 1 - Math.pow(1 - t, 3);
+      setN(from + (target - from) * e);
+      if (t < 1) rafRef.current = requestAnimationFrame(step);
+      else { fromRef.current = target; setN(target); }
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+  return <span style={style} className={className}>{format ? format(n) : Math.round(n)}</span>;
+}
 
 export function Spinner({ size = 20 }) {
   return <div className="spinner" style={{ width: size, height: size }} />;
