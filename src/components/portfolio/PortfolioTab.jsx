@@ -1623,6 +1623,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [sellPrice, setSellPrice] = useState('');
+  const [sellShares, setSellShares] = useState(''); // blank = sell the whole position; fewer = trim
   // Phase 2 close-time reflection — three structured fields.
   // Legacy fields (exitReflection text + exitOutcome enum) are derived
   // server-side from these so the agent's existing tools keep working.
@@ -1709,6 +1710,10 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
   }
 
   function attemptClose() {
+    // A partial sell (trim) skips the close-reflection gate; reflection is for a
+    // full exit, not for trimming a piece.
+    const sh = Number(sellShares);
+    if (sellShares !== '' && Number.isFinite(sh) && sh > 0 && sh < (pos.shares ?? 0)) { doRemove(); return; }
     // Soft gate: if NOTHING was filled in (no thesis-played-out, no reflection,
     // no execution rating), prompt before closing. Skipping is still allowed.
     if (!thesisPlayedOut && !reflectionWhatHappened.trim() && !reflectionLesson.trim() && executionRating == null) {
@@ -1722,19 +1727,32 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
     setSkipReflectionConfirm(false);
     setRemoving(true); setErr('');
     try {
+      const sh = Number(sellShares);
+      const isPartial = sellShares !== '' && Number.isFinite(sh) && sh > 0 && sh < (pos.shares ?? 0);
       const body = {};
       if (sellPrice) body.sellPrice = parseFloat(sellPrice);
-      if (thesisPlayedOut) body.thesisPlayedOut = thesisPlayedOut;
-      if (reflectionWhatHappened.trim()) body.reflectionWhatHappened = reflectionWhatHappened.trim();
-      if (reflectionLesson.trim()) body.reflectionLesson = reflectionLesson.trim();
-      if (executionRating != null) body.executionRating = executionRating;
+      if (isPartial) {
+        body.sellShares = sh; // a trim: backend sells this many and leaves the rest open
+      } else {
+        if (thesisPlayedOut) body.thesisPlayedOut = thesisPlayedOut;
+        if (reflectionWhatHappened.trim()) body.reflectionWhatHappened = reflectionWhatHappened.trim();
+        if (reflectionLesson.trim()) body.reflectionLesson = reflectionLesson.trim();
+        if (executionRating != null) body.executionRating = executionRating;
+      }
       const res = await api.portfolio.removePosition(pos.id, body);
       onRefresh();
-      const proceeds = res?.proceeds;
-      showToast(
-        proceeds > 0 ? `${pos.ticker} closed. $${fmt(proceeds)} added to your cash.` : `${pos.ticker} closed and saved to history`,
-        'success',
-      );
+      if (res?.partial) {
+        // The position survives a trim, so the card stays mounted: reset the sheet
+        // ourselves (a full close unmounts the card, so it does not need this).
+        setMode('collapsed'); setRemoving(false); setSellShares(''); setSellPrice('');
+        showToast(`Trimmed ${res.sharesSold} ${pos.ticker}. $${fmt(res.proceeds)} to cash, ${res.remaining} left.`, 'success');
+      } else {
+        const proceeds = res?.proceeds;
+        showToast(
+          proceeds > 0 ? `${pos.ticker} closed. $${fmt(proceeds)} added to your cash.` : `${pos.ticker} closed and saved to history`,
+          'success',
+        );
+      }
     } catch {
       setErr('Failed to remove');
       setRemoving(false);
@@ -2004,10 +2022,16 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
         {mode === 'close' && (
           <div style={{ borderTop: '1px solid var(--border)', padding: '10px 13px' }}>
             <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', marginBottom: 8 }}>CLOSE {pos.ticker} POSITION</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <span style={{ fontSize: 10, color: 'var(--faint)', whiteSpace: 'nowrap' }}>Sell price $</span>
               <input className="input" type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} style={{ flex: 1, fontSize: 12 }} placeholder={String(pos.currentPrice ?? '')} />
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 10, color: 'var(--faint)', whiteSpace: 'nowrap' }}>Shares</span>
+              <input className="input" type="number" value={sellShares} onChange={e => setSellShares(e.target.value)} style={{ flex: 1, fontSize: 12 }} placeholder={`all ${pos.shares}`} />
+              <button type="button" onClick={() => setSellShares(String((pos.shares ?? 0) / 2))} className="btn btn-muted" style={{ fontSize: 9, padding: '7px 9px', whiteSpace: 'nowrap' }}>Half</button>
+            </div>
+            <p style={{ fontSize: 9, color: 'var(--faint)', marginBottom: 12 }}>Leave shares blank to close it all. Enter fewer to trim and keep the rest. A trim skips the reflection below.</p>
 
             {/* Question 1 — did the thesis play out? Single tap. */}
             <p style={{ fontSize: 9, color: 'var(--blue)', letterSpacing: '0.5px', marginBottom: 5, fontWeight: 700 }}>DID YOUR THESIS PLAY OUT?</p>
