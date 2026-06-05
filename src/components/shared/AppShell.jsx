@@ -149,11 +149,16 @@ export default function AppShell() {
   const usagePct = user ? Math.min(100, Math.round(((user.credits_used_this_month ?? 0) / totalCredits) * 100)) : 0;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'radial-gradient(1100px 480px at 50% -180px, rgba(59,130,246,0.10), transparent 70%), var(--bg)' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: `
+        linear-gradient(rgba(110,150,255,0.02) 1px, transparent 1px) 0 0 / 46px 46px,
+        linear-gradient(90deg, rgba(110,150,255,0.02) 1px, transparent 1px) 0 0 / 46px 46px,
+        radial-gradient(1200px 520px at 50% -200px, rgba(59,130,246,0.13), transparent 70%),
+        radial-gradient(1000px 520px at 92% 108%, rgba(45,212,238,0.06), transparent 70%),
+        var(--bg)` }}>
       <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }`}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, #0f0f15, #0b0b10)', boxShadow: '0 1px 0 rgba(255,255,255,0.03), 0 6px 22px rgba(0,0,0,0.28)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Logo />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--text)' }}>OUTPOST</span>
@@ -220,7 +225,7 @@ export default function AppShell() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'linear-gradient(180deg, #0d0d12, #08080d)', boxShadow: '0 -1px 0 rgba(255,255,255,0.03), 0 -6px 22px rgba(0,0,0,0.3)', paddingBottom: 'env(safe-area-inset-bottom)', position: 'relative', zIndex: 5 }}>
+      <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(13,16,24,0.86), rgba(6,8,13,0.92))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 -1px 0 rgba(122,162,255,0.06), 0 -6px 24px rgba(0,0,0,0.34)', paddingBottom: 'env(safe-area-inset-bottom)', position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', padding: '8px 0 12px' }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;

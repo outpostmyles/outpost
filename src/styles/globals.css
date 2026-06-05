@@ -1,33 +1,43 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-:root {
-  --bg: #08080c;
-  --surface: #14141d;
-  --raised: #1d1d28;
-  --border: rgba(255,255,255,0.10);
-  --border-hover: rgba(255,255,255,0.18);
-  --text: #ffffff;
-  --muted: rgba(255,255,255,0.75);
-  --faint: rgba(255,255,255,0.4);
-  --blue: #3b82f6;
-  --blue-dim: rgba(59,130,246,0.14);
-  --green: #22c55e;
-  --green-dim: rgba(34,197,94,0.12);
-  --red: #ef4444;
-  --red-dim: rgba(239,68,68,0.12);
-  --amber: #f59e0b;
-  --amber-dim: rgba(245,158,11,0.12);
-  --purple: #8b5cf6;
-  --purple-dim: rgba(139,92,246,0.14);
-  --cyan: #06b6d4;
+/* ============================================================================
+   OUTPOST: terminal, lit. A command-deck HUD aesthetic on the existing
+   monospace terminal bones. Panels stay DARK and separate by luminous edge and
+   glow, not by heavy fill, so the app reads futuristic instead of boxy.
+   The whole look flows from these tokens + a handful of primitives, so it is
+   one revert away from the old skin.
+   ========================================================================== */
 
-  /* Elevation: a consistent depth language used across the app. The inset top
-     line is "light from above"; the drop shadow is the lift off the page. */
-  --hl: rgba(255,255,255,0.04);            /* top highlight */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-  --shadow-md: 0 6px 20px rgba(0,0,0,0.35);
-  --shadow-lg: 0 18px 50px rgba(0,0,0,0.5);
-  --glow-blue: 0 0 0 1px rgba(59,130,246,0.35), 0 6px 22px rgba(59,130,246,0.28);
+:root {
+  --bg: #06070b;
+  --surface: #0c0e15;        /* dark panel base; separation comes from the edge, not the fill */
+  --raised: #12151f;
+  --border: rgba(122,162,255,0.12);     /* cool luminous hairline */
+  --border-hover: rgba(122,162,255,0.30);
+  --text: #eef2fb;
+  --muted: rgba(223,231,247,0.72);
+  --faint: rgba(205,217,243,0.40);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59,130,246,0.16);
+  --green: #22c55e;
+  --green-dim: rgba(34,197,94,0.13);
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.13);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245,158,11,0.13);
+  --purple: #8b5cf6;
+  --purple-dim: rgba(139,92,246,0.16);
+  --cyan: #2dd4ee;           /* the futuristic accent: edges, glints, active state */
+  --cyan-dim: rgba(45,212,238,0.14);
+
+  /* Depth + light. The inset top line is light from above; the drop is the lift;
+     the glow is the HUD luminance on accents. */
+  --hl: rgba(160,195,255,0.07);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 8px 26px rgba(0,0,0,0.5);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,0.62);
+  --glow-blue: 0 0 0 1px rgba(59,130,246,0.4), 0 6px 26px rgba(59,130,246,0.30);
+  --glow-cyan: 0 0 0 1px rgba(45,212,238,0.4), 0 0 22px rgba(45,212,238,0.30);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -42,42 +52,43 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: rgba(59,130,246,0.32); color: #fff; }
+::selection { background: rgba(45,212,238,0.30); color: #fff; }
+
+/* Focus: kill the ugly mouse-click box, keep a clean ring for keyboard users. */
+:focus:not(:focus-visible) { outline: none; }
+:focus-visible { outline: 1.5px solid rgba(45,212,238,0.7); outline-offset: 2px; border-radius: 4px; }
 
 .scrollable { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .scrollable::-webkit-scrollbar { display: none; }
 
-/* Cards: lit from above, lifted off the page. The subtle top-to-base gradient
-   plus an inset highlight reads as glass-on-dark without losing the terminal feel. */
+/* Panels: dark glass lifted off the deck, edged in cool light. */
 .card {
-  background: linear-gradient(180deg, #101017, #0c0c11);
+  background: linear-gradient(180deg, rgba(255,255,255,0.022), rgba(255,255,255,0)), var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: inset 0 1px 0 var(--hl), var(--shadow-sm);
 }
 .card-raised {
-  background: linear-gradient(180deg, #16161e, #121218);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)), var(--raised);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: inset 0 1px 0 var(--hl), var(--shadow-md);
 }
-/* Opt-in interactive lift for tappable cards */
 .card-tap { transition: transform 0.16s cubic-bezier(0.16,1,0.3,1), border-color 0.16s, box-shadow 0.16s; cursor: pointer; }
-@media (hover: hover) { .card-tap:hover { transform: translateY(-1px); border-color: var(--border-hover); box-shadow: inset 0 1px 0 var(--hl), var(--shadow-md); } }
+@media (hover: hover) { .card-tap:hover { transform: translateY(-1px); border-color: var(--border-hover); box-shadow: inset 0 1px 0 var(--hl), var(--shadow-md), 0 0 22px rgba(59,130,246,0.10); } }
 .card-tap:active { transform: translateY(0) scale(0.995); }
 
-/* App-wide card depth without touching 140+ inline call sites. Almost every card
-   in the app is an inline-styled div using var(--surface) or var(--raised) with a
-   border radius. Give them all the same light-from-above highlight and a soft
-   lift. Only ADDS a box-shadow, so it never fights an inline background, and the
-   :not([style*="box-shadow"]) guard means any card that sets its own shadow wins.
-   Native form controls and buttons are excluded (they have their own treatment). */
+/* App-wide panel depth without touching ~140 inline call sites. Every card is an
+   inline-styled div using var(--surface)/var(--raised) with a radius. Give them
+   all the light-from-above edge + lift. Only ADDS a shadow, never fights an
+   inline background, and any card that sets its own shadow wins. The luminous
+   edge comes free from the cool --border token. */
 [style*="--surface"][style*="border-radius"]:not([style*="box-shadow"]):not(button):not(input):not(select):not(textarea),
 [style*="--raised"][style*="border-radius"]:not([style*="box-shadow"]):not(button):not(input):not(select):not(textarea) {
-  box-shadow: inset 0 1px 0 var(--hl), 0 2px 10px rgba(0,0,0,0.28);
+  box-shadow: inset 0 1px 0 var(--hl), 0 2px 14px rgba(0,0,0,0.5);
 }
 
-/* Buttons: sharp, terminal style, now with a touch of dimension */
+/* Buttons: terminal sharp, now with dimension and a colored glow. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -98,24 +109,24 @@ body {
 .btn { user-select: none; -webkit-user-select: none; }
 @media (hover: hover) {
   .btn:hover { opacity: 0.92; }
-  .btn-blue:hover, .btn-green:hover, .btn-amber:hover, .btn-purple:hover, .btn-red:hover { opacity: 1; filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-blue:hover, .btn-green:hover, .btn-amber:hover, .btn-purple:hover, .btn-red:hover { opacity: 1; filter: brightness(1.1); transform: translateY(-1px); }
 }
 .btn:active { opacity: 0.7; transform: scale(0.97); }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; filter: none; transform: none; }
 
-.btn-blue { background: linear-gradient(180deg, #4d8dff, #3b82f6); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 14px rgba(59,130,246,0.3); }
-.btn-green { background: linear-gradient(180deg, #2fd06a, #22c55e); color: #04140a; box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 4px 14px rgba(34,197,94,0.25); }
-.btn-red { background: linear-gradient(180deg, #f25a5a, #ef4444); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 14px rgba(239,68,68,0.25); }
-.btn-amber { background: linear-gradient(180deg, #ffb01f, #f59e0b); color: #1a1203; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 4px 14px rgba(245,158,11,0.25); }
-.btn-purple { background: linear-gradient(180deg, #9d6bff, #8b5cf6); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 14px rgba(139,92,246,0.28); }
-.btn-muted { background: rgba(255,255,255,0.08); color: var(--muted); box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
-.btn-outline-blue { background: rgba(59,130,246,0.06); color: var(--blue); border: 1px solid rgba(59,130,246,0.4); border-radius: 5px; }
+.btn-blue { background: linear-gradient(180deg, #4d8dff, #3b82f6); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(59,130,246,0.38); }
+.btn-green { background: linear-gradient(180deg, #2fd06a, #22c55e); color: #04140a; box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), 0 4px 16px rgba(34,197,94,0.32); }
+.btn-red { background: linear-gradient(180deg, #f25a5a, #ef4444); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 16px rgba(239,68,68,0.32); }
+.btn-amber { background: linear-gradient(180deg, #ffb01f, #f59e0b); color: #1a1203; box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), 0 4px 16px rgba(245,158,11,0.32); }
+.btn-purple { background: linear-gradient(180deg, #9d6bff, #8b5cf6); color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(139,92,246,0.34); }
+.btn-muted { background: rgba(255,255,255,0.07); color: var(--muted); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
+.btn-outline-blue { background: rgba(59,130,246,0.06); color: #7eb0ff; border: 1px solid rgba(59,130,246,0.45); border-radius: 5px; }
 
 .btn-full { width: 100%; padding: 11px 14px; font-size: 11px; }
 
-/* Inputs: quiet until focused, then a soft blue ring */
+/* Inputs: quiet until focused, then a cyan ring. */
 .input {
-  background: var(--raised);
+  background: rgba(255,255,255,0.02);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -124,10 +135,10 @@ body {
   color: var(--text);
   width: 100%;
   outline: none;
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.25);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.35);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.input:focus { border-color: var(--blue); box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 3px rgba(59,130,246,0.18); }
+.input:focus { border-color: var(--cyan); box-shadow: inset 0 1px 3px rgba(0,0,0,0.35), 0 0 0 3px rgba(45,212,238,0.16); }
 .input::placeholder { color: var(--faint); }
 select.input { appearance: none; cursor: pointer; }
 textarea.input { resize: none; }
@@ -143,11 +154,11 @@ textarea.input { resize: none; }
   letter-spacing: 0.5px;
   text-transform: uppercase;
   font-family: 'JetBrains Mono', monospace;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
 }
-.badge-bull { background: var(--green-dim); color: var(--green); }
-.badge-bear { background: var(--red-dim); color: var(--red); }
-.badge-blue { background: var(--blue-dim); color: #60a5fa; }
+.badge-bull { background: var(--green-dim); color: #4ade80; }
+.badge-bear { background: var(--red-dim); color: #f87171; }
+.badge-blue { background: var(--blue-dim); color: #7eb0ff; }
 .badge-amber { background: var(--amber-dim); color: var(--amber); }
 .badge-gray { background: rgba(255,255,255,0.07); color: var(--muted); }
 .badge-purple { background: var(--purple-dim); color: #a78bfa; }
@@ -155,7 +166,7 @@ textarea.input { resize: none; }
 /* Mention pill */
 .mention-pill {
   background: var(--blue-dim);
-  color: #60a5fa;
+  color: #7eb0ff;
   font-size: 9px;
   font-weight: 700;
   padding: 2px 8px;
@@ -174,24 +185,24 @@ textarea.input { resize: none; }
   font-weight: 800;
   flex-shrink: 0;
   font-family: 'JetBrains Mono', monospace;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), var(--shadow-sm);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), var(--shadow-sm);
 }
 
 /* Spinner */
 .spinner {
   border: 2px solid rgba(255,255,255,0.08);
-  border-top-color: var(--blue);
+  border-top-color: var(--cyan);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
 
-/* Modal */
+/* Modal: dark glass on a blurred deck. */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(2,4,10,0.62);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
   z-index: 100;
   display: flex;
   align-items: flex-end;
@@ -200,7 +211,7 @@ textarea.input { resize: none; }
 }
 .modal-sheet {
   position: relative;
-  background: linear-gradient(180deg, #121219, #0d0d12);
+  background: linear-gradient(180deg, #11131c, #0b0d13);
   border: 1px solid var(--border);
   border-top: 1px solid var(--border-hover);
   border-radius: 16px 16px 0 0;
@@ -213,7 +224,6 @@ textarea.input { resize: none; }
   animation: slideUp 0.28s cubic-bezier(0.16,1,0.3,1);
 }
 .modal-sheet::-webkit-scrollbar { display: none; }
-/* Grabber handle */
 .modal-sheet::before {
   content: '';
   position: absolute;
@@ -221,11 +231,11 @@ textarea.input { resize: none; }
   transform: translateX(-50%);
   width: 36px; height: 4px;
   border-radius: 3px;
-  background: rgba(255,255,255,0.16);
+  background: rgba(122,162,255,0.25);
 }
 
 /* Tab bar */
-.tab-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); background: transparent; flex-shrink: 0; }
 .tab-btn {
   padding: 10px 14px;
   font-size: 9px;
@@ -241,7 +251,7 @@ textarea.input { resize: none; }
   transition: all 0.15s;
   font-family: 'JetBrains Mono', monospace;
 }
-.tab-btn-active { border-bottom-color: var(--blue); color: var(--blue); text-shadow: 0 0 12px rgba(59,130,246,0.45); }
+.tab-btn-active { border-bottom-color: var(--cyan); color: var(--cyan); text-shadow: 0 0 14px rgba(45,212,238,0.5); }
 
 /* Section label */
 .sec-lbl {
@@ -254,9 +264,9 @@ textarea.input { resize: none; }
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Countdown bar */
-.cbar { height: 2px; background: var(--raised); border-radius: 1px; overflow: hidden; }
-.cfill { height: 100%; background: var(--blue); border-radius: 1px; transition: width 0.3s; box-shadow: 0 0 8px rgba(59,130,246,0.6); }
+/* Data bar (countdown, progress): glowing fill. */
+.cbar { height: 2px; background: rgba(255,255,255,0.06); border-radius: 1px; overflow: hidden; }
+.cfill { height: 100%; background: linear-gradient(90deg, var(--blue), var(--cyan)); border-radius: 1px; transition: width 0.3s; box-shadow: 0 0 10px rgba(45,212,238,0.7); }
 
 /* Form field */
 .form-field { margin-bottom: 14px; }
@@ -265,32 +275,31 @@ textarea.input { resize: none; }
 /* Toast */
 .toast {
   background: var(--raised);
-  border: 1px solid rgba(59,130,246,0.3);
+  border: 1px solid rgba(45,212,238,0.32);
   border-radius: 8px;
   padding: 9px 14px;
   font-size: 11px;
-  color: #93c5fd;
+  color: #a5f0fb;
   margin: 0 16px 8px;
   display: none;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md), 0 0 18px rgba(45,212,238,0.15);
   animation: fadeIn 0.2s ease;
 }
 .toast.show { display: block; }
-.toast.error { border-color: rgba(239,68,68,0.3); color: #fca5a5; }
-.toast.success { border-color: rgba(34,197,94,0.3); color: #86efac; }
+.toast.error { border-color: rgba(239,68,68,0.32); color: #fca5a5; box-shadow: var(--shadow-md), 0 0 18px rgba(239,68,68,0.12); }
+.toast.success { border-color: rgba(34,197,94,0.32); color: #86efac; box-shadow: var(--shadow-md), 0 0 18px rgba(34,197,94,0.12); }
 
 /* Skeleton loader */
 .skeleton {
-  background: linear-gradient(90deg, var(--raised) 25%, rgba(255,255,255,0.04) 50%, var(--raised) 75%);
+  background: linear-gradient(90deg, var(--raised) 25%, rgba(122,162,255,0.06) 50%, var(--raised) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: 4px;
 }
 
-/* Reusable entrance: a gentle fade-and-rise for content as it mounts */
+/* Entrance */
 .rise { animation: rise 0.4s cubic-bezier(0.16,1,0.3,1) both; }
 
-/* Mobile Safari: prevent auto-zoom on input focus (bumps inputs to 16px on touch devices only; desktop untouched) */
 @media (hover: none) and (pointer: coarse) {
   .input { font-size: 16px; }
 }
@@ -301,3 +310,4 @@ textarea.input { resize: none; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(2000%); } }
