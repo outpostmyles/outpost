@@ -143,6 +143,18 @@ test('the brief caveats advice lift when the integrity layer distrusts it', () =
   assert.ok(observations.some(o => /Win rates are biased high/.test(o)));
 });
 
+test('the brief flags when advice channels are dark (only deploy cash tagged)', () => {
+  const intel = {
+    adviceLift: { lift: null, advised: { n: 1, winRate: null }, selfDirected: { n: 9, winRate: 50 } },
+    totalDecisions: 40, quality: { avgIndex: 55, scored: 12 }, behavior: { patterns: [] },
+    integrity: {
+      coverage: { advisedTotal: 0, sourcesSeen: [], missingSources: ['deploy_cash', 'screener', 'dossier'], narrow: false },
+    },
+  };
+  const { observations } = buildFounderBrief({ intel, engagement: { totalUsers: 120 } });
+  assert.ok(observations.some(o => /No buys are tagged as advised/.test(o) && /chat-driven buys are attributed/.test(o)));
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.f(); console.log(`ok    ${t.n}`); pass++; }

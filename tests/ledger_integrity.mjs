@@ -2,7 +2,7 @@
 // profiling, the held-loser selection-bias detector, and the advice-lift trust
 // gate. These keep the reward signal honest about its own bias.
 import assert from 'node:assert/strict';
-import { resolutionProfile, winRateBias, adviceLiftHonesty } from '../src/lib/ledgerIntegrity.js';
+import { resolutionProfile, winRateBias, adviceLiftHonesty, advisedCoverage } from '../src/lib/ledgerIntegrity.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -106,6 +106,29 @@ test('adviceLiftHonesty flags a thin sample before trusting anything', () => {
   const h = adviceLiftHonesty([resolvedBuy('win', 5, { source: 'deploy_cash' }), resolvedBuy('loss', 9, { source: null })]);
   assert.equal(h.trust, false);
   assert.match(h.caveat, /thin/);
+});
+
+test('advisedCoverage reports which advice channels actually reach the ledger', () => {
+  // All advised buys came through deploy_cash; screener and dossier are dark.
+  const ds = [
+    buy({ source: 'deploy_cash' }), buy({ source: 'deploy_cash' }),
+    buy({ source: null }), buy({ source: 'manual' }),
+  ];
+  const c = advisedCoverage(ds);
+  assert.equal(c.advisedTotal, 2);
+  assert.deepEqual(c.sourcesSeen, ['deploy_cash']);
+  assert.deepEqual(c.missingSources, ['screener', 'dossier']);
+  assert.equal(c.narrow, true);
+});
+
+test('advisedCoverage is not narrow once two channels show up, and zero is zero', () => {
+  const two = advisedCoverage([buy({ source: 'deploy_cash' }), buy({ source: 'screener' })]);
+  assert.equal(two.narrow, false);
+  assert.equal(two.advisedTotal, 2);
+  const none = advisedCoverage([buy({ source: null }), buy({ source: 'manual' })]);
+  assert.equal(none.advisedTotal, 0);
+  assert.equal(none.narrow, false);
+  assert.deepEqual(none.missingSources, ['deploy_cash', 'screener', 'dossier']);
 });
 
 let pass = 0, fail = 0;

@@ -124,6 +124,19 @@ function observations({ intel, usage, q, feedback, preBeta }) {
   const bias = intel?.integrity?.bias;
   if (bias?.biasedHigh) obs.push(`Win rates are biased high right now: ${bias.why} Trust the relative comparison (advised vs self, and the trend), not any absolute win rate, until more positions close.`);
 
+  // Attribution coverage: advice lift can only see a buy as advised if the buy
+  // carried an AI source. Today only deploy cash does; chat, screener, and dossier
+  // buys land as self-directed. Say so, so a low advised count is not misread as
+  // "advice does not happen."
+  const cov = intel?.integrity?.coverage;
+  if (cov && (intel?.totalDecisions ?? 0) >= 10) {
+    if (cov.advisedTotal === 0) {
+      obs.push('No buys are tagged as advised yet. Only the deploy-cash button sets a source; buys discussed in chat, the screener, or a dossier are recorded as self-directed. So advice lift cannot move until chat-driven buys are attributed. This is a decision to make, not a bug to wait out.');
+    } else if (cov.narrow) {
+      obs.push(`Every advised buy so far came from ${cov.sourcesSeen[0]}. The other advice channels (chat, ${cov.missingSources.join(', ')}) are recorded as self-directed, so advice lift is only measuring one surface.`);
+    }
+  }
+
   const pat = (intel?.behavior?.patterns || [])[0];
   if (pat) obs.push(`${pat.pctOfUsers}% of users show "${pat.label}". If that holds with real users, the sharpest intervention against it is the highest-leverage thing to build.`);
 

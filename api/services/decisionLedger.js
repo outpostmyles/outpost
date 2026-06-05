@@ -13,7 +13,7 @@ import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRet
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
 import { classifyEmotion } from '../../src/lib/emotionRead.js';
-import { winRateBias, adviceLiftHonesty } from '../../src/lib/ledgerIntegrity.js';
+import { winRateBias, adviceLiftHonesty, advisedCoverage } from '../../src/lib/ledgerIntegrity.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -202,6 +202,7 @@ const EMPTY_INTEL = (days) => ({
   integrity: {
     bias: { biasedHigh: false, resolutionRate: null, resolved: 0, unresolved: 0, unresolvedMedianAgeDays: null, why: 'no decisions yet' },
     adviceLift: { trust: false, caveat: 'no decisions yet', advisedResolution: null, selfResolution: null, advisedResolved: 0, selfResolved: 0 },
+    coverage: { advisedTotal: 0, sourcesSeen: [], missingSources: ['deploy_cash', 'screener', 'dossier'], narrow: false },
   },
 });
 
@@ -230,6 +231,7 @@ async function computeFromDb({ days = 30, limit = 20000 } = {}) {
     integrity: {
       bias: winRateBias(decisions, { now }),
       adviceLift: adviceLiftHonesty(decisions),
+      coverage: advisedCoverage(decisions),
     },
     generatedAt: new Date().toISOString(),
   };

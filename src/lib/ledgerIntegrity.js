@@ -133,3 +133,23 @@ export function adviceLiftHonesty(decisions, { minSample = 5 } = {}) {
     caveat,
   };
 }
+
+/**
+ * Which advice channels actually reach the ledger. The reward signal can only see
+ * a buy as "advised" if the buy carried an AI source. Today only the deploy-cash
+ * button does that; buys discussed in chat, the screener, or a dossier land as
+ * self-directed. So a near-zero advised bucket may mean "advice is not attributed,"
+ * not "advice does not happen." This reports the real coverage so the brief can say
+ * which channels are dark. Pure.
+ */
+export function advisedCoverage(decisions) {
+  const opens = opensOnly(decisions);
+  const advised = opens.filter(d => AI_SET.has(d?.source));
+  const seen = new Set(advised.map(d => d.source));
+  return {
+    advisedTotal: advised.length,
+    sourcesSeen: [...seen],
+    missingSources: AI_SOURCES.filter(s => !seen.has(s)),
+    narrow: advised.length > 0 && seen.size <= 1, // every advised buy came from one channel
+  };
+}
