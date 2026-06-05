@@ -80,7 +80,27 @@ export function buildQualityTrend(rows, { now = 0, windowDays = 7, flagThreshold
 
 // The "what to look at" list: neutral notes for the founder, gated by confidence
 // so we never recommend acting on noise. Never imperative about the app itself.
-function observations({ intel, usage, q, preBeta }) {
+/**
+ * Frontier #7: grade the grader against reality. For each feature with BOTH a
+ * grader score and a user-feedback approval rate, flag where they disagree, that
+ * is where our own quality instrument is likely miscalibrated. Pure.
+ * @param byFeature [{ feature, avgScore }]
+ * @param feedback  { feature: { up, down } }
+ */
+export function graderVsReality(byFeature = [], feedback = {}) {
+  const out = [];
+  for (const f of Array.isArray(byFeature) ? byFeature : []) {
+    const fb = feedback?.[f.feature];
+    if (!fb || f.avgScore == null) continue;
+    const n = (Number(fb.up) || 0) + (Number(fb.down) || 0);
+    if (n < 5) continue; // need a real feedback sample to compare
+    const approval = Math.round(((Number(fb.up) || 0) / n) * 100);
+    out.push({ feature: f.feature, graderScore: f.avgScore, approval, n, gap: f.avgScore - approval });
+  }
+  return out.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
+}
+
+function observations({ intel, usage, q, feedback, preBeta }) {
   const obs = [];
   if (preBeta) obs.push('Everything above is thin or seeded. The single highest-value thing right now is real beta users; the brief is wired and ready to read them.');
 
@@ -103,6 +123,16 @@ function observations({ intel, usage, q, preBeta }) {
 
   if ((usage?.projectedMonthly ?? 0) >= 50) obs.push(`AI run-rate is about $${Math.round(usage.projectedMonthly)} per month. If that climbs at beta, route the priciest surface to a cheaper model or batch it.`);
 
+  // Grade the grader: where our own quality score and real user approval disagree,
+  // trust the users and recalibrate the grader, not the other way around.
+  const cal = graderVsReality(q.byFeature || [], feedback || {})[0];
+  if (cal && Math.abs(cal.gap) >= 20) {
+    const dir = cal.gap > 0
+      ? `our grader rates ${cal.feature} ${cal.graderScore}/100 but only ${cal.approval}% of users approve it (${cal.n} votes). The grader is too easy on it.`
+      : `our grader rates ${cal.feature} ${cal.graderScore}/100 yet ${cal.approval}% of users approve it (${cal.n} votes). The grader is too harsh on it.`;
+    obs.push(`Grader vs users: ${dir} Trust the users; the score is the thing to recalibrate.`);
+  }
+
   obs.push('Reminder: this is a notepad, not an actor. Nothing here changes the app or reaches a user until you decide it.');
   return obs;
 }
@@ -112,7 +142,7 @@ function observations({ intel, usage, q, preBeta }) {
  * @param inputs { intel, usage, qualityTrend, engagement, generatedAt }
  * @returns { text, observations }
  */
-export function buildFounderBrief({ intel, usage, qualityTrend, engagement, generatedAt = '' } = {}) {
+export function buildFounderBrief({ intel, usage, qualityTrend, engagement, feedback, generatedAt = '' } = {}) {
   const eng = engagement || {};
   const q = qualityTrend || {};
   const preBeta = (eng.totalUsers ?? 0) < PRE_BETA_USERS;
@@ -182,7 +212,7 @@ export function buildFounderBrief({ intel, usage, qualityTrend, engagement, gene
   L.push(`Errors (7d): ${eng.errors7d ?? 0}. Users: ${eng.totalUsers ?? 0} total, ${eng.active7d ?? 0} active 7d, ${eng.agentMessages ?? 0} agent messages.`);
 
   // WHAT TO LOOK AT
-  const obs = observations({ intel, usage, q, preBeta });
+  const obs = observations({ intel, usage, q, feedback, preBeta });
   L.push('');
   L.push('== WHAT TO LOOK AT (you decide, nothing auto-applies) ==');
   obs.forEach((o, i) => L.push(`${i + 1}. ${o}`));

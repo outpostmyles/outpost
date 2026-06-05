@@ -295,7 +295,8 @@ router.get('/brief', requireAuth, requireAdmin, rateLimit(20), async (req, res) 
   try {
     const days = 30;
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-    const [intel, usage, qualityTrend, usersRes, activeRes, msgRes, errRes] = await Promise.all([
+    const thirtyDaysAgo = new Date(Date.now() - days * 86400000).toISOString();
+    const [intel, usage, qualityTrend, usersRes, activeRes, msgRes, errRes, feedbackRes] = await Promise.all([
       getAggregate({ days }).catch(() => null),
       getAiUsageSummary({ days }).catch(() => null),
       getQualityTrend({ days, windowDays: 7 }).catch(() => null),
@@ -303,10 +304,20 @@ router.get('/brief', requireAuth, requireAdmin, rateLimit(20), async (req, res) 
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }).gte('last_login', sevenDaysAgo),
       supabase.from('agent_messages').select('id', { count: 'exact', head: true }),
       supabase.from('errors').select('id', { count: 'exact', head: true }).gte('timestamp', sevenDaysAgo),
+      supabase.from('ai_feedback').select('feature,rating').gte('created_at', thirtyDaysAgo).then(r => r, () => null),
     ]);
+    // Up/down per feature over the same window as the grader, so "grade the grader"
+    // compares like with like (our quality score vs real user approval).
+    const feedback = {};
+    for (const row of feedbackRes?.data || []) {
+      const f = row.feature || 'unknown';
+      if (!feedback[f]) feedback[f] = { up: 0, down: 0 };
+      if (row.rating === 'up') feedback[f].up++;
+      else if (row.rating === 'down') feedback[f].down++;
+    }
     const engagement = { totalUsers: usersRes?.count ?? 0, active7d: activeRes?.count ?? 0, agentMessages: msgRes?.count ?? 0, errors7d: errRes?.count ?? 0 };
     const generatedAt = new Date().toISOString();
-    const brief = buildFounderBrief({ intel, usage, qualityTrend, engagement, generatedAt });
+    const brief = buildFounderBrief({ intel, usage, qualityTrend, engagement, feedback, generatedAt });
     res.json({ ...brief, generatedAt });
   } catch (err) {
     console.error('[Admin] brief failed:', err.message);

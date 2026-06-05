@@ -2,7 +2,7 @@
 // window-over-window flag-rate trend, and the composed block (four questions,
 // confidence and sample gating so seeded data cannot fool us, observation only).
 import assert from 'node:assert/strict';
-import { summarizeQuality, buildQualityTrend, buildFounderBrief } from '../src/lib/founderBrief.js';
+import { summarizeQuality, buildQualityTrend, buildFounderBrief, graderVsReality } from '../src/lib/founderBrief.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -91,6 +91,41 @@ test('with real volume the worst surface and the top struggle drive the notes', 
   assert.match(text, /Advice lift: \+8 pts/);
   assert.ok(observations.some(o => /portfolio_synthesis produces the most flagged output/.test(o)));
   assert.ok(observations.some(o => /75% of users show "Holding losers/.test(o)));
+});
+
+test('graderVsReality flags the widest grader-vs-users gap first', () => {
+  const byFeature = [
+    { feature: 'analysis_deep', avgScore: 85 },   // users hate it: 20% approve, gap +65
+    { feature: 'portfolio_synthesis', avgScore: 50 }, // users love it: 90% approve, gap -40
+  ];
+  const feedback = {
+    analysis_deep: { up: 2, down: 8 },       // 20% of 10
+    portfolio_synthesis: { up: 18, down: 2 }, // 90% of 20
+  };
+  const out = graderVsReality(byFeature, feedback);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].feature, 'analysis_deep'); // biggest absolute gap leads
+  assert.equal(out[0].approval, 20);
+  assert.equal(out[0].gap, 65);
+  assert.equal(out[1].gap, -40);
+});
+
+test('graderVsReality ignores thin feedback and missing scores', () => {
+  const out = graderVsReality(
+    [{ feature: 'a', avgScore: 80 }, { feature: 'b', avgScore: null }, { feature: 'c', avgScore: 70 }],
+    { a: { up: 2, down: 2 }, b: { up: 10, down: 0 }, c: {} }, // a: only 4 votes, b: no score, c: no votes
+  );
+  assert.equal(out.length, 0);
+});
+
+test('the brief surfaces a grader-vs-users miscalibration when they disagree', () => {
+  const qualityTrend = buildQualityTrend(
+    Array.from({ length: 12 }, (_, i) => qrow('analysis_deep', 88, i % 6)),
+    { now: NOW, windowDays: 7 },
+  );
+  const feedback = { analysis_deep: { up: 1, down: 9 } }; // 10% approve vs an 88 grader score
+  const { observations } = buildFounderBrief({ qualityTrend, feedback, engagement: { totalUsers: 120 } });
+  assert.ok(observations.some(o => /Grader vs users/.test(o) && /too easy on it/.test(o)));
 });
 
 let pass = 0, fail = 0;
