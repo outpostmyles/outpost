@@ -10,6 +10,7 @@ import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
 import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns } from '../../src/lib/decisionLedger.js';
+import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -241,10 +242,14 @@ export async function getCachedIntelligence() {
 export async function getUserPatternBlock(userId) {
   try {
     const decisions = await getUserDecisions(userId, { limit: 500 });
-    return formatUserPatterns({
+    const patterns = formatUserPatterns({
       quality: decisionQualityIndex(decisions),
       patterns: detectBehaviorPatterns(decisions),
     });
+    // Frontier #4: their specific edge and leak, so the agent coaches from where
+    // THIS person makes money vs bleeds, not just generic self-sabotage flags.
+    const model = formatTraderModel(buildTraderModel(decisions));
+    return [patterns, model].filter(Boolean).join('\n\n');
   } catch { return ''; }
 }
 
