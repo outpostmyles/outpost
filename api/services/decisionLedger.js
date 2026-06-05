@@ -12,6 +12,7 @@ import { getPrices } from './pricePool.js';
 import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns } from '../../src/lib/decisionLedger.js';
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
+import { classifyEmotion } from '../../src/lib/emotionRead.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -82,6 +83,9 @@ export async function recordDecision(userId, d) {
         pctOfBook = pctOfBookForDecision({ ticker: d.ticker, price: d.price, shares: d.shares, type: d.type }, positions ?? [], prices);
       } catch { /* leave null */ }
     }
+    // Frontier #5: tag the emotional shape of this decision (FOMO / panic) from the
+    // snapshot, so the Machine can see how much of someone's trading is emotional.
+    const emotion = classifyEmotion({ type: d.type, ticker: d.ticker, todayChangePct }, { regime: ctx.regime, fearGreed: ctx.fearGreed });
     const row = {
       user_id: userId,
       type: d.type,
@@ -104,7 +108,7 @@ export async function recordDecision(userId, d) {
       outcome_hold_days: num(d.outcomeHoldDays),
       thesis_played_out: d.thesisPlayedOut ?? null,
       resolved_at: d.outcomeStatus ? new Date().toISOString() : null,
-      meta: d.meta ?? null,
+      meta: emotion.kind !== 'calm' ? { ...(d.meta || {}), emotion: emotion.kind } : (d.meta ?? null),
       created_at: new Date().toISOString(),
     };
     const { error } = await supabase.from('decisions').insert(row);
