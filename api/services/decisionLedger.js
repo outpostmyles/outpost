@@ -13,6 +13,7 @@ import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRet
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
 import { classifyEmotion } from '../../src/lib/emotionRead.js';
+import { winRateBias, adviceLiftHonesty } from '../../src/lib/ledgerIntegrity.js';
 
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -184,6 +185,10 @@ const EMPTY_INTEL = (days) => ({
   quality: { users: 0, scored: 0, avgIndex: null },
   adviceLift: { advised: { n: 0, winRate: null }, selfDirected: { n: 0, winRate: null }, lift: null },
   baseRates: { overall: { setup: 'all buys', n: 0, winRate: null }, buckets: [] },
+  integrity: {
+    bias: { biasedHigh: false, resolutionRate: null, resolved: 0, unresolved: 0, unresolvedMedianAgeDays: null, why: 'no decisions yet' },
+    adviceLift: { trust: false, caveat: 'no decisions yet', advisedResolution: null, selfResolution: null, advisedResolved: 0, selfResolved: 0 },
+  },
 });
 
 // THE MACHINE: pull the ledger and roll it into the whole intelligence picture
@@ -196,6 +201,7 @@ async function computeFromDb({ days = 30, limit = 20000 } = {}) {
     .gte('created_at', since)
     .order('created_at', { ascending: false }).limit(limit);
   const decisions = (data ?? []).map(rowToDecision).filter(Boolean);
+  const now = Date.now();
   return {
     windowDays: days,
     ...aggregateRetail(decisions),
@@ -203,6 +209,14 @@ async function computeFromDb({ days = 30, limit = 20000 } = {}) {
     quality: aggregateQuality(decisions),   // the objective: are users getting better
     adviceLift: adviceLift(decisions),       // the reward: does our advice help
     baseRates: setupBaseRates(decisions),    // the institutional edge: per-setup win rates
+    // Keep the reward signal honest: resolution is endogenous (users pick when to
+    // sell), so resolved-only win rates read high and the advice-lift comparison
+    // breaks when the two groups resolve differently. Measure it so the brief can
+    // caveat instead of trusting blind.
+    integrity: {
+      bias: winRateBias(decisions, { now }),
+      adviceLift: adviceLiftHonesty(decisions),
+    },
     generatedAt: new Date().toISOString(),
   };
 }

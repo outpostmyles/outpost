@@ -27,6 +27,7 @@ const SUITE = [
   'brokerage_sync', 'decision_ledger', 'agent_conversations', 'position_proposal',
   'ai_pricing', 'ai_usage_summary', 'synthesis_freshness', 'founder_brief', 'process_scorecard',
   'sale_math', 'trader_model', 'counterfactual', 'emotion_read', 'concentration_read',
+  'ledger_integrity',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via

@@ -128,6 +128,21 @@ test('the brief surfaces a grader-vs-users miscalibration when they disagree', (
   assert.ok(observations.some(o => /Grader vs users/.test(o) && /too easy on it/.test(o)));
 });
 
+test('the brief caveats advice lift when the integrity layer distrusts it', () => {
+  const intel = {
+    adviceLift: { lift: 20, advised: { n: 12, winRate: 75 }, selfDirected: { n: 14, winRate: 55 } },
+    totalDecisions: 200, quality: { avgIndex: 60, scored: 30 }, behavior: { patterns: [] },
+    integrity: {
+      adviceLift: { trust: false, caveat: 'the groups resolve at very different rates (advised 100% vs self 33%); the advised side has realized more of its book, so their win rates are not apples to apples.' },
+      bias: { biasedHigh: true, why: '40% of buys are resolved, and the unresolved ones have aged ~45d, well past the ~5d winners get held. Those are likely held losers, so the resolved win rate reads high.' },
+    },
+  };
+  const { text, observations } = buildFounderBrief({ intel, engagement: { totalUsers: 120 } });
+  assert.match(text, /Caveat: the groups resolve at very different rates/);
+  assert.match(text, /directional, not proven/);
+  assert.ok(observations.some(o => /Win rates are biased high/.test(o)));
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.f(); console.log(`ok    ${t.n}`); pass++; }

@@ -118,6 +118,12 @@ function observations({ intel, usage, q, feedback, preBeta }) {
   const liftN = (lift?.advised?.n ?? 0) + (lift?.selfDirected?.n ?? 0);
   if (liftN < 10) obs.push('Advice lift is the make or break metric and it is still too thin to read. At beta, watch it first. If it is not clearly positive, the AI recommendations need rethinking before we lean on them.');
 
+  // Selection bias: resolution is endogenous, so an absolute win rate can read high
+  // simply because losers are still being held. Surface it so we never trust a raw
+  // win rate as truth, only the relative comparison and the trend.
+  const bias = intel?.integrity?.bias;
+  if (bias?.biasedHigh) obs.push(`Win rates are biased high right now: ${bias.why} Trust the relative comparison (advised vs self, and the trend), not any absolute win rate, until more positions close.`);
+
   const pat = (intel?.behavior?.patterns || [])[0];
   if (pat) obs.push(`${pat.pctOfUsers}% of users show "${pat.label}". If that holds with real users, the sharpest intervention against it is the highest-leverage thing to build.`);
 
@@ -185,6 +191,10 @@ export function buildFounderBrief({ intel, usage, qualityTrend, engagement, feed
     L.push(`Advice lift: not enough resolved AI-sourced trades yet (have ${lift?.advised?.n ?? 0} advised, need ~10). This is the number that says whether Outpost actually helps, so it is the one to watch at beta.`);
   } else {
     L.push(`Advice lift: ${lift.lift >= 0 ? '+' : ''}${lift.lift} pts (advised ${lift.advised.winRate}% vs self ${lift.selfDirected.winRate}%, ${liftN} resolved)${conf(liftN, 10, 30) === 'thin' ? '  [thin]' : ''}.`);
+    const honesty = intel?.integrity?.adviceLift;
+    if (honesty && honesty.trust === false && honesty.caveat) {
+      L.push(`  Caveat: ${honesty.caveat} Read the lift as directional, not proven.`);
+    }
   }
   if (intel?.quality?.avgIndex != null) {
     const dq = conf(intel.totalDecisions ?? 0, 50, 200);
