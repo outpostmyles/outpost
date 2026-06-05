@@ -29,7 +29,11 @@ export function summarizeQuality(rows, { flagThreshold = 70 } = {}) {
     let e = feat.get(f);
     if (!e) { e = { feature: f, count: 0, scoreSum: 0, flagged: 0, fails: new Map() }; feat.set(f, e); }
     e.count++; e.scoreSum += score; if (isFlagged) e.flagged++;
-    for (const tag of Array.isArray(row.failures) ? row.failures : []) {
+    for (const raw of Array.isArray(row.failures) ? row.failures : []) {
+      // The grader stores each failure as "TAG: long explanation". Keep just the
+      // TAG so the tally aggregates and the brief stays readable.
+      const tag = String(raw).split(':')[0].trim().slice(0, 40);
+      if (!tag) continue;
       failTally.set(tag, (failTally.get(tag) || 0) + 1);
       e.fails.set(tag, (e.fails.get(tag) || 0) + 1);
     }
@@ -45,8 +49,10 @@ export function summarizeQuality(rows, { flagThreshold = 70 } = {}) {
 // moves. This is the part the founder hands to Claude.
 function recommendations({ intel, usage, quality }) {
   const recs = [];
-  const worst = (quality?.byFeature || []).find(f => f.count >= 5 && f.avgScore != null && f.avgScore < 70);
-  if (worst) recs.push(`${worst.feature} is the lowest-quality surface (avg ${worst.avgScore}, ${worst.flagged} flagged${worst.topFailure ? `, mostly ${worst.topFailure}` : ''}). Worth a prompt review.`);
+  // The feature producing the most bad outputs is the one to fix first, whether or
+  // not its average is low (a high-average surface can still flag a lot).
+  const worst = [...(quality?.byFeature || [])].filter(f => f.flagged > 0).sort((a, b) => b.flagged - a.flagged)[0];
+  if (worst && worst.flagged >= 3) recs.push(`${worst.feature} has the most flagged outputs (${worst.flagged} of ${worst.count}, avg ${worst.avgScore}${worst.topFailure ? `, mostly ${worst.topFailure}` : ''}). Worth a prompt review.`);
 
   const topCost = (usage?.byFeature || [])[0];
   const total = usage?.totals?.lastWindow?.cost || 0;

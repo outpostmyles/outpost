@@ -29,6 +29,17 @@ test('summarizeQuality aggregates per feature, worst first, with the dominant fa
   assert.equal(q.topFailures[0].tag, 'MAGNITUDE_CALIBRATED'); // 2 vs others
 });
 
+test('failure tags are normalized to the TAG prefix so they aggregate', () => {
+  // The grader stores "TAG: long explanation"; the rollup must tally by TAG only.
+  const q = summarizeQuality([
+    { feature: 'analysis_quick', score: 40, failures: ['NO_INVENTED_DETAILS: cites a fake insider sale'] },
+    { feature: 'analysis_deep', score: 55, failures: ['NO_INVENTED_DETAILS: invents an India deal'] },
+  ], { flagThreshold: 70 });
+  assert.equal(q.topFailures[0].tag, 'NO_INVENTED_DETAILS');
+  assert.equal(q.topFailures[0].count, 2); // aggregated across the two long strings
+  assert.equal(q.byFeature[0].topFailure, 'NO_INVENTED_DETAILS');
+});
+
 test('non-numeric scores are skipped, not counted', () => {
   const q = summarizeQuality([{ feature: 'x', score: null }, { feature: 'x', score: 80, failures: [] }]);
   assert.equal(q.graded, 1);
@@ -76,7 +87,7 @@ test('buildFounderBrief composes the sections and recommends the worst surface, 
   assert.match(text, /ENGAGEMENT/);
   assert.match(text, /RECOMMENDATIONS/);
 
-  assert.ok(recommendations.some(r => /portfolio_synthesis is the lowest-quality surface/.test(r)));
+  assert.ok(recommendations.some(r => /portfolio_synthesis has the most flagged outputs/.test(r)));
   assert.ok(recommendations.some(r => /agent is 65% of AI spend/.test(r)));
   assert.ok(recommendations.some(r => /80% of users show "Holding losers/.test(r)));
 });
