@@ -201,6 +201,18 @@ export default function ConversationalOnboarding() {
     } catch {}
   }
 
+  // Close the loop: save the stock they just had read to their watchlist, so the
+  // app is not empty when they land and the thing they cared about is waiting.
+  // Best-effort; a watchlist failure never blocks getting into the app.
+  async function watchAndOpen() {
+    if (submitting) return;
+    setSubmitting(true);
+    if (frResult?.ticker) {
+      try { await api.social.addToWatchlist({ ticker: frResult.ticker, companyName: frResult.ticker }); } catch {}
+    }
+    completeOnboarding();
+  }
+
   async function completeOnboarding() {
     setSubmitting(true);
     setError('');
@@ -472,12 +484,17 @@ export default function ConversationalOnboarding() {
             )}
             {frRated && <p style={{ fontSize: 10, color: 'var(--faint)', textAlign: 'center', marginBottom: 14 }}>Noted. This is how it learns your taste.</p>}
 
-            <button onClick={completeOnboarding} disabled={submitting} className="btn btn-blue" style={{ width: '100%', padding: 12 }}>
-              {submitting ? 'Opening…' : 'Open Outpost'}
+            <button onClick={watchAndOpen} disabled={submitting} className="btn btn-blue" style={{ width: '100%', padding: 12 }}>
+              {submitting ? 'Opening…' : `Track ${frResult.ticker} and open Outpost`}
             </button>
-            <button onClick={() => { setFrResult(null); setFrTicker(''); setFrError(''); }} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, padding: '14px 0 0', fontFamily: 'inherit', letterSpacing: '0.3px', width: '100%' }}>
-              Read another stock
-            </button>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 13 }}>
+              <button onClick={completeOnboarding} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, fontFamily: 'inherit', letterSpacing: '0.3px' }}>
+                Just open Outpost
+              </button>
+              <button onClick={() => { setFrResult(null); setFrTicker(''); setFrError(''); }} disabled={submitting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: 10, fontFamily: 'inherit', letterSpacing: '0.3px' }}>
+                Read another
+              </button>
+            </div>
           </>
         )}
 
