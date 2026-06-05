@@ -3,6 +3,8 @@ import { getMarketData, getMoversData } from '../services/marketData.js';
 import { getPrices } from '../services/pricePool.js';
 import { getCashBalance } from '../services/cashBalance.js';
 import { getUserPatternBlock } from '../services/decisionLedger.js';
+import { staticSector } from '../services/sectorMap.js';
+import { buildConcentrationRead, formatConcentrationRead } from '../../src/lib/concentrationRead.js';
 import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
@@ -135,6 +137,13 @@ export async function buildUserContext(userId, user) {
       ? dedupedHeadlines.map(a => `${a.source}: ${a.title}`).join('\n')
       : 'No recent headlines';
 
+    // Frontier #6: the hidden bet, a portfolio-level read that catches when several
+    // names are secretly one sector bet, so the agent can plain it out for them.
+    const hiddenBet = formatConcentrationRead(buildConcentrationRead(
+      pos.map(p => ({ ticker: p.ticker, value: (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0) })),
+      { sectorOf: staticSector },
+    ));
+
     return {
       name: user.display_name || 'Trader',
       plan: user.plan || 'free',
@@ -144,6 +153,7 @@ export async function buildUserContext(userId, user) {
       positionCount: pos.length,
       positionTickers: pos.map(p => p.ticker),
       _rawPositions: pos,
+      hiddenBet,
       watchlist: watch.length > 0 ? watch.join(', ') : 'Empty',
       totalUnrealizedPnl: totalUnrealizedPnl !== 0 ? `${totalUnrealizedPnl > 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(0)}` : '$0',
       gainers,

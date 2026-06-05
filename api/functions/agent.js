@@ -836,6 +836,7 @@ ${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAl
 ${moodFor(ctx)}
 ${ctx.northStar || ''}
 ${ctx.decisionPatterns || ''}
+${ctx.hiddenBet || ''}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 ECONOMIC CALENDAR AWARENESS:
@@ -1211,6 +1212,7 @@ ${buildAccountabilityNudge({ content, heldTickers: ctx.positionTickers, activeAl
 ${moodFor(ctx)}
 ${ctx.northStar || ''}
 ${ctx.decisionPatterns || ''}
+${ctx.hiddenBet || ''}
 ${ctx.planAdherence || ''}
 ${ctx.performanceAttribution || ''}
 AGENT MEMORY:
