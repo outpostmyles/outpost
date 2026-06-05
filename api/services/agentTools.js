@@ -560,7 +560,7 @@ async function screenStocks({ min_change_pct, max_change_pct, lookback_days = 30
 
   const currentPrices = {};
   for (const t of snapData?.tickers ?? []) {
-    const price = t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c;
+    const price = normalizeQuote(t)?.price ?? null; // one canonical price source, same as the rest of the app
     const vol = t?.day?.v ?? 0;
     if (price && price >= min_price && vol >= min_volume) {
       if (max_price && price > max_price) continue; // filter by max price
@@ -751,9 +751,11 @@ async function compareStocks({ tickers, lookback_days = 30 }) {
         `tool_cmp_snap_${ticker}`
       );
       const t = snapData?.ticker;
-      const price = t?.day?.c || t?.lastTrade?.p || t?.prevDay?.c || null;
-      const prev = t?.prevDay?.c || price;
-      const todayChange = price && prev ? ((price - prev) / prev * 100) : null;
+      // Canonical quote, same as every other surface. changePercent is honestly
+      // null when the prior close is unknown, never a fabricated flat 0%.
+      const q = normalizeQuote(t);
+      const price = q?.price ?? null;
+      const todayChange = q?.changePercent ?? null;
 
       // Get historical for period change
       const histData = await polyFetch(
