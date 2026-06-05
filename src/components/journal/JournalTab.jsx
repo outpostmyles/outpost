@@ -14,6 +14,7 @@ import { cachedFetch } from '../../lib/cache.js';
 import { buildCoaching } from '../../lib/coaching.js';
 import { buildGrowthArc } from '../../lib/growthArc.js';
 import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
+import ProcessScorecard from './ProcessScorecard.jsx';
 import { computeComposure } from '../../lib/composure.js';
 import NorthStarCard from '../home/NorthStarCard.jsx';
 import { Spinner, EmptyState } from '../shared/UI.jsx';
@@ -518,7 +519,10 @@ function ProgressOverview({ onSeeStory, onReflect }) {
   }, []);
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
-      {/* Who you are becoming leads: the story, not the numbers. */}
+      {/* The process grade leads: HOW you traded, derived from your decisions, no
+          form to fill. This is what a pro tracks; we just compute it for them. */}
+      <ProcessScorecard />
+      {/* Who you are becoming: the story, not the numbers. */}
       <WhoYoureBecomingCard />
       {/* The human front door: talk the hard part through. */}
       <MindsetCard onOpen={() => setCoachOpen(true)} />
