@@ -9,7 +9,7 @@
 import { supabase } from '../db.js';
 import { getMarketData } from './marketData.js';
 import { getPrices } from './pricePool.js';
-import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns } from '../../src/lib/decisionLedger.js';
+import { summarizeDecisions, detectBehaviorPatterns, gradeDecision, aggregateRetail, aggregateBehavior, decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, formatUserPatterns, perLotOutcome } from '../../src/lib/decisionLedger.js';
 import { buildTraderModel, formatTraderModel } from '../../src/lib/traderModel.js';
 import { summarizeCounterfactuals, formatCounterfactual } from '../../src/lib/counterfactual.js';
 import { classifyEmotion } from '../../src/lib/emotionRead.js';
@@ -129,26 +129,40 @@ export async function recordDecision(userId, d) {
 const statusFromPnl = (pnl) => (pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even');
 
 /**
- * Close the loop: when a position is sold, stamp the outcome onto the user's
- * still-open buy decisions for that ticker, so the original BUY gets graded by
- * how it actually turned out. Fail-safe.
+ * Close the loop: when a position is sold, resolve the user's still-open buy
+ * decisions for that ticker, grading EACH lot by its OWN return (that lot's entry
+ * vs the sell price) rather than one blended position number stamped on all of
+ * them. That keeps the base rates honest: a chase-the-top add is recorded as the
+ * loss it was, not credited with the blended position win. Hold period stays the
+ * position-level value (the real purchase date beats a row's recorded-at time).
+ * Falls back to the blended outcome when a lot cannot be priced. Fail-safe.
  */
-export async function resolveOpenDecisions(userId, ticker, { pnl, pnlPercent, holdDays, thesisPlayedOut } = {}) {
+export async function resolveOpenDecisions(userId, ticker, { sellPrice, pnl, pnlPercent, holdDays, thesisPlayedOut } = {}) {
   if (!userId || !ticker) return;
   try {
-    await supabase.from('decisions')
-      .update({
-        outcome_status: statusFromPnl(num(pnl) ?? 0),
-        outcome_pnl: num(pnl),
-        outcome_pnl_pct: num(pnlPercent),
-        outcome_hold_days: num(holdDays),
-        thesis_played_out: thesisPlayedOut ?? null,
-        resolved_at: new Date().toISOString(),
-      })
+    const { data: opens } = await supabase.from('decisions')
+      .select('id, price, shares')
       .eq('user_id', userId)
       .eq('ticker', String(ticker).toUpperCase())
       .is('outcome_status', null)
       .in('type', ['open', 'add']);
+    if (!opens?.length) return;
+    const resolvedAt = new Date().toISOString();
+    const sp = num(sellPrice);
+    for (const o of opens) {
+      // Per-lot when this lot can be priced against the sell; otherwise fall back
+      // to the blended position outcome the caller computed.
+      const lot = perLotOutcome({ lotPrice: o.price, sellPrice: sp, lotShares: o.shares });
+      const usePerLot = lot.status != null;
+      await supabase.from('decisions').update({
+        outcome_status: usePerLot ? lot.status : statusFromPnl(num(pnl) ?? 0),
+        outcome_pnl: usePerLot ? lot.pnl : num(pnl),
+        outcome_pnl_pct: usePerLot ? lot.pnlPct : num(pnlPercent),
+        outcome_hold_days: num(holdDays),
+        thesis_played_out: thesisPlayedOut ?? null,
+        resolved_at: resolvedAt,
+      }).eq('id', o.id);
+    }
   } catch (e) {
     console.warn('[DecisionLedger] resolve failed:', e.message);
   }

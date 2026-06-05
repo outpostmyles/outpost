@@ -69,6 +69,22 @@ function gradePointsOf(d) {
   return g ? g.score : null;
 }
 
+// ── PER-LOT OUTCOME: attribute a sale back to each buy lot truthfully ─────────
+// When a position closes, each buy that built it should be graded by ITS OWN
+// return (that lot's entry vs the sell price), not a single blended position
+// number stamped on every lot. Otherwise a chase-the-top add inherits the blended
+// position win, and the "chasing" base-rate bucket records a fake winner. Pure.
+// Hold period stays the caller's job: the position-level hold from the real
+// purchase date beats a decision row's recorded-at time for imported lots.
+export function perLotOutcome({ lotPrice, sellPrice, lotShares } = {}) {
+  const lp = num(lotPrice), sp = num(sellPrice), sh = num(lotShares);
+  if (sp == null || lp == null || lp <= 0) return { status: null, pnl: null, pnlPct: null };
+  const pnlPct = Math.round(((sp - lp) / lp) * 10000) / 100;
+  const status = pnlPct > 0 ? 'win' : pnlPct < 0 ? 'loss' : 'even';
+  const pnl = sh != null ? Math.round((sp - lp) * sh * 100) / 100 : null;
+  return { status, pnl, pnlPct };
+}
+
 // ── Receipts: a user's own track record ──────────────────────────────────────
 // The honest scoreboard: how many decisions, how many resolved, the win rate,
 // the average PROCESS grade, the trend (are recent decisions better graded than

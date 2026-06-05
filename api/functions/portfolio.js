@@ -1240,7 +1240,7 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     // they actually turned out (closing the loop).
     const outStatus = pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even';
     recordDecision(req.user.id, { type: 'close', ticker: pos.ticker, shares: pos.shares, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: outStatus, outcomePnl: pnl, outcomePnlPct: pnlPercent, outcomeHoldDays: holdDays, thesisPlayedOut }).catch(() => {});
-    resolveOpenDecisions(req.user.id, pos.ticker, { pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
+    resolveOpenDecisions(req.user.id, pos.ticker, { sellPrice, pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
     res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash });
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);

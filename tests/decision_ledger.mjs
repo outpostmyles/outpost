@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   gradeDecision, summarizeDecisions, detectBehaviorPatterns, aggregateRetail, aggregateBehavior,
   decisionQualityIndex, aggregateQuality, adviceLift, pctOfBookForDecision, setupBaseRates, baseRateGuidance,
-  formatUserPatterns, AI_SOURCES,
+  formatUserPatterns, AI_SOURCES, perLotOutcome,
 } from '../src/lib/decisionLedger.js';
 
 const tests = [];
@@ -341,6 +341,33 @@ test('formatUserPatterns returns empty when there is no graded history', () => {
   assert.equal(formatUserPatterns({ quality: { index: null }, patterns: [] }), '');
   assert.equal(formatUserPatterns({}), '');
   assert.equal(formatUserPatterns(), '');
+});
+
+test('perLotOutcome grades each lot by its own entry, not a blended position number', () => {
+  // Two lots into one ticker, sold at $120. The cheap lot won; the chase add lost.
+  const cheap = perLotOutcome({ lotPrice: 100, sellPrice: 120, lotShares: 10 });
+  assert.equal(cheap.status, 'win');
+  assert.equal(cheap.pnlPct, 20);
+  assert.equal(cheap.pnl, 200);
+  const chase = perLotOutcome({ lotPrice: 150, sellPrice: 120, lotShares: 5 });
+  assert.equal(chase.status, 'loss');   // would have been a "win" under the blended position outcome
+  assert.equal(chase.pnlPct, -20);
+  assert.equal(chase.pnl, -150);
+});
+
+test('perLotOutcome marks a flat lot even, and yields no P&L without shares', () => {
+  assert.equal(perLotOutcome({ lotPrice: 100, sellPrice: 100, lotShares: 3 }).status, 'even');
+  const noShares = perLotOutcome({ lotPrice: 100, sellPrice: 110 });
+  assert.equal(noShares.status, 'win');
+  assert.equal(noShares.pnlPct, 10);
+  assert.equal(noShares.pnl, null);
+});
+
+test('perLotOutcome returns nulls when a lot cannot be priced (caller falls back to blended)', () => {
+  assert.deepEqual(perLotOutcome({ lotPrice: null, sellPrice: 120 }), { status: null, pnl: null, pnlPct: null });
+  assert.deepEqual(perLotOutcome({ lotPrice: 0, sellPrice: 120 }), { status: null, pnl: null, pnlPct: null });
+  assert.deepEqual(perLotOutcome({ lotPrice: 100, sellPrice: null }), { status: null, pnl: null, pnlPct: null });
+  assert.deepEqual(perLotOutcome(), { status: null, pnl: null, pnlPct: null });
 });
 
 let pass = 0, fail = 0;
