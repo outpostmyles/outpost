@@ -19,6 +19,8 @@ import { calcRSI, calcATR, calcSMA } from './indicators.js';
 import { assessPreTradeRisk } from './preTradeRisk.js';
 import { getCachedIntelligence, getUserDecisions } from './decisionLedger.js';
 import { baseRateGuidance, setupBaseRates } from '../../src/lib/decisionLedger.js';
+import { classifyEmotion, emotionWarning } from '../../src/lib/emotionRead.js';
+import { getMarketData } from './marketData.js';
 import { buildPositionProposal, PROPOSAL_REJECTIONS } from '../../src/lib/positionProposal.js';
 
 const BASE = 'https://api.polygon.io';
@@ -1636,6 +1638,24 @@ async function preTradeCheck({ ticker, dollars_to_invest, stop_loss, userId }) {
     stopLoss: stop_loss,
     riskTolerance,
   });
+
+  // Frontier #1: intervene at the decision from the user's OWN record (their data,
+  // always on, distinct from the gated retail aggregate below). Their personal base
+  // rate for this kind of buy, plus an emotional read of the moment, turn the
+  // Machine's output into an input at the one point it can change the outcome.
+  try {
+    const todayChg = getPrice(ticker)?.changePercent;
+    const resultingPct = (portfolioValue + dollars) > 0 ? (dollars / (portfolioValue + dollars)) * 100 : 0;
+    const personal = setupBaseRates(await getUserDecisions(userId, { limit: 500 }));
+    const bucket = (frag) => (personal?.buckets || []).find(b => b.winRate != null && String(b.setup).toLowerCase().includes(frag));
+    const notes = [];
+    if (Number.isFinite(todayChg) && todayChg >= 10) { const b = bucket('chas'); if (b) notes.push(`Your own record buying names already up big: ${b.winRate}% win over ${b.n} trades.`); }
+    if (resultingPct > 35) { const b = bucket('over'); if (b) notes.push(`Your own record going oversized: ${b.winRate}% win over ${b.n} trades.`); }
+    const md = getMarketData();
+    const emWarn = emotionWarning(classifyEmotion({ type: 'open', ticker, todayChangePct: todayChg }, { regime: md?.regime, fearGreed: md?.fearGreed?.value }));
+    if (emWarn) notes.push(emWarn);
+    if (notes.length) risk.personalRead = notes;
+  } catch { /* personal read is additive; never break the risk check */ }
 
   // Decision-intelligence base rates (how this KIND of trade tends to work out
   // for retail and for this user, plus the per-ticker retail-trap stats) are
