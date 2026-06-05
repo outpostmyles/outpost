@@ -23,7 +23,7 @@ const TABS = [
 
 function Logo() {
   return (
-    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+    <div style={{ width: 26, height: 26, borderRadius: 7, background: 'linear-gradient(180deg, #4d8dff, #3b82f6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 2px 10px rgba(59,130,246,0.4)' }}>
       <svg width="15" height="15" viewBox="0 0 72 72" fill="none">
         <rect x="18" y="18" width="36" height="22" rx="2" fill="#fff"/>
         <rect x="22" y="23" width="8" height="5" rx="1" fill="#3b82f6"/>
@@ -149,11 +149,11 @@ export default function AppShell() {
   const usagePct = user ? Math.min(100, Math.round(((user.credits_used_this_month ?? 0) / totalCredits) * 100)) : 0;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'radial-gradient(1100px 480px at 50% -180px, rgba(59,130,246,0.10), transparent 70%), var(--bg)' }}>
       <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }`}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, #0f0f15, #0b0b10)', boxShadow: '0 1px 0 rgba(255,255,255,0.03), 0 6px 22px rgba(0,0,0,0.28)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Logo />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--text)' }}>OUTPOST</span>
@@ -220,7 +220,7 @@ export default function AppShell() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--surface)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'linear-gradient(180deg, #0d0d12, #08080d)', boxShadow: '0 -1px 0 rgba(255,255,255,0.03), 0 -6px 22px rgba(0,0,0,0.3)', paddingBottom: 'env(safe-area-inset-bottom)', position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', padding: '8px 0 12px' }}>
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;
@@ -234,8 +234,10 @@ export default function AppShell() {
               : (id === 'agent' && agentWaiting && !active) ? 'var(--blue)'
               : null;
             return (
-              <button key={id} onClick={() => switchTab(id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, background: 'none', border: 'none', cursor: 'pointer', padding: '3px 0', color: active ? 'var(--blue)' : 'var(--faint)', transition: 'color 0.15s', position: 'relative' }}>
-                <div style={{ position: 'relative', display: 'inline-block' }}>
+              <button key={id} onClick={() => switchTab(id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, background: 'none', border: 'none', cursor: 'pointer', padding: '3px 0', color: active ? 'var(--blue)' : 'var(--faint)', transition: 'color 0.18s', position: 'relative' }}>
+                {active && <span style={{ position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)', width: 22, height: 2, borderRadius: 2, background: 'var(--blue)', boxShadow: '0 0 8px rgba(59,130,246,0.7)' }} />}
+                <div style={{ position: 'relative', display: 'inline-block', transition: 'transform 0.18s cubic-bezier(0.16,1,0.3,1)', transform: active ? 'translateY(-1px)' : 'none' }}>
+                  {active && <span style={{ position: 'absolute', inset: -7, borderRadius: '50%', background: 'radial-gradient(circle, rgba(59,130,246,0.4), transparent 70%)', filter: 'blur(3px)' }} />}
                   <Icon active={active} />
                   {dotColor && (
                     <span style={{
