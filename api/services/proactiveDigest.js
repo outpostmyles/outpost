@@ -73,7 +73,7 @@ export function detectSignals({ positions = [], watchlist = [], adherenceSummary
           kind: 'position_past_target',
           ticker: p.ticker,
           priority: 'high',
-          detail: `${p.ticker} broke past your $${target} target — now $${live.toFixed(2)} (+${Math.abs(distPct).toFixed(1)}% past target). Take some off, or let it run?`,
+          detail: `${p.ticker} broke past your $${target} target, now $${live.toFixed(2)} (+${Math.abs(distPct).toFixed(1)}% past target). Take some off, or let it run?`,
         });
       } else if (distPct <= NEAR_PCT) {
         signals.push({
@@ -263,7 +263,7 @@ export async function generateDigestForUser(userId) {
   if (signals.length === 0) {
     return {
       available: true,
-      digest: 'Nothing pressing across your positions today. Quiet days are fine — sometimes the best trade is no trade.',
+      digest: 'Nothing pressing across your positions today. Quiet days are fine, sometimes the best trade is no trade.',
       signals: [],
       quiet: true,
       generatedAt: new Date().toISOString(),

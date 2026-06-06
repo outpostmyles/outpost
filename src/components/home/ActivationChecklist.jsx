@@ -32,14 +32,14 @@ export default function ActivationChecklist({ portfolio, userId, plan, onTabSwit
     {
       key: 'agent',
       label: 'Ask your agent a question',
-      desc: 'Try "what should I watch today?" — your agent knows your portfolio',
+      desc: 'Try "what should I watch today?" Your agent knows your portfolio',
       done: hasAgentChat,
       action: () => { setFlag(userId, 'agent_talked', true); setLocalFlags(f => ({ ...f, agent_talked: true })); onTabSwitch?.('agent'); },
     },
     {
       key: 'target',
       label: 'Set a price target',
-      desc: 'Tap any position and set a target — your agent will watch it',
+      desc: 'Tap any position and set a target. Your agent will watch it',
       done: hasTarget,
       action: () => onTabSwitch?.('portfolio'),
       locked: !hasPosition, // can't set target without a position

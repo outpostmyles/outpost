@@ -325,3 +325,30 @@ textarea.input { resize: none; }
   50% { box-shadow: inset 0 1px 0 var(--hl), 0 0 0 1px rgba(45,212,238,0.32), 0 0 26px rgba(45,212,238,0.14); }
 }
 @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(2000%); } }
+
+/* Onboarding layout: desktop-aware. On a phone it is one comfortable column.
+   On a computer it must not look like a phone screen stranded on a monitor, so
+   the panel widens, the content is vertically centered, and the tour splits into
+   two columns (the copy beside the live preview). Collapses back below 900px. */
+.onb-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 40px 24px;
+  background: var(--bg);
+}
+.onb-panel { width: 100%; }
+.onb-tour-grid { display: flex; flex-direction: column; gap: 22px; }
+/* On a computer: vertically center the panel and split the tour into two
+   columns so it reads as a designed screen, not a phone column on a monitor. */
+@media (min-width: 900px) {
+  .onb-shell { justify-content: center; padding: 48px 32px; }
+  .onb-tour-grid {
+    display: grid;
+    grid-template-columns: 0.82fr 1.18fr;
+    gap: 48px;
+    align-items: center;
+  }
+}

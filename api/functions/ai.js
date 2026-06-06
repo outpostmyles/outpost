@@ -273,6 +273,7 @@ router.post('/first-read', requireAuth, rateLimit(8), dailyAiCeiling(), async (r
     'Never tell them to buy, sell, or hold. You are showing them how you think, not giving a signal.',
     'If their own words are provided, connect the read to what they told you (their goal or their fear), so it lands personal.',
     'End on what you will do for them going forward (watch it, remember their reasoning, flag what actually matters). Confident, warm, never salesy.',
+    'Write the way a real person texts: use periods, commas, colons, and parentheses. Never use em dashes or en dashes. If you want a pause, use a comma or start a new sentence.',
   ].join(' ');
 
   const anchorText = anchors.length

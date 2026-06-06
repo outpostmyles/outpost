@@ -367,7 +367,7 @@ export async function buildTodayFeed(userId, opts = {}) {
     final = [{
       type: 'quiet', subtype: 'no_signals', ticker: null,
       title: 'Nothing urgent on your book today',
-      detail: 'No alerts, big movers, catalysts, or watchlist hits in your universe. Quiet day — that is also useful information.',
+      detail: 'No alerts, big movers, catalysts, or watchlist hits in your universe. A quiet day is also useful information.',
       priority: 0,
       link: { tab: 'home' },
     }];

@@ -263,7 +263,7 @@ export async function generateExplainerForUser(userId) {
         positionCount: movers.positionCount,
       },
       benchmark: null,
-      summary: 'Quiet day — no meaningful single-position moves.',
+      summary: 'Quiet day, no meaningful single-position moves.',
       winners: [],
       losers: [],
     };
