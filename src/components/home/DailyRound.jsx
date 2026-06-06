@@ -56,7 +56,7 @@ export default function DailyRound({ onTabSwitch, showToast }) {
   const subline = doneToday
     ? "Done for today. You're covered."
     : alertCount > 0
-      ? `${alertCount} thing${alertCount === 1 ? '' : 's'} want your eyes today.`
+      ? `${alertCount} thing${alertCount === 1 ? '' : 's'} ${alertCount === 1 ? 'wants' : 'want'} your eyes today.`
       : 'A quick pass on your book. Takes a minute.';
 
   return (
