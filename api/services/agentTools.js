@@ -206,17 +206,16 @@ export const AGENT_TOOLS = [
   },
   {
     name: 'analyze_portfolio_risk',
-    description: 'Analyze the correlation and risk profile of a set of stocks. Shows which positions move together (high correlation = concentrated risk), portfolio beta vs the market, and diversification score. Use when users ask "am I diversified enough?", "what happens if tech crashes?", or "what\'s my portfolio risk?"',
+    description: 'Analyze the correlation and risk profile of the user\'s portfolio. Shows which positions move together (high correlation = concentrated risk), portfolio beta vs the market (WEIGHTED by each position\'s real size in their book), each holding\'s weight, and a diversification score. For "am I diversified?", "what happens if tech crashes?", or "what is my portfolio risk?", just call it with no tickers: it reads their actual current holdings. Only pass tickers for a hypothetical set they do NOT hold (e.g. "how correlated are these 3 names I am considering?").',
     input_schema: {
       type: 'object',
       properties: {
         tickers: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of ticker symbols to analyze (typically the user\'s portfolio positions)',
+          description: 'Optional. Leave empty to analyze the user\'s real holdings (the default and correct choice for "my portfolio"). Only provide a list for a hypothetical set of names they do not own.',
         },
       },
-      required: ['tickers'],
     },
   },
   {
@@ -390,7 +389,7 @@ export async function executeTool(toolName, toolInput, context = {}) {
       case 'get_insider_activity': return await getInsiderActivity(toolInput);
       case 'get_support_resistance': return await getSupportResistance(toolInput);
       case 'get_upcoming_earnings': return await getUpcomingEarnings(toolInput);
-      case 'analyze_portfolio_risk': return await analyzePortfolioRisk(toolInput);
+      case 'analyze_portfolio_risk': return await analyzePortfolioRisk({ ...toolInput, userId: context.userId });
       case 'calculate_position_size': return calculatePositionSize(toolInput);
       case 'calculate_risk_reward': return calculateRiskReward(toolInput);
       case 'get_relative_strength': return await getRelativeStrength(toolInput);
@@ -1348,9 +1347,30 @@ async function getUpcomingEarnings({ tickers = [] }) {
 
 // ============ PORTFOLIO RISK ANALYSIS ============
 
-async function analyzePortfolioRisk({ tickers }) {
-  if (!Array.isArray(tickers) || tickers.length < 2) return { error: 'Need at least 2 tickers to analyze' };
-  tickers = tickers.map(t => t.toUpperCase().trim()).slice(0, 10);
+async function analyzePortfolioRisk({ tickers, userId }) {
+  // For "analyze MY portfolio risk", the user's real book is authoritative. Pull
+  // their live holdings and weight by position size, instead of trusting the
+  // model's ticker list (which can be stale) and equal-weighting a 40% position
+  // the same as a 2% one. Falls back to the model's tickers only when the user
+  // has no book to analyze (e.g. a hypothetical "how correlated are these 3").
+  let weights = null; // ticker -> fraction of book by market value
+  if (userId) {
+    try {
+      const { data: pos } = await supabase.from('positions').select('ticker,shares,avg_cost').eq('user_id', userId);
+      const held = (pos ?? []).filter(p => p.ticker && (Number(p.shares) || 0) > 0);
+      if (held.length >= 2) {
+        const valOf = (p) => (getPrice(p.ticker)?.price ?? Number(p.avg_cost) ?? 0) * (Number(p.shares) || 0);
+        const total = held.reduce((s, p) => s + valOf(p), 0);
+        if (total > 0) {
+          weights = {};
+          for (const p of held) weights[String(p.ticker).toUpperCase()] = valOf(p) / total;
+          tickers = held.map(p => p.ticker); // analyze the REAL book, not what was guessed
+        }
+      }
+    } catch { /* fall back to the model-provided tickers */ }
+  }
+  if (!Array.isArray(tickers) || tickers.length < 2) return { error: 'Need at least 2 holdings to analyze' };
+  tickers = tickers.map(t => t.toUpperCase().trim()).slice(0, 15);
 
   const today = new Date();
   const from = new Date(today);
@@ -1427,6 +1447,7 @@ async function analyzePortfolioRisk({ tickers }) {
     ticker: t,
     beta_vs_spy: beta(priceData[t].returns, spyReturns),
     correlation_with_spy: correlation(priceData[t].returns, spyReturns),
+    ...(weights ? { weight_pct: +((weights[t] ?? 0) * 100).toFixed(1) } : {}),
   }));
 
   // Find highly correlated pairs
@@ -1444,10 +1465,19 @@ async function analyzePortfolioRisk({ tickers }) {
   }
   correlationPairs.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
 
-  // Portfolio-level beta (average)
-  const avgBeta = stockAnalysis.length > 0
-    ? +(stockAnalysis.reduce((s, st) => s + (st.beta_vs_spy || 1), 0) / stockAnalysis.length).toFixed(2)
-    : 1;
+  // Portfolio-level beta. Weighted by each position's share of the book when we
+  // have the real holdings (the only honest portfolio beta); equal-weighted only
+  // as a fallback for a hypothetical ticker set.
+  let avgBeta;
+  if (weights && stockAnalysis.length > 0) {
+    let wsum = 0, bsum = 0;
+    for (const st of stockAnalysis) { const w = weights[st.ticker] ?? 0; wsum += w; bsum += (st.beta_vs_spy || 1) * w; }
+    avgBeta = wsum > 0 ? +(bsum / wsum).toFixed(2) : 1;
+  } else {
+    avgBeta = stockAnalysis.length > 0
+      ? +(stockAnalysis.reduce((s, st) => s + (st.beta_vs_spy || 1), 0) / stockAnalysis.length).toFixed(2)
+      : 1;
+  }
 
   // Diversification score (1-10, based on average pairwise correlation)
   const avgCorr = correlationPairs.length > 0
