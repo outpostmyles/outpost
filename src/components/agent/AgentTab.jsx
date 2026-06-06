@@ -21,9 +21,12 @@ const FALLBACK_STARTERS = [
   'What would you do with my portfolio right now?',
 ];
 
-function Message({ msg, isLast, onSaveToJournal }) {
+function Message({ msg, isLast, isOpener, onSaveToJournal }) {
   const isUser = msg.role === 'user';
   const showBookmark = !isUser && !msg.streaming && msg.content && msg.content.trim().length > 10;
+  // The proactive opener (Outpost reached out, first in the thread) breathes the
+  // same soft glow as the Home OUTPOST card, so the reach-out feels alive.
+  const openerGlow = isOpener && !msg.streaming;
   return (
     <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', flexDirection: isUser ? 'row-reverse' : 'row', marginBottom: 12 }}>
       {!isUser && (
@@ -31,7 +34,7 @@ function Message({ msg, isLast, onSaveToJournal }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         </div>
       )}
-      <div style={{ maxWidth: '80%', background: isUser ? 'rgba(59,130,246,0.14)' : 'var(--surface)', border: `1px solid ${isUser ? 'rgba(59,130,246,0.22)' : 'var(--border)'}`, borderRadius: 8, padding: '10px 12px' }}>
+      <div className={openerGlow ? 'ai-glow' : undefined} style={{ maxWidth: '80%', background: isUser ? 'rgba(59,130,246,0.14)' : 'var(--surface)', border: `1px solid ${isUser ? 'rgba(59,130,246,0.22)' : 'var(--border)'}`, borderRadius: 8, padding: '10px 12px' }}>
         <p style={{ fontSize: 12, lineHeight: 1.7, color: isUser ? '#93c5fd' : 'var(--muted)', whiteSpace: 'pre-wrap' }}>
           {isUser ? msg.content : renderPlainText(msg.content)}
         </p>
@@ -618,6 +621,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
                 <Message
                   msg={msg}
                   isLast={i === messages.length - 1}
+                  isOpener={i === 0 && msg.role === 'assistant'}
                   onSaveToJournal={(m) => setJournalSave({
                     content: m.content,
                     ticker: detectTicker(m.content),
