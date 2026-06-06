@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { buildAgentReportCard } from '../../lib/agentReportCard.js';
 
 /**
  * Founder dashboard — internal-only page for tracking app health.
@@ -72,9 +73,28 @@ export default function FounderDashboard({ onBack }) {
     signupSeries: data.users?.signupSeries ?? [],
   };
 
+  // The Report Card: one synthesized weekly verdict built from data already
+  // loaded (dashboard + decision intel + AI cost + brief). It fills in as those
+  // sources arrive, and is honest about thin data, so it never fakes a grade.
+  const reportCard = buildAgentReportCard({
+    approvalRate7d: aiQuality?.approvalRate7d,
+    thumbsUp7d: aiQuality?.thumbsUp7d,
+    thumbsDown7d: aiQuality?.thumbsDown7d,
+    qualityTrend: brief?.qualityTrend || null,
+    adviceLift: intel?.adviceLift || null,
+    projectedMonthly: aiUsage?.projectedMonthly,
+    cost7d: aiUsage?.totals?.last7d?.cost,
+    errors7d: errors?.last7d,
+    active7d: users?.activeIn7d,
+    totalUsers: users?.total,
+    topObservation: brief?.observations?.[0] || null,
+  });
+
   return (
     <div className="scrollable" style={{ flex: 1 }}>
       <Header onBack={onBack} onRefresh={refresh} refreshing={refreshing} generatedAt={generatedAt} />
+
+      <ReportCard card={reportCard} />
 
       {/* FOUNDER BRIEF: everything compiled into one plain-text block to copy or
           screenshot and hand to Claude, with a recommendations list. FOUNDER ONLY. */}
@@ -385,6 +405,51 @@ function Header({ onBack, onRefresh, refreshing, generatedAt }) {
       <div style={{ display: 'flex', gap: 6 }}>
         <button onClick={onRefresh} disabled={refreshing} className="btn btn-muted" style={{ padding: '6px 10px', fontSize: 10 }}>{refreshing ? '...' : 'REFRESH'}</button>
         <button onClick={onBack} className="btn btn-muted" style={{ padding: '6px 10px', fontSize: 10 }}>BACK</button>
+      </div>
+    </div>
+  );
+}
+
+// The synthesized weekly verdict that sits on top of the raw dashboard. The
+// founder reads this first: a status, a plain-English headline, four color-coded
+// vitals (landed / accurate / helping / cost), and the one thing to look at.
+function ReportCard({ card }) {
+  if (!card) return null;
+  const tone = {
+    healthy:   { color: 'var(--green)', bg: 'rgba(52,211,153,0.10)',  border: 'rgba(52,211,153,0.30)' },
+    watch:     { color: 'var(--amber)', bg: 'rgba(245,158,11,0.10)',  border: 'rgba(245,158,11,0.30)' },
+    attention: { color: 'var(--red)',   bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.32)' },
+    thin:      { color: 'var(--blue)',  bg: 'rgba(59,130,246,0.08)',  border: 'rgba(59,130,246,0.24)' },
+  }[card.status] || { color: 'var(--faint)', bg: 'var(--surface)', border: 'var(--border)' };
+  const stateColor = (st) => st === 'good' ? 'var(--green)' : st === 'warn' ? 'var(--amber)' : st === 'bad' ? 'var(--red)' : 'var(--faint)';
+
+  return (
+    <div style={{ padding: '14px 16px 4px' }}>
+      <div style={{ background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 10, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--faint)', textTransform: 'uppercase' }}>Agent report card</span>
+          <span style={{ fontSize: 9, color: 'var(--faint)' }}>this week</span>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.5px', color: tone.color }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: tone.color }} />
+            {card.statusLabel}
+          </span>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.55, margin: '0 0 12px' }}>{card.headline}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+          {card.vitals.map(v => (
+            <div key={v.key} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `2px solid ${stateColor(v.state)}`, borderRadius: 8, padding: '10px 12px' }}>
+              <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 4 }}>{v.label}</p>
+              <p style={{ fontSize: 15, fontWeight: 700, color: v.state === 'none' ? 'var(--muted)' : stateColor(v.state) }}>{v.value}</p>
+              <p style={{ fontSize: 9.5, color: 'var(--faint)', marginTop: 2 }}>{v.sub}</p>
+            </div>
+          ))}
+        </div>
+        {card.topAction && (
+          <div style={{ marginTop: 10, padding: '9px 12px', background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 3 }}>Look at this first</p>
+            <p style={{ fontSize: 11.5, color: 'var(--text)', lineHeight: 1.5, margin: 0 }}>{card.topAction}</p>
+          </div>
+        )}
       </div>
     </div>
   );

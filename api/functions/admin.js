@@ -318,7 +318,9 @@ router.get('/brief', requireAuth, requireAdmin, rateLimit(20), async (req, res) 
     const engagement = { totalUsers: usersRes?.count ?? 0, active7d: activeRes?.count ?? 0, agentMessages: msgRes?.count ?? 0, errors7d: errRes?.count ?? 0 };
     const generatedAt = new Date().toISOString();
     const brief = buildFounderBrief({ intel, usage, qualityTrend, engagement, feedback, generatedAt });
-    res.json({ ...brief, generatedAt });
+    // Also return the structured grader trend (not just the text) so the
+    // dashboard's Report Card can synthesize an accuracy vital from it.
+    res.json({ ...brief, qualityTrend, generatedAt });
   } catch (err) {
     console.error('[Admin] brief failed:', err.message);
     res.status(500).json({ error: 'Could not build the brief' });
