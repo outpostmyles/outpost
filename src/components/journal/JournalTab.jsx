@@ -17,7 +17,7 @@ import { buildReflectionPrompts } from '../../lib/journalPrompts.js';
 import ProcessScorecard from './ProcessScorecard.jsx';
 import { computeComposure } from '../../lib/composure.js';
 import NorthStarCard from '../home/NorthStarCard.jsx';
-import { Spinner, EmptyState } from '../shared/UI.jsx';
+import { Spinner, EmptyState, CountUp } from '../shared/UI.jsx';
 import { detectKnownTickers } from '../../lib/tickers.js';
 import { filterNotes } from '../../lib/journalSearch.js';
 
@@ -471,7 +471,7 @@ function ComposureCard() {
         What you control, not what the market did. This climbs as you build the habits, even in a red market.
       </p>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
-        <span style={{ fontSize: 32, fontWeight: 800, color: subColor(c.score), letterSpacing: '-1px', lineHeight: 1 }}>{c.score}</span>
+        <span style={{ fontSize: 32, fontWeight: 800, color: subColor(c.score), letterSpacing: '-1px', lineHeight: 1 }}><CountUp value={c.score} format={(v) => Math.round(v)} duration={800} /></span>
         <span style={{ fontSize: 12, color: 'var(--faint)' }}>/ 100</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -772,7 +772,7 @@ function ScorecardSummary({ s }) {
       <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 8 }}>Your track record</p>
 
       {/* Realized P&L hero */}
-      <p style={{ fontSize: 28, fontWeight: 800, color: pnlColor, lineHeight: 1, letterSpacing: '-0.5px', margin: 0 }}>{money(s.totalPnl)}</p>
+      <p style={{ fontSize: 28, fontWeight: 800, color: pnlColor, lineHeight: 1, letterSpacing: '-0.5px', margin: 0 }}><CountUp value={s.totalPnl} format={(v) => money(v)} duration={800} /></p>
       <p style={{ fontSize: 10, color: 'var(--muted)', margin: '4px 0 14px' }}>
         realized across {s.totalTrades} closed trade{s.totalTrades === 1 ? '' : 's'}
       </p>
