@@ -640,11 +640,16 @@ function PatternsView() {
         <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.55, maxWidth: 320, margin: '0 auto' }}>
           Once you have the data, this view will show your win rate cut by behavior. Thesis vs no thesis, stop set vs not, reflection logged vs not. So you can see what's actually working.
         </p>
+        {data?.openPositions?.withThesis > 0 && (
+          <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.55, maxWidth: 320, margin: '12px auto 0' }}>
+            You already wrote a thesis on {data.openPositions.withThesis} open position{data.openPositions.withThesis === 1 ? '' : 's'}. {data.openPositions.withThesis === 1 ? 'It counts' : 'They count'} here once you close {data.openPositions.withThesis === 1 ? 'it' : 'them'}.
+          </p>
+        )}
       </div>
     );
   }
 
-  const { patterns, totalTrades, execution, scorecard } = data;
+  const { patterns, totalTrades, execution, scorecard, openPositions } = data;
   const coaching = buildCoaching({ attribution: data, adherence });
   const growth = buildGrowthArc(closed);
   const rows = [
@@ -657,7 +662,10 @@ function PatternsView() {
   // split to compare. If you did it on every closed trade or none, both rows would
   // just restate your overall rate, four identical boxes that say nothing. Those
   // collapse into a single honest line instead.
-  const hasSplit = (k) => (patterns[k]?.with?.count > 0) && (patterns[k]?.without?.count > 0);
+  // A behavior is comparable only when BOTH sides clear the per-bucket sample
+  // floor (decided server-side). One or two seeded trades can no longer
+  // manufacture a "without a thesis loses" claim out of noise.
+  const hasSplit = (k) => patterns[k]?.comparable === true;
   const comparableRows = rows.filter(r => hasSplit(r.key));
   const flatRows = rows.filter(r => !hasSplit(r.key));
 
@@ -674,6 +682,11 @@ function PatternsView() {
             ? `Across your ${totalTrades} closed trades. The number on the right is your win rate WITH each behavior vs WITHOUT it.`
             : `Across your ${totalTrades} closed trades.`}
         </p>
+        {openPositions?.withThesis > 0 && (
+          <p style={{ fontSize: 10.5, color: 'var(--faint)', lineHeight: 1.5, marginTop: 6 }}>
+            These come from closed trades only. The {openPositions.withThesis} open position{openPositions.withThesis === 1 ? '' : 's'} where you wrote a thesis will count here once you close {openPositions.withThesis === 1 ? 'it' : 'them'}.
+          </p>
+        )}
       </div>
 
       {comparableRows.length > 0 && (

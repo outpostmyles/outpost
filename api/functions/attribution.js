@@ -14,26 +14,9 @@ import express from 'express';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
-import { computeScorecard } from '../services/tradeScorecard.js';
+import { computeBehaviorPatterns, MIN_TRADES_FOR_ATTRIBUTION } from '../services/attributionPatterns.js';
 
 const router = express.Router();
-
-const MIN_TRADES_FOR_ATTRIBUTION = 5;
-
-// Helper: compute win rate + avg pnl% for a subset of trades.
-function aggregate(trades) {
-  if (!trades?.length) return { count: 0, winRate: null, avgPnlPercent: null, avgHoldDays: null };
-  const wins = trades.filter(t => (t.pnl ?? 0) > 0).length;
-  const winRate = parseFloat(((wins / trades.length) * 100).toFixed(1));
-  const totalPnl = trades.reduce((s, t) => s + (t.pnl_percent ?? 0), 0);
-  const avgPnlPercent = parseFloat((totalPnl / trades.length).toFixed(1));
-  const totalHold = trades.reduce((s, t) => s + (t.hold_days ?? 0), 0);
-  const tradesWithHold = trades.filter(t => t.hold_days != null);
-  const avgHoldDays = tradesWithHold.length > 0
-    ? Math.round(totalHold / tradesWithHold.length)
-    : null;
-  return { count: trades.length, winRate, avgPnlPercent, avgHoldDays };
-}
 
 // GET /api/portfolio/attribution
 //
@@ -92,99 +75,28 @@ async function fetchClosedTradesResilient(userId) {
   return fallbackData ?? [];
 }
 
+// Open-position thesis counts, so the client can bridge the open-vs-closed gap:
+// the patterns below are from CLOSED trades, but a user who wrote theses on
+// still-open positions should never be told they have none.
+async function fetchOpenThesisCounts(userId) {
+  try {
+    const { data } = await supabase.from('positions').select('entry_thesis').eq('user_id', userId);
+    const rows = data ?? [];
+    const withThesis = rows.filter(p => p.entry_thesis && String(p.entry_thesis).trim().length > 0).length;
+    return { total: rows.length, withThesis };
+  } catch { return { total: 0, withThesis: 0 }; }
+}
+
 router.get('/', requireAuth, rateLimit(15), async (req, res) => {
   try {
-    const trades = await fetchClosedTradesResilient(req.user.id);
-
-    const all = trades ?? [];
-    if (all.length < MIN_TRADES_FOR_ATTRIBUTION) {
-      return res.json({
-        ready: false,
-        totalTrades: all.length,
-        minRequired: MIN_TRADES_FOR_ATTRIBUTION,
-      });
-    }
-
-    // Cut 1: had thesis vs didn't
-    const withThesis = all.filter(t => t.entry_thesis && t.entry_thesis.trim().length > 0);
-    const withoutThesis = all.filter(t => !t.entry_thesis || t.entry_thesis.trim().length === 0);
-
-    // Cut 2: had stop-loss vs didn't
-    const withStop = all.filter(t => t.stop_loss != null && t.stop_loss > 0);
-    const withoutStop = all.filter(t => t.stop_loss == null || t.stop_loss <= 0);
-
-    // Cut 3: had price target vs didn't
-    const withTarget = all.filter(t => t.price_target != null && t.price_target > 0);
-    const withoutTarget = all.filter(t => t.price_target == null || t.price_target <= 0);
-
-    // Cut 4: logged a reflection on close vs didn't.
-    // Any of the three reflection fields counts as "reflected."
-    const hasReflection = t =>
-      (t.exit_reflection && t.exit_reflection.trim()) ||
-      (t.reflection_lesson && t.reflection_lesson.trim()) ||
-      (t.reflection_what_happened && t.reflection_what_happened.trim());
-    const withReflection = all.filter(hasReflection);
-    const withoutReflection = all.filter(t => !hasReflection(t));
-
-    // "Lift" is the absolute percentage-point delta in win rate. We only
-    // surface it when BOTH groups have at least 3 trades — below that the
-    // comparison is meaningless. Null lift means "not enough data to compare."
-    function lift(aWith, aWithout) {
-      if (aWith.winRate == null || aWithout.winRate == null) return null;
-      if (aWith.count < 3 || aWithout.count < 3) return null;
-      return parseFloat((aWith.winRate - aWithout.winRate).toFixed(1));
-    }
-
-    const thesisAgg = { with: aggregate(withThesis), without: aggregate(withoutThesis) };
-    const stopAgg = { with: aggregate(withStop), without: aggregate(withoutStop) };
-    const targetAgg = { with: aggregate(withTarget), without: aggregate(withoutTarget) };
-    const reflectionAgg = { with: aggregate(withReflection), without: aggregate(withoutReflection) };
-
-    // Execution rating summary. Separate from the with/without pattern shape
-    // because it's a 1-5 score, not a binary cut. Show distribution + avg +
-    // win-rate-when-high-execution (4-5) vs win-rate-when-low (1-2). This is
-    // the killer retrospective metric: execution is the controllable thing,
-    // so seeing the win-rate delta when you executed well is the real edge.
-    const rated = all.filter(t => t.execution_rating != null);
-    let executionSummary = null;
-    if (rated.length >= 3) {
-      const avg = rated.reduce((s, t) => s + t.execution_rating, 0) / rated.length;
-      const dist = [1, 2, 3, 4, 5].map(score => ({
-        score,
-        count: rated.filter(t => t.execution_rating === score).length,
-      }));
-      const highExec = rated.filter(t => t.execution_rating >= 4);
-      const lowExec = rated.filter(t => t.execution_rating <= 2);
-      const highAgg = aggregate(highExec);
-      const lowAgg = aggregate(lowExec);
-      executionSummary = {
-        rated: rated.length,
-        unrated: all.length - rated.length,
-        avgRating: parseFloat(avg.toFixed(2)),
-        distribution: dist,
-        whenHigh: highAgg,
-        whenLow: lowAgg,
-        lift: (highAgg.winRate != null && lowAgg.winRate != null && highAgg.count >= 2 && lowAgg.count >= 2)
-          ? parseFloat((highAgg.winRate - lowAgg.winRate).toFixed(1))
-          : null,
-      };
-    }
-
-    res.json({
-      ready: true,
-      totalTrades: all.length,
-      minRequired: MIN_TRADES_FOR_ATTRIBUTION,
-      // Top-line track record (realized P&L, win rate, profit factor, hold-time
-      // split). Computed from the same `all` array, so no extra query.
-      scorecard: computeScorecard(all),
-      patterns: {
-        thesis: { ...thesisAgg, lift: lift(thesisAgg.with, thesisAgg.without) },
-        stopLoss: { ...stopAgg, lift: lift(stopAgg.with, stopAgg.without) },
-        priceTarget: { ...targetAgg, lift: lift(targetAgg.with, targetAgg.without) },
-        reflection: { ...reflectionAgg, lift: lift(reflectionAgg.with, reflectionAgg.without) },
-      },
-      execution: executionSummary,  // null if fewer than 3 rated trades
-    });
+    const [trades, openPositions] = await Promise.all([
+      fetchClosedTradesResilient(req.user.id),
+      fetchOpenThesisCounts(req.user.id),
+    ]);
+    // All the behavior math lives in a pure, tested module (sample-gating, the
+    // per-bucket floor, the lift). The route just wires in the data.
+    const result = computeBehaviorPatterns(trades);
+    res.json({ ...result, openPositions });
   } catch (err) {
     console.error(`[req:${req.requestId}] [Attribution] failed:`, err.message);
     res.status(500).json({ error: 'Could not load patterns' });
