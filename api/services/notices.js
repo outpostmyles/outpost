@@ -104,6 +104,11 @@ export function generateNotices({ closedTrades = [], positions = [], messages = 
   }
 
   // ─── Active positions with no thesis ─────────────────────────────────────
+  // Capped to a SINGLE nudge no matter how many positions lack a thesis, so a
+  // freshly synced 40-name book shows one gentle reminder, not a wall of "write
+  // your thesis" notices. We surface the oldest un-thesised position, and if
+  // several lack one, fold the count into that single line.
+  const noThesis = [];
   for (const p of (positions || [])) {
     if (!p?.ticker) continue;
     ownedOrRecentlyClosedTickers.add(p.ticker);
@@ -112,13 +117,21 @@ export function generateNotices({ closedTrades = [], positions = [], messages = 
     if (!refDate) continue;
     const ageDays = Math.floor((nowMs - new Date(refDate).getTime()) / 86400000);
     if (ageDays < NO_THESIS_AGE_DAYS) continue;
-    candidates.push({
+    noThesis.push({
       id: `no_thesis_${p.id}`,
-      severity: 'medium',
-      text: `${p.ticker} has been in your book for ${ageDays} day${ageDays === 1 ? '' : 's'} without a thesis. Takes 30 seconds. Future you will be glad you wrote it.`,
+      ticker: p.ticker,
+      ageDays,
       cta: { label: 'Write it', action: 'add_thesis', positionId: p.id, ticker: p.ticker },
       _priority: 50 + Math.min(ageDays, 30),
     });
+  }
+  if (noThesis.length > 0) {
+    noThesis.sort((a, b) => b._priority - a._priority);
+    const top = noThesis[0];
+    const text = noThesis.length === 1
+      ? `${top.ticker} has been in your book for ${top.ageDays} day${top.ageDays === 1 ? '' : 's'} without a thesis. Takes 30 seconds. Future you will be glad you wrote it.`
+      : `${noThesis.length} of your positions have no thesis yet, starting with ${top.ticker}. Adding one takes 30 seconds, and it is what makes the rest of Outpost smarter about your book.`;
+    candidates.push({ id: top.id, severity: 'medium', text, cta: top.cta, _priority: top._priority });
   }
 
   // ─── Tickers mentioned in chat but not owned and not watched ─────────────

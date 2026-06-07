@@ -142,6 +142,21 @@ test('notice does NOT fire for fresh position (< 7d) without thesis', () => {
   assert.equal(out.length, 0);
 });
 
+test('multiple thesis-less positions collapse into ONE consolidated notice', () => {
+  const out = generateNotices({
+    positions: [
+      { id: 'p1', ticker: 'AAA', entry_thesis: null, purchased_at: daysAgo(20), created_at: daysAgo(20) },
+      { id: 'p2', ticker: 'BBB', entry_thesis: null, purchased_at: daysAgo(15), created_at: daysAgo(15) },
+      { id: 'p3', ticker: 'CCC', entry_thesis: '', purchased_at: daysAgo(10), created_at: daysAgo(10) },
+    ],
+    now: NOW,
+  });
+  const thesisNotices = out.filter(n => n.cta?.action === 'add_thesis');
+  assert.equal(thesisNotices.length, 1);              // one nudge, not three
+  assert.equal(thesisNotices[0].id, 'no_thesis_p1');  // the oldest
+  assert.ok(/3 of your positions/.test(thesisNotices[0].text));
+});
+
 test('notice does NOT fire when thesis is already written', () => {
   const out = generateNotices({
     positions: [{
