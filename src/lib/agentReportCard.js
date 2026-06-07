@@ -99,10 +99,15 @@ export function buildAgentReportCard(signals = {}) {
 
   const hasSignal = votes >= 5 || gradedForState >= 10 || liftPts != null;
 
+  // Pre-beta data is sparse and partly seeded, so we never present it as a real
+  // verdict no matter how much volume the seed creates. The vitals still compute
+  // (a wiring check that the machine works end to end), but the card stays in the
+  // neutral tone and says it is seeded, matching the founder brief's discipline.
+  // Only once we are past pre-beta do the real verdict bands kick in.
   let status, statusLabel;
-  if (preBeta && !hasSignal) {
+  if (preBeta) {
     status = 'thin';
-    statusLabel = 'Too early to grade';
+    statusLabel = hasSignal ? 'Pre-beta (seeded)' : 'Too early to grade';
   } else if (vitals.some(v => v.state === 'bad') || errors7d >= 10) {
     status = 'attention';
     statusLabel = 'Needs you';
@@ -115,7 +120,7 @@ export function buildAgentReportCard(signals = {}) {
   }
 
   const headline = buildHeadline({
-    status, accuracyState, landedState, helpingState,
+    status, preBeta, hasSignal, accuracyState, landedState, helpingState,
     approval, flaggedPct, liftPts, errors7d, votes, gradedForState,
   });
 
@@ -127,8 +132,11 @@ export function buildAgentReportCard(signals = {}) {
   };
 }
 
-function buildHeadline({ status, accuracyState, landedState, helpingState, approval, flaggedPct, liftPts, errors7d, votes, gradedForState }) {
+function buildHeadline({ status, preBeta, hasSignal, accuracyState, landedState, helpingState, approval, flaggedPct, liftPts, errors7d, votes, gradedForState }) {
   if (status === 'thin') {
+    if (preBeta && hasSignal) {
+      return 'These vitals compute on seeded, pre-beta data, so they confirm the machine works end to end but are not real signal yet. Real beta users are the unlock.';
+    }
     return 'Not enough real usage to grade yet. The instruments are wired and reading, they just need beta traffic to mean anything.';
   }
   if (status === 'attention') {

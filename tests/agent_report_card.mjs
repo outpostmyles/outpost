@@ -25,6 +25,22 @@ test('pre-beta with no signal stays thin even with zero errors', () => {
   eq(buildAgentReportCard({ totalUsers: 4, errors7d: 0 }).status, 'thin', 'status');
 });
 
+test('pre-beta with seeded volume reads as seeded, never a real verdict', () => {
+  // The screenshot case: lots of seeded volume but only 11 real accounts. The
+  // vitals still compute (wiring check) but the card must not claim a verdict.
+  const c = buildAgentReportCard({
+    totalUsers: 11,
+    qualityTrend: { graded: 64, flaggedPct: 19, recent: { graded: 54, flaggedPct: 13 } },
+    adviceLift: { lift: 12, advised: { n: 120 }, selfDirected: { n: 134 } },
+    projectedMonthly: 5, cost7d: 1.07,
+  });
+  eq(c.status, 'thin', 'status thin despite volume');
+  eq(c.statusLabel, 'Pre-beta (seeded)', 'seeded label');
+  ok(/seeded/.test(c.headline), 'headline names seeded');
+  eq(vital(c, 'accurate').state, 'warn', 'accuracy vital still computes');
+  eq(vital(c, 'helping').state, 'good', 'helping vital still computes');
+});
+
 test('all good grades healthy with good vitals', () => {
   const c = buildAgentReportCard({
     totalUsers: 40, active7d: 20,
