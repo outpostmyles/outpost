@@ -1,7 +1,7 @@
 // Pins the thesis payoff loop in the proactive digest: a hard down day on a name
 // the user owns for a reason THEY wrote surfaces that reason back to them, and
 // agent-drafted theses or up days fall back to the plain mover line. Pure.
-import { detectSignals } from '../api/services/proactiveDigest.js';
+import { detectSignals, composeQuietDigest } from '../api/services/proactiveDigest.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -48,6 +48,23 @@ test('a long thesis is truncated with an ellipsis', () => {
   const sigs = detectSignals({ positions: book(pos({ todayChangePercent: -6, entry_thesis: 'x'.repeat(300) })) });
   const tp = sigs.find(s => s.kind === 'thesis_under_pressure');
   ok(tp && tp.detail.includes('…'), 'truncated');
+});
+
+test('quiet-day digest pushes a coaching insight when there is one', () => {
+  const d = composeQuietDigest({ hasEnough: true, fix: 'You hold losers about 20 days and winners only 5.', strength: null });
+  ok(/how you trade/.test(d), 'frames it as a pattern');
+  ok(/hold losers about 20 days/.test(d), 'includes the insight verbatim');
+});
+
+test('quiet-day digest falls back to the plain line when the record is thin', () => {
+  const d = composeQuietDigest({ hasEnough: false });
+  ok(/Quiet days are fine/.test(d), 'plain line');
+  ok(!/how you trade/.test(d), 'no insight framing');
+});
+
+test('quiet-day digest prefers the fix over the strength', () => {
+  const d = composeQuietDigest({ hasEnough: true, fix: 'FIXLINE', strength: 'STRENGTHLINE' });
+  ok(/FIXLINE/.test(d) && !/STRENGTHLINE/.test(d), 'fix wins');
 });
 
 let pass = 0, fail = 0;

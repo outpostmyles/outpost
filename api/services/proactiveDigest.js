@@ -20,6 +20,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { todayStr } from '../utils/marketHours.js';
 import { recordClaudeUsage } from './aiUsage.js';
+import { computeBehaviorPatterns } from './attributionPatterns.js';
+import { buildCoaching } from '../../src/lib/coaching.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
@@ -229,6 +231,32 @@ export async function gatherSignalsForUser(userId) {
   return { signals, hasPositions: true };
 }
 
+// One-line "how you trade" insight for a quiet day, from the same buildCoaching
+// the Progress tab and Daily Round use. IO: pulls closed trades + plan adherence,
+// runs the pure behavior math, returns the coaching result (or hasEnough:false).
+async function coachingInsightForUser(userId) {
+  try {
+    const [tradesRes, adherence] = await Promise.all([
+      supabase.from('closed_trades')
+        .select('ticker, pnl, pnl_percent, entry_thesis, thesis_source, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days, execution_rating')
+        .eq('user_id', userId).order('closed_at', { ascending: false }).limit(200),
+      import('./planAdherence.js').then(m => m.getPlanAdherence(userId)).catch(() => null),
+    ]);
+    const attribution = computeBehaviorPatterns(tradesRes?.data || []);
+    return buildCoaching({ attribution, adherence });
+  } catch { return { hasEnough: false }; }
+}
+
+// Pure: compose the quiet-day digest. With a real coaching insight it pushes the
+// single most useful pattern in HOW they trade, so a quiet day becomes a moment
+// of self-knowledge instead of dead air. Otherwise the plain line.
+export function composeQuietDigest(coaching) {
+  const insight = coaching?.hasEnough ? (coaching.fix || coaching.strength) : null;
+  return insight
+    ? `Quiet day on your book, nothing pressing. But here is one pattern worth knowing about how you trade: ${insight}`
+    : 'Nothing pressing across your positions today. Quiet days are fine, sometimes the best trade is no trade.';
+}
+
 export async function generateDigestForUser(userId) {
   // Pull positions + watchlist in parallel
   const [posRes, watchRes] = await Promise.allSettled([
@@ -276,11 +304,15 @@ export async function generateDigestForUser(userId) {
 
   const signals = detectSignals({ positions, watchlist, adherenceSummary });
 
-  // Quiet day — no prose generation needed
+  // Quiet day: nothing time-sensitive. Rather than dead air, push the single most
+  // useful pattern in HOW they trade (the same insight the Progress tab leads
+  // with), so a quiet day becomes a moment of self-knowledge instead of nothing.
+  // Falls back to the plain line when the record is too thin to say it honestly.
   if (signals.length === 0) {
+    const coaching = await coachingInsightForUser(userId);
     return {
       available: true,
-      digest: 'Nothing pressing across your positions today. Quiet days are fine, sometimes the best trade is no trade.',
+      digest: composeQuietDigest(coaching),
       signals: [],
       quiet: true,
       generatedAt: new Date().toISOString(),
