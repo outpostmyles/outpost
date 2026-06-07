@@ -101,7 +101,7 @@ export default function PortfolioExplainerCard({ refreshKey, showToast }) {
     );
   }
 
-  const { portfolioSummary, benchmark, summary, winners, losers, generatedAt } = data;
+  const { portfolioSummary, benchmark, summary, winners, losers, generatedAt, pricesAsOf } = data;
   const totalChange = portfolioSummary?.totalChange ?? 0;
   const totalChangePct = portfolioSummary?.totalChangePct ?? 0;
   const up = totalChange >= 0;
@@ -145,6 +145,8 @@ export default function PortfolioExplainerCard({ refreshKey, showToast }) {
           {generatedAt && (
             <span style={{ fontSize: 8, color: 'var(--faint)', fontWeight: 400, letterSpacing: 0 }}>
               {new Date(generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              {' · prices as of '}
+              {new Date(pricesAsOf || generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
             </span>
           )}
         </div>
@@ -182,6 +184,14 @@ export default function PortfolioExplainerCard({ refreshKey, showToast }) {
         {summary && (
           <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.55, marginBottom: expanded && hasMovers ? 12 : 0 }}>
             {summary}
+          </p>
+        )}
+
+        {/* Honest coverage: if we could not get a live quote for some positions,
+            say so rather than pretending they were flat. */}
+        {portfolioSummary?.unpricedCount > 0 && (
+          <p style={{ fontSize: 9.5, color: 'var(--faint)', lineHeight: 1.5, marginTop: 6 }}>
+            {portfolioSummary.unpricedCount} position{portfolioSummary.unpricedCount === 1 ? '' : 's'} could not be priced right now, so {portfolioSummary.unpricedCount === 1 ? 'it is' : 'they are'} left out of this read.
           </p>
         )}
 

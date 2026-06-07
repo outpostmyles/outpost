@@ -23,10 +23,11 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { getPrices } from '../services/pricePool.js';
 import { getNews, getSnapshot } from '../utils/polygon.js';
 import { getTickerNews, isFinnhubAvailable } from '../utils/finnhub.js';
-import { todayStr, isWeekday } from '../utils/marketHours.js';
+import { todayStr, isWeekday, isMarketHours } from '../utils/marketHours.js';
 import { config } from '../config.js';
 import { PLAIN_TEXT_RULE } from '../utils/aiStyle.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { summarizeMovers } from '../services/moverSummary.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -35,72 +36,17 @@ const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
 // ============ CORE ============
 
 /**
- * Compute dollar-impact movers for a user from their positions and live prices.
- * Returns { totalChange, totalChangePct, winners, losers, positionCount } or null
- * if no positions.
+ * IO wrapper: fetch the user's positions + pooled prices, then summarize. The
+ * pool refreshes every 30s in market hours, so this reads fresh quotes, and the
+ * pure summarizer guarantees we never narrate an unpriced position.
  */
 async function computeMovers(userId) {
   const { data: positions } = await supabase
     .from('positions')
     .select('ticker, shares, avg_cost')
     .eq('user_id', userId);
-
   if (!positions?.length) return null;
-
-  const tickers = positions.map(p => p.ticker);
-  const priceMap = getPrices(tickers);
-
-  let totalChange = 0;
-  let totalValue = 0;
-  const enriched = [];
-
-  for (const p of positions) {
-    const live = priceMap[p.ticker];
-    const currentPrice = live?.price ?? p.avg_cost ?? 0;
-    const changePct = live?.changePercent ?? 0;
-    const currentValue = currentPrice * (p.shares ?? 0);
-    const prevValue = changePct !== 0 ? currentValue / (1 + changePct / 100) : currentValue;
-    const dollarImpact = currentValue - prevValue;
-
-    totalChange += dollarImpact;
-    totalValue += currentValue;
-
-    enriched.push({
-      ticker: p.ticker,
-      shares: p.shares,
-      currentPrice: parseFloat(currentPrice.toFixed(2)),
-      changePct: parseFloat(changePct.toFixed(2)),
-      dollarImpact: parseFloat(dollarImpact.toFixed(2)),
-      currentValue: parseFloat(currentValue.toFixed(2)),
-    });
-  }
-
-  const prevTotalValue = totalValue - totalChange;
-  const totalChangePct = prevTotalValue > 0 ? (totalChange / prevTotalValue) * 100 : 0;
-
-  // Sort by absolute dollar impact so we rank "what actually moved the needle"
-  // rather than biggest-% (which favors small positions).
-  const sortedByImpact = [...enriched].sort(
-    (a, b) => Math.abs(b.dollarImpact) - Math.abs(a.dollarImpact)
-  );
-
-  // Winners = positive dollar impact, top 3 by magnitude
-  // Losers  = negative dollar impact, top 3 by magnitude
-  const winners = sortedByImpact
-    .filter(p => p.dollarImpact > 0.01)
-    .slice(0, 3);
-  const losers = sortedByImpact
-    .filter(p => p.dollarImpact < -0.01)
-    .slice(0, 3);
-
-  return {
-    totalChange: parseFloat(totalChange.toFixed(2)),
-    totalChangePct: parseFloat(totalChangePct.toFixed(2)),
-    totalValue: parseFloat(totalValue.toFixed(2)),
-    positionCount: positions.length,
-    winners,
-    losers,
-  };
+  return summarizeMovers(positions, getPrices(positions.map(p => p.ticker)), { now: Date.now() });
 }
 
 /**
@@ -257,10 +203,13 @@ export async function generateExplainerForUser(userId) {
     return {
       date,
       generatedAt: new Date().toISOString(),
+      pricesAsOf: movers.pricesAsOf,
       portfolioSummary: {
         totalChange: movers.totalChange,
         totalChangePct: movers.totalChangePct,
         positionCount: movers.positionCount,
+        pricedCount: movers.pricedCount,
+        unpricedCount: movers.unpricedCount,
       },
       benchmark: null,
       summary: 'Quiet day, no meaningful single-position moves.',
@@ -302,10 +251,13 @@ export async function generateExplainerForUser(userId) {
   return {
     date,
     generatedAt: new Date().toISOString(),
+    pricesAsOf: movers.pricesAsOf,
     portfolioSummary: {
       totalChange: movers.totalChange,
       totalChangePct: movers.totalChangePct,
       positionCount: movers.positionCount,
+      pricedCount: movers.pricedCount,
+      unpricedCount: movers.unpricedCount,
     },
     benchmark: benchmark
       ? {
@@ -318,6 +270,17 @@ export async function generateExplainerForUser(userId) {
     winners,
     losers,
   };
+}
+
+// During market hours the "today's move" read must not be served a day stale, so
+// a cached read older than this gets regenerated on open. After the close the
+// daily recap is the final word and we keep it for the rest of the day.
+const INTRADAY_MAX_AGE_MS = 45 * 60 * 1000;
+function explainerIsFresh(parsed) {
+  if (!parsed?.generatedAt) return false;
+  if (!isMarketHours()) return true;
+  const age = Date.now() - new Date(parsed.generatedAt).getTime();
+  return Number.isFinite(age) && age < INTRADAY_MAX_AGE_MS;
 }
 
 /**
@@ -336,7 +299,8 @@ async function getExplainer(userId, force = false) {
         .maybeSingle();
       if (cached?.result) {
         try {
-          return JSON.parse(cached.result);
+          const parsed = JSON.parse(cached.result);
+          if (explainerIsFresh(parsed)) return parsed;
         } catch {}
       }
     } catch {}
