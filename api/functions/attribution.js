@@ -42,7 +42,7 @@ const router = express.Router();
 // execution-rating block in the response just won't appear for them, which
 // is correct behavior since they couldn't have rated any closes anyway.
 const REQUIRED_COLS = 'ticker, pnl, pnl_percent, entry_thesis, stop_loss, price_target, exit_reflection, reflection_lesson, reflection_what_happened, hold_days';
-const OPTIONAL_COLS = ['execution_rating'];
+const OPTIONAL_COLS = ['execution_rating', 'thesis_source'];
 
 async function fetchClosedTradesResilient(userId) {
   const fullSelect = [REQUIRED_COLS, ...OPTIONAL_COLS].join(', ');

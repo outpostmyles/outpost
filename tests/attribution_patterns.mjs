@@ -60,6 +60,17 @@ test('blank or whitespace thesis counts as without', () => {
   eq(r.patterns.thesis.without.count, 5, 'all without');
 });
 
+test('an agent-authored thesis does not count as user conviction', () => {
+  // 5 with a USER thesis (4W/1L), 5 with an AGENT thesis (all wins). The agent
+  // ones must land in the "without" bucket, never inflating "with".
+  const userT = [win({ entry_thesis: 'a' }), win({ entry_thesis: 'a' }), win({ entry_thesis: 'a' }), win({ entry_thesis: 'a' }), loss({ entry_thesis: 'a' })];
+  const agentT = Array.from({ length: 5 }, () => win({ entry_thesis: 'b', thesis_source: 'agent' }));
+  const r = computeBehaviorPatterns([...userT, ...agentT]);
+  eq(r.patterns.thesis.with.count, 5, 'only user theses count as with');
+  eq(r.patterns.thesis.without.count, 5, 'agent theses fall to without');
+  eq(r.patterns.thesis.with.winRate, 80, 'with bucket = user trades');
+});
+
 test('aggregate computes win rate; empty is null', () => {
   const a = aggregate([win(), win(), loss(), loss()]);
   eq(a.count, 4, 'count');

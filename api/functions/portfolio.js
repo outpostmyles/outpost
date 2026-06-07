@@ -670,6 +670,10 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     // recordable as advised, not silently downgraded to manual.
     const VALID_SOURCES = ['manual', 'import', 'screenshot', ...AI_SOURCES];
     const source = VALID_SOURCES.includes(req.body.source) ? req.body.source : 'manual';
+    // Who authored the thesis TEXT: 'agent' when applied from an agent draft,
+    // 'user' otherwise. Separate from `source` (how the BUY was driven) so an
+    // agent-written thesis never counts as the user's own conviction in stats.
+    const thesisSource = req.body.thesisSource === 'agent' ? 'agent' : 'user';
 
     // Validate ticker is a real stock + prices pass sanity checks
     const validation = await validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss });
@@ -691,7 +695,7 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       const updateData = { shares: blended.shares, avg_cost: blended.avgCost };
       // Fill a plan field only if the user did not already have one; never clobber
       // an existing thesis, target, or stop with a quick add-more.
-      if (entryThesis && !held.entry_thesis) { updateData.entry_thesis = entryThesis; updateData.thesis_written_at = new Date().toISOString(); }
+      if (entryThesis && !held.entry_thesis) { updateData.entry_thesis = entryThesis; updateData.thesis_written_at = new Date().toISOString(); updateData.thesis_source = thesisSource; }
       if (priceTarget && !held.price_target) updateData.price_target = priceTarget;
       if (stopLoss && !held.stop_loss) updateData.stop_loss = stopLoss;
 
@@ -736,6 +740,7 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       insertData.entry_thesis = entryThesis;
       // Stamp thesis_written_at on first capture so we can show "thesis from N days ago"
       insertData.thesis_written_at = new Date().toISOString();
+      insertData.thesis_source = thesisSource;
     }
     if (reversalCondition) insertData.reversal_condition = reversalCondition;
     if (priceTarget) insertData.price_target = priceTarget;
@@ -1049,6 +1054,9 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
     if (req.body.entryThesis !== undefined) {
       const cleaned = sanitizeString(req.body.entryThesis, 500) || null;
       updates.entry_thesis = cleaned;
+      // Tag authorship with the text: 'agent' when applied from a proposal,
+      // 'user' when typed here. Clearing the thesis clears the source too.
+      updates.thesis_source = cleaned ? (req.body.thesisSource === 'agent' ? 'agent' : 'user') : null;
       // Only stamp thesis_written_at when entry_thesis is moving from empty
       // to set. If the user just edits an existing thesis we keep the original
       // timestamp so the "thesis from 23 days ago" age stays meaningful.

@@ -95,7 +95,9 @@ function ProposalCard({ proposal, onApply }) {
       body.avgCost = has.avgCost ?? proposal.livePrice;
       body.source = proposal.source || 'agent';
     }
-    if (has.entryThesis !== undefined) body.entryThesis = thesis.trim();
+    // A thesis applied from an agent draft is tagged 'agent' so it never counts
+    // as the user's own conviction in the Patterns stats, even if they edited it.
+    if (has.entryThesis !== undefined) { body.entryThesis = thesis.trim(); body.thesisSource = 'agent'; }
     if (has.stopLoss !== undefined) body.stopLoss = stop.trim() === '' ? null : parseFloat(stop);
     if (has.priceTarget !== undefined) body.priceTarget = target.trim() === '' ? null : parseFloat(target);
     try { await onApply(proposal, body); setApplied(true); }

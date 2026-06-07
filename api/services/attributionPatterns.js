@@ -58,7 +58,10 @@ export function computeBehaviorPatterns(trades) {
     return { ready: false, totalTrades: all.length, minRequired: MIN_TRADES_FOR_ATTRIBUTION };
   }
 
-  const hasThesis = t => hasText(t.entry_thesis);
+  // Only a thesis the USER wrote counts as conviction. An agent-drafted thesis
+  // (thesis_source === 'agent') falls into the "without" bucket, so the stat
+  // measures whether the user's own reasoning helped, not the agent's.
+  const hasThesis = t => hasText(t.entry_thesis) && t.thesis_source !== 'agent';
   const hasStop = t => t.stop_loss != null && t.stop_loss > 0;
   const hasTarget = t => t.price_target != null && t.price_target > 0;
   const hasReflection = t => hasText(t.exit_reflection) || hasText(t.reflection_lesson) || hasText(t.reflection_what_happened);
