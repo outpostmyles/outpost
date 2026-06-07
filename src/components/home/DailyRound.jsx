@@ -120,7 +120,12 @@ function RoundFlow({ onClose, onComplete, showToast, onTabSwitch }) {
     return () => { cancelled = true; };
   }, []);
 
-  const steps = ['safety', 'standing', 'opportunity'];
+  // Ruthless: only the steps that actually have something to say. Standing (where
+  // you stand) always shows; the idea step only when there is an idea; the
+  // sharpen step only when there is a fresh close to reflect on. A quiet day is
+  // safety, standing, close, not a walk through empty filler.
+  const steps = ['safety', 'standing'];
+  if (round && round.opportunity.length > 0) steps.push('opportunity');
   if (round && round.sharpen.kind !== 'none') steps.push('sharpen');
   steps.push('close');
   const current = steps[Math.min(i, steps.length - 1)];

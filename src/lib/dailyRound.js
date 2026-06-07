@@ -1,34 +1,36 @@
 // Step-composition for the Daily Round.
 //
-// The round is a reframe of data the app already produces, not a new system. It
-// takes the TODAY feed items, the user's positions, and their behavior-
-// attribution, and sorts them into the round's narrative steps:
-//   - safety:      the items that actually need a decision (alerts)
-//   - opportunity: a rationed 1-2 ideas worth a look that they don't already hold
-//   - sharpen:     one contextual, skippable ask, or nothing (never a nag)
+// The round is a reframe of data the app already produces, not a new system, and
+// it is deliberately RUTHLESS about an experienced trader's time. It surfaces
+// only what is about THEIR book and time-sensitive, and gets out of the way when
+// nothing is:
+//   - safety:      what needs your eyes today. Alerts (a real decision: stop
+//                  broken, target hit, drawdown) first, then big moves on names
+//                  you actually hold (what changed on your book), deduped by
+//                  ticker. The round used to drop held movers entirely.
+//   - opportunity: at most ONE idea worth a look that they do not already hold,
+//                  rationed hard so the round is about their book, not a feed.
+//   - sharpen:     one OPTIONAL ask, and only a reflection on a recent close
+//                  (lock the lesson while it is fresh). Never manufactured: the
+//                  thesis nudge lives in Home notices, the behavior insight in
+//                  the morning digest, so the round never invents a task.
 //
-// Standing (P&L + pulse) and the close screen are pure presentation, handled in
-// the UI. This module is the decision logic, kept pure so it is unit-testable.
-
-import { buildCoaching } from './coaching.js';
+// Standing (P&L + pulse) is pure presentation, handled in the UI. This module is
+// the decision logic, kept pure so it is unit-testable.
 
 const OPPORTUNITY_TYPES = new Set(['bargain', 'catalyst', 'heat', 'watch']);
+const DAY_MS = 86400000;
 
 function clean(s) { return (s == null ? '' : String(s)).trim(); }
 function upper(s) { return clean(s).toUpperCase(); }
-
-// Pick the one contextual "get sharper" prompt. Order is deliberate: the most
-// valuable, lowest-effort ask first (a missing thesis feeds the edge stats),
-// then a genuine insight from their own record, then nothing at all. We never
-// invent a task just to have one.
-const DAY_MS = 86400000;
 function hasReflection(t) {
   return !!(clean(t.reflection_lesson) || clean(t.reflection_what_happened) || clean(t.exit_reflection));
 }
 
-function chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs) {
-  // 1. A trade closed recently with no reflection logged: lock in the lesson
-  //    while it's fresh. Highest priority, this is where getting better happens.
+// The one optional "get sharper" ask: ONLY a reflection on a recent close, the
+// single time-sensitive ask where getting better actually happens. We never
+// manufacture an ask, so a quiet round simply ends instead of inventing a task.
+function chooseSharpen(closedTrades, reflectedIds, nowMs) {
   const skip = new Set((Array.isArray(reflectedIds) ? reflectedIds : []).map(String));
   const recentUnreflected = (Array.isArray(closedTrades) ? closedTrades : [])
     .filter(t => t && t.id != null && t.ticker && !skip.has(String(t.id)) && !hasReflection(t))
@@ -46,43 +48,31 @@ function chooseSharpen(positions, attribution, adherence, closedTrades, reflecte
       prompt: `You closed ${upper(t.ticker)} recently and never wrote down what you learned. Lock in the lesson while it's fresh?`,
     };
   }
-
-  // 2. A holding with no written thesis.
-  const noThesis = (Array.isArray(positions) ? positions : []).find(p => p && p.ticker && !clean(p.entry_thesis));
-  if (noThesis) {
-    return {
-      kind: 'thesis',
-      ticker: upper(noThesis.ticker),
-      positionId: noThesis.id ?? null,
-      prompt: `You hold ${upper(noThesis.ticker)} but never wrote down why. One line, what's the thesis?`,
-    };
-  }
-
-  // 3. Otherwise the coach's read on their behavior (broke stops, early exits,
-  //    thesis edge, hold-time skew), synthesized once in buildCoaching so the
-  //    round and the Patterns coach card always say the same thing. We surface
-  //    the fix first, then a strength, so a quiet round still ends on a nudge.
-  const coaching = buildCoaching({ attribution, adherence });
-  if (coaching.fix) return { kind: 'insight', prompt: coaching.fix };
-  if (coaching.strength) return { kind: 'insight', prompt: coaching.strength };
   return { kind: 'none', prompt: '' };
 }
 
 export function buildRound(input) {
-  const { todayItems = [], positions = [], attribution = null, adherence = null, closedTrades = [], reflectedIds = [], nowMs = Date.now() } = input || {};
+  const { todayItems = [], positions = [], closedTrades = [], reflectedIds = [], nowMs = Date.now() } = input || {};
   const items = (Array.isArray(todayItems) ? todayItems : []).filter(Boolean);
   const held = new Set((Array.isArray(positions) ? positions : []).filter(Boolean).map(p => upper(p.ticker)));
 
-  // Safety: the "needs a decision" items. Alerts are exactly these (stop broken,
-  // target hit, deep/moderate drawdown).
-  const safetyItems = items.filter(it => it.type === 'alert');
+  // Needs your eyes: alerts (a decision) first, then big moves on names you hold.
+  // A held name moving hard is exactly what an experienced trader wants flagged,
+  // and the round used to drop it. Deduped by ticker so a stop break and its move
+  // are never both listed.
+  const alerts = items.filter(it => it.type === 'alert');
+  const alertTickers = new Set(alerts.map(it => upper(it.ticker)).filter(Boolean));
+  const movers = items
+    .filter(it => it.type === 'mover' && it.ticker && !alertTickers.has(upper(it.ticker)))
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  const safetyItems = [...alerts, ...movers].slice(0, 6);
 
-  // Opportunity: ideas worth a look that they do not already hold. Rationed to
-  // two so it is a daily dose, not a firehose. Highest priority first.
+  // Opportunity: at most ONE idea worth a look they do not already hold. Rationed
+  // hard (was two) so the round stays about their book, not a discovery firehose.
   const opportunity = items
     .filter(it => OPPORTUNITY_TYPES.has(it.type) && it.ticker && !held.has(upper(it.ticker)))
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-    .slice(0, 2);
+    .slice(0, 1);
 
   return {
     safety: {
@@ -91,6 +81,6 @@ export function buildRound(input) {
       checked: (Array.isArray(positions) ? positions : []).filter(Boolean).length,
     },
     opportunity,
-    sharpen: chooseSharpen(positions, attribution, adherence, closedTrades, reflectedIds, nowMs),
+    sharpen: chooseSharpen(closedTrades, reflectedIds, nowMs),
   };
 }
