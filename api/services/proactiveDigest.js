@@ -33,6 +33,8 @@ const PROSE_TIMEOUT_MS = 20000;
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 
+const truncate = (s, n) => { const str = String(s ?? '').trim(); return str.length > n ? str.slice(0, n).trimEnd() + '…' : str; };
+
 /**
  * Pure signal detection. No external calls. Exported for unit tests.
  *
@@ -55,14 +57,29 @@ export function detectSignals({ positions = [], watchlist = [], adherenceSummary
     const dayPct = p.todayChangePercent ?? 0;
     const positionValue = p.currentValue ?? (live * (p.shares ?? 0));
 
-    // Big mover (high priority if ≥10%, medium otherwise)
+    // Big mover (high priority if ≥10%, medium otherwise). A hard DOWN day on a
+    // name they own for a reason THEY wrote becomes the thesis payoff: put their
+    // own words back in front of them at the moment of doubt, instead of just
+    // flagging the red number. Agent-drafted theses do not count (not their
+    // conviction), so those fall back to the plain big-mover line.
     if (Math.abs(dayPct) >= BIG_MOVE_PCT) {
-      signals.push({
-        kind: 'big_mover',
-        ticker: p.ticker,
-        priority: Math.abs(dayPct) >= 10 ? 'high' : 'medium',
-        detail: `${p.ticker} ${dayPct > 0 ? 'up' : 'down'} ${Math.abs(dayPct).toFixed(1)}% today (your $${positionValue.toFixed(0)} position)`,
-      });
+      const userThesis = (p.entry_thesis && String(p.entry_thesis).trim() && p.thesis_source !== 'agent')
+        ? String(p.entry_thesis).trim() : null;
+      if (dayPct <= -BIG_MOVE_PCT && userThesis) {
+        signals.push({
+          kind: 'thesis_under_pressure',
+          ticker: p.ticker,
+          priority: 'high',
+          detail: `${p.ticker} is down ${Math.abs(dayPct).toFixed(1)}% today (your $${positionValue.toFixed(0)} position). You bought it because: "${truncate(userThesis, 180)}". A red day is not the same as that reason breaking, so the question is whether the reason still holds.`,
+        });
+      } else {
+        signals.push({
+          kind: 'big_mover',
+          ticker: p.ticker,
+          priority: Math.abs(dayPct) >= 10 ? 'high' : 'medium',
+          detail: `${p.ticker} ${dayPct > 0 ? 'up' : 'down'} ${Math.abs(dayPct).toFixed(1)}% today (your $${positionValue.toFixed(0)} position)`,
+        });
+      }
     }
 
     // Target proximity
@@ -289,7 +306,8 @@ RULES:
 4. End with ONE concrete observation or question, not a list. Like "worth checking the AMD news" or "are you taking some off?" Never "be careful" alone.
 5. Plain text only. No markdown, asterisks, headers, bullets.
 6. Tone: direct, observant, slightly informal. Not corporate, not preachy.
-7. Do NOT prefix with "Good morning" or any greeting — the UI provides the framing.`,
+7. Do NOT prefix with "Good morning" or any greeting. The UI provides the framing.
+8. If a thesis_under_pressure signal appears, quote the user's own reason back to them and frame the drop as a test of that reason, not proof it broke. Be steadying, never alarmist, and never tell them to sell.`,
       messages: [{
         role: 'user',
         content: `Today's noticed signals (already sorted by priority):\n\n${signalLines}\n\nWrite the morning digest now.`,
