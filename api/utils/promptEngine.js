@@ -5,6 +5,7 @@ import { getCashBalance } from '../services/cashBalance.js';
 import { getUserPatternBlock } from '../services/decisionLedger.js';
 import { staticSector } from '../services/sectorMap.js';
 import { buildConcentrationRead, formatConcentrationRead } from '../../src/lib/concentrationRead.js';
+import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 import { getNews, getSnapshot, getMarketTrend, getMarketNews } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 
@@ -73,27 +74,22 @@ export async function buildUserContext(userId, user) {
     // Get live prices from pool for accurate P&L
     const priceMap = pos.length > 0 ? getPrices(pos.map(p => p.ticker)) : {};
 
-    // Build P&L context from positions using LIVE prices
-    const totalUnrealizedPnl = pos.reduce((sum, p) => {
-      const cost = (p.avg_cost ?? 0) * (p.shares ?? 0);
-      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
-      const current = livePrice * (p.shares ?? 0);
-      return sum + (current - cost);
-    }, 0);
-    const gainers = pos.filter(p => {
-      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
-      return livePrice > (p.avg_cost ?? 0);
-    }).length;
-    const losers = pos.filter(p => {
-      const livePrice = priceMap[p.ticker]?.price ?? p.avg_cost ?? 0;
-      return livePrice < (p.avg_cost ?? 0);
-    }).length;
+    // The SAME hardened money math the home screen uses (src/lib/portfolioValue.js),
+    // so the agent's portfolio numbers are byte-for-byte identical to the cards and
+    // can never go NaN. A malformed row used to leak through `price ?? avg_cost`
+    // (?? misses NaN) and bake a literal "$NaN" into the agent's context, which it
+    // would then read back to the user as their account value.
+    const { positions: enrichedPos, totals } = computePortfolioValue(pos, priceMap, { marketOpen: market.marketOpen });
+    const totalUnrealizedPnl = totals.totalPnl;
+    const gainers = enrichedPos.filter(p => p.pnl > 0).length;
+    const losers = enrichedPos.filter(p => p.pnl < 0).length;
 
-    const positionsStr = pos.length > 0
-      ? pos.map(p => {
-          const livePrice = priceMap[p.ticker]?.price;
+    const positionsStr = enrichedPos.length > 0
+      ? enrichedPos.map(p => {
+          const hasLive = !p.priceStale;
+          const livePrice = hasLive ? p.currentPrice : null;
           const cost = p.avg_cost ?? 0;
-          const pnlPct = cost > 0 && livePrice ? ((livePrice - cost) / cost * 100).toFixed(1) : '0.0';
+          const pnlPct = hasLive ? p.pnlPercent.toFixed(1) : '0.0';
           // CRITICAL: only use the user-provided purchased_at. Do NOT fall back
           // to created_at (when the position row was added to OUR database) —
           // that's not when the user actually bought the stock. A user adding
@@ -103,8 +99,11 @@ export async function buildUserContext(userId, user) {
           // invent a holding period.
           const purchaseTime = p.purchased_at;
           let holdSegment = 'hold duration unknown';
-          if (purchaseTime) {
-            const startDay = Math.floor(new Date(purchaseTime).getTime() / 86400000);
+          // Guard an unparseable date: new Date('garbage').getTime() is NaN, which
+          // would print "held NaNd" into the agent's context. Finite or nothing.
+          const startMs = purchaseTime ? new Date(purchaseTime).getTime() : NaN;
+          if (Number.isFinite(startMs)) {
+            const startDay = Math.floor(startMs / 86400000);
             const endDay = Math.floor(Date.now() / 86400000);
             const holdDays = Math.max(0, endDay - startDay);
             const holdStr = holdDays >= 365 ? `${Math.floor(holdDays / 365)}y${holdDays % 365 > 30 ? ` ${Math.floor((holdDays % 365) / 30)}m` : ''}` : `${holdDays}d`;
@@ -145,7 +144,7 @@ export async function buildUserContext(userId, user) {
     // Frontier #6: the hidden bet, a portfolio-level read that catches when several
     // names are secretly one sector bet, so the agent can plain it out for them.
     const hiddenBet = formatConcentrationRead(buildConcentrationRead(
-      pos.map(p => ({ ticker: p.ticker, value: (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0) })),
+      enrichedPos.map(p => ({ ticker: p.ticker, value: p.currentValue })),
       { sectorOf: staticSector },
     ));
 
@@ -162,8 +161,8 @@ export async function buildUserContext(userId, user) {
       watchlist: watch.length > 0 ? watch.join(', ') : 'Empty',
       cash: `$${cash.toFixed(2)}`,
       cashRaw: cash,
-      holdingsValue: `$${(pos.reduce((s, p) => s + (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0)).toFixed(0)}`,
-      accountValue: `$${(pos.reduce((s, p) => s + (priceMap[p.ticker]?.price ?? p.avg_cost ?? 0) * (p.shares ?? 0), 0) + cash).toFixed(0)}`,
+      holdingsValue: `$${totals.totalValue.toFixed(0)}`,
+      accountValue: `$${(totals.totalValue + cash).toFixed(0)}`,
       totalUnrealizedPnl: totalUnrealizedPnl !== 0 ? `${totalUnrealizedPnl > 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(0)}` : '$0',
       gainers,
       losers,
