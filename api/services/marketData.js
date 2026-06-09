@@ -122,7 +122,10 @@ function sanityFilterMovers(list) {
   const dropped = [];
   const kept = list.filter(m => {
     const cp = m?.changePercent;
-    if (cp == null) return true;  // keep entries with no change% (will render as "—")
+    // A "mover" with no known move does not belong on a movers list. getMovers
+    // already recovers the percent from Polygon's own field and drops the rest;
+    // this is the belt-and-suspenders so a blank-percent row can never render.
+    if (cp == null) { dropped.push(`${m.ticker}:no-%`); return false; }
     if (cp > MOVER_CHANGE_PCT_MAX || cp < MOVER_CHANGE_PCT_MIN) {
       dropped.push(`${m.ticker}:${cp.toFixed(0)}%`);
       return false;

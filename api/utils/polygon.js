@@ -123,20 +123,43 @@ export async function getSnapshots(tickers) {
   }
 }
 
+// Resolve the change percent for a movers-feed entry. normalizeQuote honestly
+// returns null when there is no prior-day close (common for very recent
+// listings), but the gainers/losers endpoint is Polygon's OWN ranking and
+// carries an authoritative today-change (todaysChangePerc), which is exactly why
+// the ticker is on the list. So prefer our normalized value, fall back to
+// Polygon's (clamped to the same sanity band), and return null only when neither
+// is usable, so a "mover" is never shown without a move. Pure, exported for tests.
+export function pickMoverChange(normalizedPct, rawTodaysPct) {
+  if (normalizedPct != null) return normalizedPct;
+  if (rawTodaysPct == null) return null; // Number(null) is 0, which would fake a flat 0%
+  const tcp = Number(rawTodaysPct);
+  if (Number.isFinite(tcp) && tcp <= CHANGE_PCT_MAX && tcp >= CHANGE_PCT_MIN) {
+    return parseFloat(tcp.toFixed(2));
+  }
+  return null;
+}
+
 export async function getMovers(direction = 'gainers') {
   try {
     const data = await poly(`/v2/snapshot/locale/us/markets/stocks/${direction}`, 5 * 60000, `movers_${direction}`);
-    const tickers = (data?.tickers ?? []).filter(t => {
+    const candidates = (data?.tickers ?? []).filter(t => {
       const price = t?.day?.c ?? t?.lastTrade?.p ?? 0;
       const volume = t?.day?.v ?? 0;
       return price >= 5 && volume >= 500000;
-    }).slice(0, 5);
-    // Display price/change go through the one normalizer, so a mover that is also
-    // a held position shows the same number on the movers list and the card.
-    return tickers.map(t => {
+    });
+    // Price goes through the one normalizer (so a mover that is also a held
+    // position shows the same number everywhere); the change percent falls back
+    // to Polygon's own when ours is null. A mover we cannot put a real percent on
+    // is dropped, never shown blank. Take the top 5 that survive, preserving
+    // Polygon's ranking.
+    return candidates.map(t => {
       const q = normalizeQuote(t);
-      return q ? { ticker: t.ticker, price: q.price, changePercent: q.changePercent, volume: q.volume } : null;
-    }).filter(Boolean);
+      if (!q) return null;
+      const changePercent = pickMoverChange(q.changePercent, t.todaysChangePerc);
+      if (changePercent == null) return null;
+      return { ticker: t.ticker, price: q.price, changePercent, volume: q.volume };
+    }).filter(Boolean).slice(0, 5);
   } catch { return []; }
 }
 

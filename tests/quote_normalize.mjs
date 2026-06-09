@@ -6,7 +6,7 @@
 // percent clamp are all locked here. A regression in any of them would put the
 // "same number, different values" bug back into the product for every user.
 import assert from 'node:assert/strict';
-import { normalizeQuote } from '../api/utils/polygon.js';
+import { normalizeQuote, pickMoverChange } from '../api/utils/polygon.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
@@ -131,6 +131,27 @@ test('string-typed price fields are not accepted as numbers', () => {
   // a price. validPrice requires typeof number.
   const q = normalizeQuote({ day: { c: '10' }, prevDay: { c: '8' } });
   assert.strictEqual(q, null);
+});
+
+// pickMoverChange: the movers feed prefers our normalized percent, falls back to
+// Polygon's own todaysChangePerc when prevDay is missing (recent listings), and
+// returns null when neither is usable, so a mover never renders with a blank %.
+test('pickMoverChange prefers the normalized percent when present', () => {
+  assert.equal(pickMoverChange(12.34, 99), 12.34);
+  assert.equal(pickMoverChange(0, 99), 0); // a real flat 0 is kept, not treated as missing
+});
+
+test('pickMoverChange falls back to Polygon todaysChangePerc when ours is null', () => {
+  assert.equal(pickMoverChange(null, 420.3456), 420.35);
+  assert.equal(pickMoverChange(null, -18.95), -18.95);
+});
+
+test('pickMoverChange returns null when neither value is usable', () => {
+  assert.strictEqual(pickMoverChange(null, null), null);
+  assert.strictEqual(pickMoverChange(null, undefined), null);
+  assert.strictEqual(pickMoverChange(null, 7825), null); // absurd, out of band
+  assert.strictEqual(pickMoverChange(null, -99), null);  // below the -95 floor
+  assert.strictEqual(pickMoverChange(null, 'x'), null);  // non-numeric
 });
 
 let pass = 0, fail = 0;
