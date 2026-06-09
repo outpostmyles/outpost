@@ -686,6 +686,7 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
     priceTarget: '', stopLoss: '',
   });
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false); // synchronous double-click guard (state lags a render)
   const [error, setError] = useState('');
   const [showPlan, setShowPlan] = useState(false);
   const [fundFromCash, setFundFromCash] = useState(false);
@@ -754,6 +755,8 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
   }
 
   async function doSave() {
+    if (savingRef.current) return; // a fast double-click fires before `saving` re-renders the disabled button
+    savingRef.current = true;
     setSaving(true); setError('');
     try {
       const shares = parseFloat(form.shares);
@@ -794,6 +797,7 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
       if (isFirstPosition) onAdded?.(addedTicker);
       onClose();
     } catch (e) { setError(e.error || 'Failed to add position'); setSaving(false); }
+    finally { savingRef.current = false; } // clear on success (modal closes) or error (retry allowed)
   }
 
   // AI assist helpers — bind ticker context to the assist call.
@@ -1622,6 +1626,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
   });
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const removingRef = useRef(false); // synchronous double-click guard for close/trim
   const [sellPrice, setSellPrice] = useState('');
   const [sellShares, setSellShares] = useState(''); // blank = sell the whole position; fewer = trim
   // Phase 2 close-time reflection — three structured fields.
@@ -1724,6 +1729,8 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
   }
 
   async function doRemove() {
+    if (removingRef.current) return; // guard a fast double-click before `removing` disables the button
+    removingRef.current = true;
     setSkipReflectionConfirm(false);
     setRemoving(true); setErr('');
     try {
@@ -1756,7 +1763,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
     } catch {
       setErr('Failed to remove');
       setRemoving(false);
-    }
+    } finally { removingRef.current = false; } // clear on close (card unmounts), trim, or error
   }
 
   // Border accent — drawdown amber wins, otherwise green/red by today's P&L
