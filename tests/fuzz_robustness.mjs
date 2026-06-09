@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { buildStressTests } from '../src/lib/stressTest.js';
 import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp } from '../src/lib/bookStats.js';
+import { computePortfolioValue } from '../src/lib/portfolioValue.js';
 import { sectorExposure } from '../src/lib/sectorExposure.js';
 import { sectorGaps } from '../src/lib/sectorGaps.js';
 import { goalProgress } from '../src/lib/goalProgress.js';
@@ -45,6 +46,9 @@ const cases = [
   ['pctOfBookOf(a)', x => pctOfBookOf(x, 1000)],
   ['pctOfBookOf(b)', x => pctOfBookOf({ currentValue: 100 }, x)],
   ['computeBookStats', x => computeBookStats(x)],
+  ['computePortfolioValue(positions)', x => computePortfolioValue(x, {})],
+  ['computePortfolioValue(priceMap)', x => computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], x)],
+  ['computePortfolioValue(opts)', x => computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], { A: { price: 12 } }, x ?? {})],
   ['bookStamp', x => bookStamp(x)],
   ['sectorExposure', x => sectorExposure(x)],
   ['sectorGaps', x => sectorGaps(x)],
@@ -109,6 +113,37 @@ test('computeBookStats always yields finite book aggregates and safe weights', (
       assert.ok(Number.isFinite(p.marketValue) && Number.isFinite(p.costBasis), `marketValue/costBasis not finite for ${JSON.stringify(h)}`);
     }
   }
+});
+
+// The headline money path: portfolio value, P&L, today's change. Whatever junk
+// the position rows or the price map carry, every total must come out FINITE.
+// One NaN here is a visible "$NaN" on the home screen, the single worst number
+// the app can show. We also feed a deliberately poisoned price map (NaN price,
+// -100% change that would divide by zero) alongside good rows and prove the good
+// math still lands and nothing goes Infinity.
+test('computePortfolioValue always yields finite totals and per-position numbers', () => {
+  const NUMERIC_TOTALS = ['totalValue', 'totalCost', 'totalPnl', 'totalPnlPercent', 'totalTodayChange', 'todayChangePercent'];
+  const NUMERIC_POS = ['currentPrice', 'currentValue', 'pnl', 'pnlPercent', 'todayChange', 'todayChangePercent'];
+  for (const h of HOSTILE) {
+    // h fuzzed as the positions list, as the price map, and as opts.
+    const trials = [
+      computePortfolioValue(Array.isArray(h) ? h : [h], {}),
+      computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], h),
+      computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], { A: { price: 12, changePercent: 4 } }, typeof h === 'object' && h ? h : {}),
+    ];
+    for (const { positions, totals } of trials) {
+      for (const k of NUMERIC_TOTALS) assert.ok(Number.isFinite(totals[k]), `totals.${k} not finite for ${JSON.stringify(h)}`);
+      assert.ok(Number.isInteger(totals.staleCount) && totals.staleCount >= 0, `staleCount bad for ${JSON.stringify(h)}`);
+      for (const p of positions) for (const k of NUMERIC_POS) assert.ok(Number.isFinite(p[k]), `position.${k} not finite for ${JSON.stringify(h)}`);
+    }
+  }
+  // One poisoned row (NaN price) must not infect a healthy row's totals.
+  const mixed = computePortfolioValue(
+    [{ ticker: 'GOOD', shares: 10, avg_cost: 100 }, { ticker: 'BAD', shares: 3, avg_cost: 50 }],
+    { GOOD: { price: 120, changePercent: 2 }, BAD: { price: NaN, changePercent: -100 } },
+  );
+  for (const k of NUMERIC_TOTALS) assert.ok(Number.isFinite(mixed.totals[k]), `mixed totals.${k} not finite`);
+  assert.equal(mixed.totals.totalValue, 1350, 'good row (1200) + bad row falls back to cost (150) = 1350');
 });
 
 let pass = 0, fail = 0;

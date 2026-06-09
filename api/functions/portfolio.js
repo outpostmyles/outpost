@@ -18,6 +18,7 @@ import { assessTradePlan } from '../services/tradePlan.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
+import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
@@ -146,84 +147,35 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
     // Re-enable by uncommenting the getEarningsForTickers call.
     const earningsMap = {};
 
-    let totalValue = 0, totalCost = 0, totalTodayChange = 0;
-    let staleCount = 0;
-    const enriched = pos.map(p => {
-      const live = priceMap[p.ticker];
-      const currentPrice = live?.price ?? p.avg_cost ?? 0;
-      const hasLivePrice = !!live?.price;
-      const priceAgeMs = live?.updatedAt ? Date.now() - live.updatedAt : null;
-      const priceAgeMin = priceAgeMs ? Math.round(priceAgeMs / 60000) : null;
-      if (!hasLivePrice) staleCount++;
-      const currentValue = currentPrice * p.shares;
-      const costBasis = (p.avg_cost ?? 0) * p.shares;
-      const pnl = currentValue - costBasis;
-      const pnlPercent = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
-
-      // Show today's change ALWAYS if we have data — even after hours
-      // This shows the last trading session's change, which is what users expect
-      const todayChangePercent = live?.changePercent ?? 0;
-      // Calculate dollar change from PREVIOUS value (not current) for accuracy.
-      // If stock is up 5% to $105, the change is $5 (5% of $100), not $5.25 (5% of $105).
-      // Guard against changePercent === -100 (denominator → 0) which would
-      // produce Infinity and propagate through totals. Also guard against
-      // any non-finite value upstream.
-      const denom = 1 + (todayChangePercent / 100);
-      const prevValue = (todayChangePercent !== 0 && denom > 0 && Number.isFinite(denom))
-        ? currentValue / denom
-        : currentValue;
-      const todayChange = currentValue - prevValue;
-
-      totalValue += currentValue;
-      totalCost += costBasis;
-      totalTodayChange += todayChange;
-
-      // Earnings data (if available)
-      const earnings = earningsMap[p.ticker] || null;
-
-      return {
-        ...p,
-        currentPrice: parseFloat(currentPrice.toFixed(2)),
-        currentValue: parseFloat(currentValue.toFixed(2)),
-        pnl: parseFloat(pnl.toFixed(2)),
-        pnlPercent: parseFloat(pnlPercent.toFixed(2)),
-        todayChange: parseFloat(todayChange.toFixed(2)),
-        todayChangePercent: parseFloat(todayChangePercent.toFixed(2)),
-        marketOpen,
-        priceStale: !hasLivePrice,
-        priceAgeMin,
-        earnings, // { date, upcoming, epsEstimate, time } or null
-      };
-    });
+    // Per-position enrichment + headline totals come from a pure, hardened, fuzzed
+    // function so a single malformed row can never turn the portfolio value or P&L
+    // into NaN. (Was inline here; see src/lib/portfolioValue.js.)
+    const { positions: enriched, totals } = computePortfolioValue(pos, priceMap, { marketOpen, earningsMap });
 
     // One book-stats source: tag every position with pctOfBook (and marketValue,
     // costBasis, unrealized P&L) via the same selector the agent and the synthesis
     // read, so a holding's weight is identical on a card, in an action, and in the
-    // AI's mouth. Purely additive to each position; the headline totals are
-    // unchanged (the selector's holdingsValue equals the totalValue summed above).
+    // AI's mouth.
     const { positions: enrichedWithBook } = computeBookStats(enriched);
 
-    const totalPnl = totalValue - totalCost;
-    const totalPnlPercent = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
-    const prevTotalValue = totalValue - totalTodayChange;
-    const todayChangePercent = prevTotalValue > 0 ? (totalTodayChange / prevTotalValue) * 100 : 0;
     // Cash + holdings = the account total the user actually has. totalValue stays
     // holdings-only so all the weight/concentration math is unchanged; accountValue
     // is the headline, and it does not drop when a position is closed (the proceeds
     // land in cash).
-    const cash = await getCashBalance(req.user.id);
+    const cashRaw = await getCashBalance(req.user.id);
+    const cash = Number.isFinite(cashRaw) ? cashRaw : 0;
 
     res.json({
-      totalValue: parseFloat(totalValue.toFixed(2)),
-      totalPnl: parseFloat(totalPnl.toFixed(2)),
-      totalPnlPercent: parseFloat(totalPnlPercent.toFixed(2)),
-      todayChange: parseFloat(totalTodayChange.toFixed(2)),
-      todayChangePercent: parseFloat(todayChangePercent.toFixed(2)),
+      totalValue: totals.totalValue,
+      totalPnl: totals.totalPnl,
+      totalPnlPercent: totals.totalPnlPercent,
+      todayChange: totals.totalTodayChange,
+      todayChangePercent: totals.todayChangePercent,
       cash: parseFloat(cash.toFixed(2)),
-      accountValue: parseFloat((totalValue + cash).toFixed(2)),
+      accountValue: parseFloat((totals.totalValue + cash).toFixed(2)),
       marketOpen,
       positions: enrichedWithBook,
-      staleCount,
+      staleCount: totals.staleCount,
       lastUpdated: new Date().toISOString(),
     });
   } catch (err) {
