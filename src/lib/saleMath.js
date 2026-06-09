@@ -12,7 +12,10 @@ const EPS = 1e-9;
  * @param p { avgCost, shares (held), sellShares, sellPrice, purchasedAt, nowMs }
  * @returns { ok:false, error } | { ok:true, isFullClose, sharesSold, remaining, proceeds, pnl, pnlPercent, holdDays }
  */
-export function computeSale({ avgCost, shares, sellShares, sellPrice, purchasedAt = null, nowMs = 0 } = {}) {
+export function computeSale(input) {
+  // A default param (= {}) only catches undefined, not null. Coerce any non-object
+  // arg to {} so a null/primitive degrades to a clean ok:false instead of throwing.
+  const { avgCost, shares, sellShares, sellPrice, purchasedAt = null, nowMs = 0 } = (input && typeof input === 'object') ? input : {};
   const ac = fin(avgCost) ?? 0;
   const held = fin(shares) ?? 0;
   const px = fin(sellPrice) ?? 0;

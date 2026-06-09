@@ -63,9 +63,18 @@ export function pctOfBookOf(p, holdingsValue) {
   return (mv / hv) * 100;
 }
 
-const round2 = (n) => Math.round(n * 100) / 100;
-const round1 = (n) => Math.round(n * 10) / 10;
-const round4 = (n) => Math.round(n * 10000) / 10000;
+// Finite-safe rounding. Math.round(n * f) overflows to +/-Infinity once n * f
+// exceeds Number.MAX_VALUE, which would smear an Infinity through any money
+// aggregate. If the scaled multiply overflows we return the (already finite)
+// input unrounded; a non-finite input collapses to 0.
+const safeRound = (n, f) => {
+  if (!Number.isFinite(n)) return 0;
+  const r = Math.round(n * f) / f;
+  return Number.isFinite(r) ? r : n;
+};
+const round2 = (n) => safeRound(n, 100);
+const round1 = (n) => safeRound(n, 10);
+const round4 = (n) => safeRound(n, 10000);
 
 /**
  * A stable, order-independent fingerprint of the book's SHAPE: the set of
@@ -84,14 +93,19 @@ const round4 = (n) => Math.round(n * 10000) / 10000;
  * defensive (junk coerces to 0).
  */
 export function mergeLots(prevShares, prevAvgCost, addShares, addPrice) {
-  const ps = num(prevShares) ?? 0;
-  const pa = num(prevAvgCost) ?? 0;
-  const as = num(addShares) ?? 0;
-  const ap = num(addPrice) ?? 0;
+  // Shares, cost, and price are all non-negative by definition. Clamp the inputs
+  // so a junk negative can never flip the sign of a blended cost (a negative
+  // cost basis is nonsense). Combined with finite-safe rounding, the blended
+  // cost can never come out NaN, Infinity, or below zero.
+  const ps = Math.max(0, num(prevShares) ?? 0);
+  const pa = Math.max(0, num(prevAvgCost) ?? 0);
+  const as = Math.max(0, num(addShares) ?? 0);
+  const ap = Math.max(0, num(addPrice) ?? 0);
   const shares = ps + as;
   if (shares <= 0) return { shares: 0, avgCost: 0 };
-  const avgCost = (ps * pa + as * ap) / shares;
-  return { shares: round4(shares), avgCost: round2(avgCost) };
+  const blended = round2((ps * pa + as * ap) / shares);
+  const avgCost = Number.isFinite(blended) && blended >= 0 ? blended : 0;
+  return { shares: round4(shares), avgCost };
 }
 
 export function bookStamp(positions) {

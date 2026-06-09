@@ -1103,7 +1103,13 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
 
     const livePrice = getPrices([pos.ticker])?.[pos.ticker]?.price;
     const rawSell = req.body?.sellPrice ? parseFloat(req.body.sellPrice) : null;
-    const sellPrice = (rawSell && isFinite(rawSell) && rawSell > 0) ? rawSell : (livePrice ?? pos.avg_cost ?? 0);
+    // sellPrice gets multiplied into realized P&L and written to closed_trades, so
+    // it must be a finite, positive number. Fall back live -> avg_cost -> 0, and
+    // never let a non-finite price (a NaN out of the pool) slip through ?? into the
+    // money math, where it would write "NaN" into the permanent trade record.
+    const liveFin = (Number.isFinite(livePrice) && livePrice > 0) ? livePrice : null;
+    const avgFin = (Number.isFinite(pos.avg_cost) && pos.avg_cost > 0) ? pos.avg_cost : null;
+    const sellPrice = (rawSell && isFinite(rawSell) && rawSell > 0) ? rawSell : (liveFin ?? avgFin ?? 0);
 
     // PARTIAL SELL (trim): the caller asked to sell only SOME shares. Reduce the
     // position, archive the sold portion to closed_trades atomically, and record a
@@ -1144,9 +1150,14 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     // is when the user actually bought. A wrong number is worse than a missing one.
     let holdDays = null;
     if (pos.purchased_at) {
-      const startDay = Math.floor(new Date(pos.purchased_at).getTime() / 86400000);
-      const endDay = Math.floor(Date.now() / 86400000);
-      holdDays = Math.max(0, endDay - startDay);
+      // Guard an unparseable date: getTime() is NaN -> holdDays would be NaN and
+      // get written into the permanent closed_trades row. Finite or null.
+      const startMs = new Date(pos.purchased_at).getTime();
+      if (Number.isFinite(startMs)) {
+        const startDay = Math.floor(startMs / 86400000);
+        const endDay = Math.floor(Date.now() / 86400000);
+        holdDays = Math.max(0, endDay - startDay);
+      }
     }
 
     // Phase 2 — structured close-time reflection. Three fields:

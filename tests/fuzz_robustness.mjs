@@ -7,8 +7,9 @@
 import assert from 'node:assert/strict';
 
 import { buildStressTests } from '../src/lib/stressTest.js';
-import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp } from '../src/lib/bookStats.js';
+import { marketValueOf, costBasisOf, pctOfBookOf, computeBookStats, bookStamp, mergeLots } from '../src/lib/bookStats.js';
 import { computePortfolioValue } from '../src/lib/portfolioValue.js';
+import { computeSale } from '../src/lib/saleMath.js';
 import { sectorExposure } from '../src/lib/sectorExposure.js';
 import { sectorGaps } from '../src/lib/sectorGaps.js';
 import { goalProgress } from '../src/lib/goalProgress.js';
@@ -49,6 +50,11 @@ const cases = [
   ['computePortfolioValue(positions)', x => computePortfolioValue(x, {})],
   ['computePortfolioValue(priceMap)', x => computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], x)],
   ['computePortfolioValue(opts)', x => computePortfolioValue([{ ticker: 'A', shares: 5, avg_cost: 10 }], { A: { price: 12 } }, x ?? {})],
+  ['mergeLots(prevShares)', x => mergeLots(x, 100, 5, 110)],
+  ['mergeLots(addPrice)', x => mergeLots(10, 100, 5, x)],
+  ['computeSale(arg)', x => computeSale(x)],
+  ['computeSale({shares})', x => computeSale({ avgCost: 100, shares: x, sellShares: 5, sellPrice: 110 })],
+  ['computeSale({sellShares})', x => computeSale({ avgCost: 100, shares: 10, sellShares: x, sellPrice: 110 })],
   ['bookStamp', x => bookStamp(x)],
   ['sectorExposure', x => sectorExposure(x)],
   ['sectorGaps', x => sectorGaps(x)],
@@ -144,6 +150,39 @@ test('computePortfolioValue always yields finite totals and per-position numbers
   );
   for (const k of NUMERIC_TOTALS) assert.ok(Number.isFinite(mixed.totals[k]), `mixed totals.${k} not finite`);
   assert.equal(mixed.totals.totalValue, 1350, 'good row (1200) + bad row falls back to cost (150) = 1350');
+});
+
+// The trade-execution invariants the whole ledger rests on. mergeLots sets a
+// position's blended cost on every add; computeSale sets realized P&L and the
+// remaining share count on every sell. A NaN blended cost or a NEGATIVE share
+// count would corrupt the book permanently, so these are pinned hard against
+// every hostile input, not just the happy path.
+test('mergeLots blended cost is always finite and shares never go negative', () => {
+  const vals = [...HOSTILE, 0, 1, 5, 10.5, -3, 1e9];
+  for (const a of vals) for (const b of vals) {
+    const { shares, avgCost } = mergeLots(a, b, 5, 110);
+    assert.ok(Number.isFinite(shares) && shares >= 0, `shares bad for (${JSON.stringify(a)},${JSON.stringify(b)}): ${shares}`);
+    assert.ok(Number.isFinite(avgCost) && avgCost >= 0, `avgCost bad for (${JSON.stringify(a)},${JSON.stringify(b)}): ${avgCost}`);
+    const merged2 = mergeLots(10, 100, a, b);
+    assert.ok(Number.isFinite(merged2.shares) && merged2.shares >= 0, `add-shares: ${merged2.shares}`);
+    assert.ok(Number.isFinite(merged2.avgCost) && merged2.avgCost >= 0, `add-cost: ${merged2.avgCost}`);
+  }
+});
+
+test('computeSale never sells more than held and never returns negative remaining', () => {
+  const held = [0, 1, 5, 10, 100, 0.5];
+  const sell = [...HOSTILE, -1, 0, 1, 5, 10, 100, 1000, 0.5, 10.0000001];
+  for (const h of held) for (const s of sell) {
+    const r = computeSale({ avgCost: 50, shares: h, sellShares: s, sellPrice: 60 });
+    if (r.ok) {
+      assert.ok(Number.isFinite(r.remaining) && r.remaining >= 0, `remaining negative/NaN for held=${h} sell=${JSON.stringify(s)}: ${r.remaining}`);
+      assert.ok(Number.isFinite(r.sharesSold) && r.sharesSold > 0, `sharesSold bad: ${r.sharesSold}`);
+      assert.ok(r.sharesSold <= h + 1e-6, `sold more than held: ${r.sharesSold} > ${h}`);
+      for (const k of ['proceeds', 'pnl', 'pnlPercent']) assert.ok(Number.isFinite(r[k]), `${k} not finite`);
+    } else {
+      assert.ok(typeof r.error === 'string', 'a rejected sale carries an error string');
+    }
+  }
 });
 
 let pass = 0, fail = 0;
