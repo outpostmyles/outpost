@@ -1262,7 +1262,8 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       try {
         await supabase.from('closed_trades')
           .update({ execution_rating: executionRating })
-          .eq('id', closed.id);
+          .eq('id', closed.id)
+          .eq('user_id', req.user.id); // defense-in-depth: a money write is also user-scoped, never by id alone
       } catch (rateErr) {
         console.warn(`[req:${req.requestId}] [Portfolio] failed to set execution_rating on ${closed.id}:`, rateErr.message);
       }
