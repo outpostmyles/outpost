@@ -20,6 +20,7 @@ import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 import { getCashBalance, setCashBalance, adjustCashBalanceSafe } from '../services/cashBalance.js';
+import { idempotencyGuard } from '../services/idempotency.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
 import { computeSale } from '../../src/lib/saleMath.js';
@@ -623,6 +624,7 @@ router.post('/positions/gut-check', requireAuth, rateLimit(20), dailyAiCeiling()
 });
 
 router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
+  let idem = null, committed = false;
   try {
     const ticker = sanitizeTicker(req.body.ticker);
     if (!ticker) return res.status(400).json({ error: 'Valid ticker required (1-5 letters)' });
@@ -658,6 +660,16 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     // 'user' otherwise. Separate from `source` (how the BUY was driven) so an
     // agent-written thesis never counts as the user's own conviction in stats.
     const thesisSource = req.body.thesisSource === 'agent' ? 'agent' : 'user';
+
+    // Double-submit guard: a double-clicked Buy or a retried request must not debit
+    // cash or add shares twice. Claimed here (synchronous, before the first await,
+    // so it is an atomic gate). A repeat replays the original response; a still
+    // in-flight repeat gets a clean 409. Released in finally if this attempt fails.
+    idem = idempotencyGuard([req.user.id, 'open', ticker, shares, avgCost, !!req.body?.fundFromCash]);
+    if (!idem.fresh) {
+      if (idem.prior) return res.json(idem.prior);
+      return res.status(409).json({ error: 'That buy is already going through. Give it a second before trying again.', duplicate: true });
+    }
 
     // Validate ticker is a real stock + prices pass sanity checks
     const validation = await validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss });
@@ -701,7 +713,9 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       }
       // Ledger: an add-to-position is a decision, captured with full context.
       recordDecision(req.user.id, { type: 'add', ticker, shares, price: avgCost, thesis: entryThesis || held.entry_thesis || null, source }).catch(() => {});
-      return res.json({ success: true, position, merged: true, addedShares: shares, cash, cashSynced });
+      const mergePayload = { success: true, position, merged: true, addedShares: shares, cash, cashSynced };
+      idem.commit(mergePayload); committed = true;
+      return res.json(mergePayload);
     }
 
     // New ticker: enforce the plan's position limit, then insert.
@@ -762,10 +776,16 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     // is already captured on the position, surfaced to the agent, and watched by
     // thesisWatch; this records it as a graded behavior in the ledger.
     recordDecision(req.user.id, { type: 'open', ticker, shares, price: avgCost, thesis: entryThesis || null, source, meta: reversalCondition ? { hasFalsification: true } : null }).catch(() => {});
-    res.json({ success: true, position, cash, cashSynced });
+    const buyPayload = { success: true, position, cash, cashSynced };
+    idem.commit(buyPayload); committed = true;
+    res.json(buyPayload);
   } catch (err) {
     console.error('[Portfolio] /positions POST failed:', err.message);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    // The attempt failed (threw, or returned an error before committing): release
+    // the claim so a legitimate retry is not falsely rejected as a duplicate.
+    if (idem?.fresh && !committed) idem.release();
   }
 });
 
@@ -1089,7 +1109,19 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
 });
 
 router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
+  let idem = null, committed = false;
   try {
+    // Double-submit guard: a double-clicked Sell/Trim or a retried request must not
+    // credit cash or sell shares twice. (A full close is already safe via the RPC's
+    // DELETE...RETURNING, but a trim is not, so we guard both.) Claimed synchronously
+    // before the first await; a repeat replays the original response. Released in
+    // finally if this attempt fails, so a real retry is not blocked.
+    idem = idempotencyGuard([req.user.id, 'sell', req.params.id, req.body?.sellShares ?? 'full', req.body?.sellPrice ?? '']);
+    if (!idem.fresh) {
+      if (idem.prior) return res.json(idem.prior);
+      return res.status(409).json({ error: 'That sell is already going through. Give it a second before trying again.', duplicate: true });
+    }
+
     // We need the position's current data (live price, shares, avg_cost,
     // purchased_at) to compute pnl / hold_days BEFORE we call the atomic
     // close_position RPC. Read-then-RPC-close is safe against double-close
@@ -1139,7 +1171,9 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       if (!trimCash.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
       const trimStatus = sale.pnl > 0 ? 'win' : sale.pnl < 0 ? 'loss' : 'even';
       recordDecision(req.user.id, { type: 'trim', ticker: pos.ticker, shares: sale.sharesSold, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: trimStatus, outcomePnl: sale.pnl, outcomePnlPct: sale.pnlPercent, outcomeHoldDays: sale.holdDays }).catch(() => {});
-      return res.json({ success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter, cashSynced: trimCash.ok });
+      const trimPayload = { success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter, cashSynced: trimCash.ok };
+      idem.commit(trimPayload); committed = true;
+      return res.json(trimPayload);
     }
 
     const costBasis = (pos.avg_cost ?? 0) * (pos.shares ?? 0);
@@ -1246,10 +1280,16 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     const outStatus = pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even';
     recordDecision(req.user.id, { type: 'close', ticker: pos.ticker, shares: pos.shares, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: outStatus, outcomePnl: pnl, outcomePnlPct: pnlPercent, outcomeHoldDays: holdDays, thesisPlayedOut }).catch(() => {});
     resolveOpenDecisions(req.user.id, pos.ticker, { sellPrice, pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
-    res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash, cashSynced: closeCash.ok });
+    const closePayload = { success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash, cashSynced: closeCash.ok };
+    idem.commit(closePayload); committed = true;
+    res.json(closePayload);
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    // Release the claim if this attempt did not commit (threw, or 404/400'd), so a
+    // genuine retry is not mistaken for a duplicate.
+    if (idem?.fresh && !committed) idem.release();
   }
 });
 
