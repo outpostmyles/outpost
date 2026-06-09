@@ -24,6 +24,7 @@ import { classifyEmotion, emotionWarning } from '../../src/lib/emotionRead.js';
 import { getMarketData } from './marketData.js';
 import { buildPositionProposal, PROPOSAL_REJECTIONS } from '../../src/lib/positionProposal.js';
 import { buildBuyProposal, BUY_PROPOSAL_REJECTIONS } from '../../src/lib/buyProposal.js';
+import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 
 const BASE = 'https://api.polygon.io';
 const KEY = config.polygonKey;
@@ -1379,11 +1380,15 @@ async function analyzePortfolioRisk({ tickers, userId }) {
       const { data: pos } = await supabase.from('positions').select('ticker,shares,avg_cost').eq('user_id', userId);
       const held = (pos ?? []).filter(p => p.ticker && (Number(p.shares) || 0) > 0);
       if (held.length >= 2) {
-        const valOf = (p) => (getPrice(p.ticker)?.price ?? Number(p.avg_cost) ?? 0) * (Number(p.shares) || 0);
-        const total = held.reduce((s, p) => s + valOf(p), 0);
-        if (total > 0) {
+        // Weight by market value via the same hardened function as everywhere else,
+        // so one stale/NaN price can't poison the sum and silently drop weighting
+        // for the whole book (it falls that holding back to cost instead).
+        const pm = {};
+        for (const p of held) pm[p.ticker] = getPrice(p.ticker);
+        const { positions: enriched, totals } = computePortfolioValue(held, pm);
+        if (totals.totalValue > 0) {
           weights = {};
-          for (const p of held) weights[String(p.ticker).toUpperCase()] = valOf(p) / total;
+          for (const p of enriched) weights[String(p.ticker).toUpperCase()] = p.currentValue / totals.totalValue;
           tickers = held.map(p => p.ticker); // analyze the REAL book, not what was guessed
         }
       }
@@ -1708,22 +1713,24 @@ async function preTradeCheck({ ticker, dollars_to_invest, stop_loss, userId }) {
   const profile = profileResult.status === 'fulfilled' ? (profileResult.value.data ?? {}) : {};
   const riskTolerance = (profile.risk_tolerance || 'moderate').toLowerCase();
 
-  // Portfolio value from live prices (fall back to avg_cost for stale tickers)
-  let portfolioValue = 0;
+  // Portfolio value from live prices (fall back to avg_cost for stale tickers),
+  // via the SAME hardened function the home screen and agent context use, so the
+  // buy-sizing verdict can never read a NaN portfolio value or one that disagrees
+  // with the cards. A non-finite price falls back to cost, never poisons the sum.
+  const priceMap = {};
+  for (const p of positions) priceMap[p.ticker] = getPrice(p.ticker);
+  const { positions: enrichedPos, totals } = computePortfolioValue(positions, priceMap);
+  const portfolioValue = totals.totalValue;
   const sectorCounts = {};
   const sectorValues = {};
   let existingPosition = null;
 
-  for (const p of positions) {
-    const live = getPrice(p.ticker)?.price ?? p.avg_cost ?? 0;
-    const value = live * (p.shares ?? 0);
-    portfolioValue += value;
-
+  for (const p of enrichedPos) {
     const sector = SECTOR_MAP[p.ticker] || 'Unknown';
     sectorCounts[sector] = (sectorCounts[sector] || 0) + 1;
-    sectorValues[sector] = (sectorValues[sector] || 0) + value;
+    sectorValues[sector] = (sectorValues[sector] || 0) + p.currentValue;
 
-    if (p.ticker === ticker) existingPosition = { shares: p.shares, avgCost: p.avg_cost, currentValue: value };
+    if (p.ticker === ticker) existingPosition = { shares: p.shares, avgCost: p.avg_cost, currentValue: p.currentValue };
   }
 
   // The new trade's sector and live price; the verdict reasoning itself lives in
