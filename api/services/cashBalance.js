@@ -59,11 +59,26 @@ export async function setCashBalance(userId, amount) {
 }
 
 export async function adjustCashBalance(userId, delta) {
-  // Read-modify-write with a bounded retry so a transient DB blip on the read or
-  // write does not silently drop a credit/debit and drift cash from holdings. (A
-  // truly atomic single-statement adjust would need a SQL RPC migration; this
-  // makes the JS path resilient without one. A concurrent adjust for the SAME
-  // user is the residual race, rare for one trader acting one action at a time.)
+  // Prefer the atomic SQL RPC (migration 022): it does the read-modify-write inside
+  // the database under a per-user advisory lock, so two trades crediting/debiting
+  // at the same instant serialize instead of racing and losing an update. If the
+  // function is not present yet (migration not run) or errors, fall back to the JS
+  // read-modify-write below so cash still moves, just without cross-request
+  // atomicity. Either way the app works; running the migration upgrades adjust from
+  // resilient to atomic.
+  const d = Number(delta);
+  const safeDelta = Number.isFinite(d) ? d : 0;
+  try {
+    const { data, error } = await supabase.rpc('adjust_cash_balance', { p_user_id: userId, p_delta: safeDelta });
+    if (!error) {
+      const amt = Number(data);
+      if (Number.isFinite(amt) && amt >= 0) return amt;
+    }
+  } catch { /* fall through to the JS path */ }
+
+  // JS fallback: read-modify-write with a bounded retry so a transient DB blip does
+  // not silently drop a credit/debit. (Pre-migration path; the residual race is two
+  // concurrent adjusts for the same user, rare for one trader acting one at a time.)
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
