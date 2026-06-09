@@ -14,6 +14,7 @@ import { resolveSector } from '../services/sectorMap.js';
 import { getFinancialsResilient } from '../services/fundamentalsCache.js';
 import { getEarningsForTickers } from '../utils/finnhub.js';
 import { lookupStock, getStockNews } from '../services/agentTools.js';
+import { assessTradePlan } from '../services/tradePlan.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
@@ -252,6 +253,37 @@ router.get('/value', requireAuth, rateLimit(20), async (req, res) => {
 //   "Quiet morning. Nothing pressing on your book."
 //   "NVDA pulled back 3% — that's the kind of dip you said scared you. Still up 18% from your cost."
 //   "AAPL just touched your stop. Same setup as last August. Want me to walk through it?"
+// POST /api/portfolio/assess-plan: "think it through" before a buy. Grounds the
+// entry from the live quote, then grades the six disciplines via the pure tested
+// assessTradePlan. No AI call, no write; it only tells the user whether they have
+// a plan or a gut buy, and names the missing step.
+router.post('/assess-plan', requireAuth, rateLimit(30), async (req, res) => {
+  try {
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+    const ticker = sanitizeTicker(req.body?.ticker || '');
+    let entry_price = num(req.body?.entry_price);
+    let livePrice = null;
+    if (ticker) {
+      try { const snap = await getSnapshot(ticker); livePrice = Number.isFinite(snap?.price) ? snap.price : null; } catch {}
+      if (entry_price == null) entry_price = livePrice;
+    }
+    const assessment = assessTradePlan({
+      entry_price,
+      stop_loss: num(req.body?.stop_loss),
+      target_price: num(req.body?.target_price),
+      account_size: num(req.body?.account_size),
+      risk_pct: Number.isFinite(Number(req.body?.risk_pct)) ? Number(req.body.risk_pct) : 2,
+      thesis: typeof req.body?.thesis === 'string' ? req.body.thesis : '',
+      invalidation: typeof req.body?.invalidation === 'string' ? req.body.invalidation : '',
+      review_in_days: num(req.body?.review_in_days),
+    });
+    res.json({ ...assessment, ticker: ticker || null, entryPrice: entry_price, livePrice });
+  } catch (err) {
+    console.error('[Portfolio] /assess-plan failed:', err.message);
+    res.status(500).json({ error: 'Could not assess the plan' });
+  }
+});
+
 router.get('/pulse', requireAuth, rateLimit(30), dailyAiCeiling(), async (req, res) => {
   // Fallback line picked by trivial hash of userId so it's stable per user
   // across the day, doesn't feel random on reload.

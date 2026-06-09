@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, DisclaimerBadge } from '../shared/UI.jsx';
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
+import ThinkThroughCard from './ThinkThroughCard.jsx';
 
 // Detect the first $TICKER or plain TICKER reference in a message for auto-fill
 function detectTicker(text) {
@@ -305,6 +306,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
   const [starters, setStarters] = useState(FALLBACK_STARTERS);
   const [freeTierUsage, setFreeTierUsage] = useState(null); // { used, limit }
   const [journalSave, setJournalSave] = useState(null); // { content, ticker, sourceRef } or null
+  const [thinkOpen, setThinkOpen] = useState(false); // the "think it through" trade-plan scaffold
   const [convId, setConvId] = useState(null);            // current conversation
   const [conversations, setConversations] = useState([]); // list for the switcher
   const [showConvList, setShowConvList] = useState(false);
@@ -667,6 +669,13 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
         </div>
       )}
 
+      {/* Think it through: the disciplined trade-plan scaffold, before a buy */}
+      <div style={{ padding: '8px 14px 0', flexShrink: 0 }}>
+        <button onClick={() => setThinkOpen(true)} style={{ width: '100%', background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', fontSize: 10, fontWeight: 700, letterSpacing: '0.6px', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit' }}>
+          THINK THROUGH A BUY
+        </button>
+      </div>
+
       {/* Input */}
       <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
         <input
@@ -683,6 +692,8 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
           <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
+
+      {thinkOpen && <ThinkThroughCard onClose={() => setThinkOpen(false)} showToast={showToast} />}
 
       {/* Save to Journal sheet — opens when user taps the bookmark on any assistant message */}
       <SaveToJournalSheet

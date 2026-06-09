@@ -115,6 +115,7 @@ export const api = {
   portfolio: {
     value: () => get('/api/portfolio/value'),
     addPosition: (body) => post('/api/portfolio/positions', body),
+    assessPlan: (body) => post('/api/portfolio/assess-plan', body),
     editPosition: (id, body) => patch(`/api/portfolio/positions/${id}`, body),
     removePosition: (id, body) => del(`/api/portfolio/positions/${id}`, body),
     closedTrades: () => get('/api/portfolio/closed-trades'),
