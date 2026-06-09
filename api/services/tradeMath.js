@@ -47,14 +47,14 @@ export function calculatePositionSize({ account_size, risk_pct = 2, entry_price,
     result.trade_quality = riskRewardRatio >= 3 ? 'Excellent (3:1+)'
       : riskRewardRatio >= 2 ? 'Good (2:1+)'
       : riskRewardRatio >= 1.5 ? 'Acceptable (1.5:1+)'
-      : 'Poor — risk outweighs reward';
+      : 'Poor, risk outweighs reward';
   }
 
   // Warnings
   const warnings = [];
-  if (portfolioPct > 25) warnings.push('Position is >25% of account — consider reducing size');
-  if (portfolioPct > 50) warnings.push('DANGER: Position is >50% of account — way too concentrated');
-  if (risk_pct > 5) warnings.push('Risking >5% per trade is aggressive — most pros risk 1-2%');
+  if (portfolioPct > 25) warnings.push('Position is >25% of account, consider reducing size');
+  if (portfolioPct > 50) warnings.push('DANGER: Position is >50% of account, way too concentrated');
+  if (risk_pct > 5) warnings.push('Risking >5% per trade is aggressive, most pros risk 1-2%');
   if (shares === 0) warnings.push('Account too small or stop too tight for even 1 share at this risk level');
   if (warnings.length > 0) result.warnings = warnings;
 
@@ -103,9 +103,9 @@ export function calculateRiskReward({ entry_price, stop_loss, targets }) {
     stop_distance_pct: +stopMovePct.toFixed(1),
     targets: targetAnalysis,
     best_risk_reward: `${bestRR.toFixed(1)}:1`,
-    overall_grade: bestRR >= 3 ? 'A — Excellent setup'
-      : bestRR >= 2 ? 'B — Good setup'
-      : bestRR >= 1.5 ? 'C — Acceptable but tight'
-      : 'D — Risk outweighs reward, consider passing',
+    overall_grade: bestRR >= 3 ? 'A: Excellent setup'
+      : bestRR >= 2 ? 'B: Good setup'
+      : bestRR >= 1.5 ? 'C: Acceptable but tight'
+      : 'D: Risk outweighs reward, consider passing',
   };
 }

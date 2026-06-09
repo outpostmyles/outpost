@@ -15,6 +15,7 @@ import { supabase } from '../db.js';
 import { getPrice } from './pricePool.js';
 import { recallHistory } from './historyAggregator.js';
 import { calculatePositionSize, calculateRiskReward } from './tradeMath.js';
+import { assessTradePlan } from './tradePlan.js';
 import { calcRSI, calcATR, calcSMA } from './indicators.js';
 import { assessPreTradeRisk } from './preTradeRisk.js';
 import { getCachedIntelligence, getUserDecisions } from './decisionLedger.js';
@@ -234,6 +235,24 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'assess_trade_plan',
+    description: 'Grade whether a trade the user is weighing is actually thought through or a gut buy with gaps. Pass whatever they have so far: entry price, stop, target, account size, risk percent, their one-line thesis, their invalidation condition (what would prove them wrong), and days until they will review it. Returns which of the six disciplines are present vs missing (thesis, invalidation, stop, target, sized to the risk, review), plus the risk-based size and risk/reward, and a calibrated verdict. Use it to walk them through a buy, especially to surface the invalidation, the step most people skip. It NEVER buys anything; it only shows them where the plan is thin.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entry_price: { type: 'number', description: 'Planned entry price per share' },
+        stop_loss: { type: 'number', description: 'Planned stop loss price (below entry for a long)' },
+        target_price: { type: 'number', description: 'Optional profit target price (above entry for a long)' },
+        account_size: { type: 'number', description: 'Total account value in dollars, so the trade can be sized to the risk' },
+        risk_pct: { type: 'number', description: 'Percent of the account they would risk on this trade (default 2)' },
+        thesis: { type: 'string', description: "Their one-line reason for owning it, in their own words" },
+        invalidation: { type: 'string', description: 'What would tell them the thesis is wrong (the step most people skip)' },
+        review_in_days: { type: 'number', description: 'How many days until they will deliberately review the position' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'calculate_risk_reward',
     description: 'Calculate risk/reward ratio and trade quality score for a trade setup with entry, stop, and one or more targets. Use when the agent is building a trade setup and wants to quantify the R/R, or when a user asks "what\'s the risk/reward on this trade?"',
     input_schema: {
@@ -392,6 +411,7 @@ export async function executeTool(toolName, toolInput, context = {}) {
       case 'analyze_portfolio_risk': return await analyzePortfolioRisk({ ...toolInput, userId: context.userId });
       case 'calculate_position_size': return calculatePositionSize(toolInput);
       case 'calculate_risk_reward': return calculateRiskReward(toolInput);
+      case 'assess_trade_plan': return assessTradePlan(toolInput);
       case 'get_relative_strength': return await getRelativeStrength(toolInput);
       case 'get_tax_insights': return context.userId ? await getTaxInsights(context.userId) : { error: 'User context not available' };
       case 'pre_trade_check': return context.userId ? await preTradeCheck({ ...toolInput, userId: context.userId }) : { error: 'User context not available' };
