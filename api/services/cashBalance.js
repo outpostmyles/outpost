@@ -11,6 +11,22 @@
 // it or ignoring it.
 import { supabase } from '../db.js';
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The new balance after applying a delta. The ONE place cash arithmetic lives:
+ * finite-guard both inputs (a NaN proceeds must never poison the balance), clamp
+ * at zero (cash never goes negative), round to cents. Pure and unit-tested.
+ */
+export function nextCashBalance(current, delta) {
+  const cur = Number(current);
+  const d = Number(delta);
+  const base = (Number.isFinite(cur) ? cur : 0) + (Number.isFinite(d) ? d : 0);
+  const rounded = Math.round(base * 100) / 100;
+  if (!Number.isFinite(rounded)) return 0;          // overflow guard
+  return Math.max(0, rounded);
+}
+
 export async function getCashBalance(userId) {
   try {
     const { data } = await supabase.from('agent_memory')
@@ -23,13 +39,55 @@ export async function getCashBalance(userId) {
 }
 
 export async function setCashBalance(userId, amount) {
-  const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
-  await supabase.from('agent_memory').delete().eq('user_id', userId).eq('memory_type', 'cash_balance');
-  await supabase.from('agent_memory').insert({ user_id: userId, memory_type: 'cash_balance', content: JSON.stringify({ amount: amt }), created_at: new Date().toISOString() });
+  const amt = nextCashBalance(amount, 0);
+  // Insert the new canonical row FIRST, then prune older ones. getCashBalance reads
+  // the latest by created_at, so there is NEVER a window where the row is missing.
+  // The old delete-then-insert had a gap where a concurrent read returned $0 (a
+  // visible "no cash" snap) and, worse, a concurrent adjust read $0 and clobbered
+  // the real balance. Insert-first closes that window; the prune converges back to
+  // a single row, and `.lt(created_at)` only ever removes rows OLDER than this one,
+  // so a concurrent newer write is never deleted.
+  const nowIso = new Date().toISOString();
+  const { error: insErr } = await supabase.from('agent_memory').insert({
+    user_id: userId, memory_type: 'cash_balance',
+    content: JSON.stringify({ amount: amt }), created_at: nowIso,
+  });
+  if (insErr) throw insErr;
+  await supabase.from('agent_memory').delete()
+    .eq('user_id', userId).eq('memory_type', 'cash_balance').lt('created_at', nowIso);
   return amt;
 }
 
 export async function adjustCashBalance(userId, delta) {
-  const cur = await getCashBalance(userId);
-  return setCashBalance(userId, Math.max(0, cur + (Number(delta) || 0)));
+  // Read-modify-write with a bounded retry so a transient DB blip on the read or
+  // write does not silently drop a credit/debit and drift cash from holdings. (A
+  // truly atomic single-statement adjust would need a SQL RPC migration; this
+  // makes the JS path resilient without one. A concurrent adjust for the SAME
+  // user is the residual race, rare for one trader acting one action at a time.)
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const cur = await getCashBalance(userId);
+      return await setCashBalance(userId, nextCashBalance(cur, delta));
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await sleep(50 * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Non-throwing adjust for the trade write paths: applies the delta with retries
+ * and returns { ok, cash }. ok=false means the money moved in the book (a position
+ * opened or closed) but cash could not be updated, the one place cash and holdings
+ * can drift. Callers log that loudly and surface it instead of swallowing it.
+ */
+export async function adjustCashBalanceSafe(userId, delta) {
+  try {
+    const cash = await adjustCashBalance(userId, delta);
+    return { ok: true, cash };
+  } catch {
+    return { ok: false, cash: null };
+  }
 }

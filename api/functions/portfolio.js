@@ -19,7 +19,7 @@ import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
-import { getCashBalance, setCashBalance, adjustCashBalance } from '../services/cashBalance.js';
+import { getCashBalance, setCashBalance, adjustCashBalanceSafe } from '../services/cashBalance.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
 import { computeSale } from '../../src/lib/saleMath.js';
@@ -692,14 +692,16 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
 
       // A funded buy moves the added cost out of cash, same as a fresh buy.
       let cash = null;
+      let cashSynced = true; // no funding requested = nothing to sync
       if (req.body?.fundFromCash) {
         const cost = shares * avgCost;
-        try { cash = await adjustCashBalance(req.user.id, -cost); }
-        catch (e) { console.warn(`[req:${req.requestId}] [Portfolio] cash debit on add-to-position failed:`, e.message); }
+        const r = await adjustCashBalanceSafe(req.user.id, -cost);
+        cash = r.cash; cashSynced = r.ok;
+        if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after add-to-position ${ticker} for user ${req.user.id}; holdings updated, cash NOT.`);
       }
       // Ledger: an add-to-position is a decision, captured with full context.
       recordDecision(req.user.id, { type: 'add', ticker, shares, price: avgCost, thesis: entryThesis || held.entry_thesis || null, source }).catch(() => {});
-      return res.json({ success: true, position, merged: true, addedShares: shares, cash });
+      return res.json({ success: true, position, merged: true, addedShares: shares, cash, cashSynced });
     }
 
     // New ticker: enforce the plan's position limit, then insert.
@@ -746,11 +748,12 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     // A funded buy (a real purchase, not recording an existing holding) moves money
     // from cash into the new position, so the account total stays continuous.
     let cash = null;
+    let cashSynced = true; // no funding requested = nothing to sync
     if (req.body?.fundFromCash) {
       const cost = (position.shares || 0) * (position.avg_cost || 0);
-      try { cash = await adjustCashBalance(req.user.id, -cost); } catch (e) {
-        console.warn(`[req:${req.requestId}] [Portfolio] cash debit on buy failed:`, e.message);
-      }
+      const r = await adjustCashBalanceSafe(req.user.id, -cost);
+      cash = r.cash; cashSynced = r.ok;
+      if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after buy ${ticker} for user ${req.user.id}; position created, cash NOT.`);
     }
     // Ledger: opening a new position is a decision, captured with full context.
     // Frontier #2: capture whether they pre-committed a falsification (a reversal
@@ -759,7 +762,7 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     // is already captured on the position, surfaced to the agent, and watched by
     // thesisWatch; this records it as a graded behavior in the ledger.
     recordDecision(req.user.id, { type: 'open', ticker, shares, price: avgCost, thesis: entryThesis || null, source, meta: reversalCondition ? { hasFalsification: true } : null }).catch(() => {});
-    res.json({ success: true, position, cash });
+    res.json({ success: true, position, cash, cashSynced });
   } catch (err) {
     console.error('[Portfolio] /positions POST failed:', err.message);
     res.status(500).json({ error: 'Server error' });
@@ -1131,13 +1134,12 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       });
       if (trimErr) throw trimErr;
       if (!closed) return res.status(404).json({ error: 'Position not found' }); // raced with another trim/close
-      let cashAfter = null;
-      try { cashAfter = await adjustCashBalance(req.user.id, sale.proceeds); } catch (e) {
-        console.warn(`[req:${req.requestId}] [Portfolio] cash credit on trim failed:`, e.message);
-      }
+      const trimCash = await adjustCashBalanceSafe(req.user.id, sale.proceeds);
+      const cashAfter = trimCash.cash;
+      if (!trimCash.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
       const trimStatus = sale.pnl > 0 ? 'win' : sale.pnl < 0 ? 'loss' : 'even';
       recordDecision(req.user.id, { type: 'trim', ticker: pos.ticker, shares: sale.sharesSold, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: trimStatus, outcomePnl: sale.pnl, outcomePnlPct: sale.pnlPercent, outcomeHoldDays: sale.holdDays }).catch(() => {});
-      return res.json({ success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter });
+      return res.json({ success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter, cashSynced: trimCash.ok });
     }
 
     const costBasis = (pos.avg_cost ?? 0) * (pos.shares ?? 0);
@@ -1234,10 +1236,9 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
 
     // Closing is a sale: the proceeds become cash, so the account total does not
     // drop, the value just moves from holdings into cash.
-    let cash = null;
-    try { cash = await adjustCashBalance(req.user.id, proceeds); } catch (e) {
-      console.warn(`[req:${req.requestId}] [Portfolio] cash credit on close failed:`, e.message);
-    }
+    const closeCash = await adjustCashBalanceSafe(req.user.id, proceeds);
+    const cash = closeCash.cash;
+    if (!closeCash.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${proceeds.toFixed(2)} proceeds after close of ${pos.ticker} for user ${req.user.id}; position closed, cash NOT credited.`);
 
     // Ledger: record the close with its outcome, and stamp that outcome back
     // onto the original buy decisions for this ticker so they get graded by how
@@ -1245,7 +1246,7 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     const outStatus = pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even';
     recordDecision(req.user.id, { type: 'close', ticker: pos.ticker, shares: pos.shares, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: outStatus, outcomePnl: pnl, outcomePnlPct: pnlPercent, outcomeHoldDays: holdDays, thesisPlayedOut }).catch(() => {});
     resolveOpenDecisions(req.user.id, pos.ticker, { sellPrice, pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
-    res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash });
+    res.json({ success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash, cashSynced: closeCash.ok });
   } catch (err) {
     console.error('[Portfolio] /positions DELETE failed:', err.message);
     res.status(500).json({ error: 'Server error' });
