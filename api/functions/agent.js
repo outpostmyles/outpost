@@ -293,6 +293,21 @@ function getEconomicCalendarContext() {
   return 'HEADS UP — major events coming:\n' + upcoming.join('\n');
 }
 
+// The trader's display name is interpolated raw into the system context ("Name: X"),
+// so it is a user-controlled string reaching the model. A name never legitimately
+// needs angle brackets or newlines, so strip them: that removes the only way a
+// crafted name could open a fake tag or inject a second context line (e.g. a forged
+// "Admin:" directive). Collapse whitespace, cap length, fall back to a neutral word.
+function safeName(v) {
+  const clean = (typeof v === 'string' ? v : '')
+    .replace(/[<>]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, ' ') // control chars incl. newlines/tabs -> space
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
+  return clean || 'trader';
+}
+
 const AGENT_SYSTEM = `You are Outpost — the friend in someone's phone who actually knows finance. You watch the markets alongside this specific person. You know their positions, their history, their style, and their goals.
 
 The person you're talking to is usually in their twenties or thirties, has somewhere between a few hundred and a few thousand dollars in this account, and is figuring this out as they go. They don't have a human financial advisor. They ask you what they'd ask a slightly-more-savvy friend.
@@ -830,7 +845,7 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
         console.warn('[Agent] Context build failed — using minimal fallback');
         ctx = {
           currentDate: new Date().toLocaleDateString(), currentTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }),
-          marketOpen: false, name: req.user.display_name || 'trader', plan: req.user.plan || 'starter',
+          marketOpen: false, name: safeName(req.user.display_name), plan: req.user.plan || 'starter',
           tradingStyle: 'Not set', riskTolerance: 'Not set', positions: 'Unavailable', watchlist: 'Unavailable',
           totalUnrealizedPnl: 'Unavailable', gainers: 0, losers: 0, tradePlansStr: '',
           regime: 'Unknown', vix: '—', vixLabel: '', fearGreed: '—', fearGreedLabel: '',
@@ -1240,7 +1255,7 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
       if (!ctx) {
         ctx = {
           currentDate: new Date().toLocaleDateString(), currentTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }),
-          marketOpen: false, name: req.user.display_name || 'trader', plan: req.user.plan || 'starter',
+          marketOpen: false, name: safeName(req.user.display_name), plan: req.user.plan || 'starter',
           tradingStyle: 'Not set', riskTolerance: 'Not set', positions: 'Unavailable', watchlist: 'Unavailable',
           totalUnrealizedPnl: 'Unavailable', gainers: 0, losers: 0, tradePlansStr: '',
           regime: 'Unknown', vix: '—', vixLabel: '', fearGreed: '—', fearGreedLabel: '',

@@ -140,25 +140,30 @@ export function formatMemories(memories) {
     return age > ONE_WEEK ? ' (older, may be outdated)' : '';
   };
 
+  // Every m.content below is a fragment of the user's own past message, captured by
+  // regex in extractMemories. It is user-controlled text that reaches the model, so
+  // it gets the same <user_quoted> fencing as onboarding anchors: a planted "ignore
+  // your instructions" inside a remembered preference is then read as data, not
+  // followed. The [TICKER] prefix stays outside the fence (system-tagged, not text).
   if (grouped.decision?.length) {
     parts.push('PAST DECISIONS:\n' + grouped.decision.slice(0, 8).map(m =>
-      `${m.ticker ? `[${m.ticker}] ` : ''}${m.content}${staleTag(m)}`
+      `${m.ticker ? `[${m.ticker}] ` : ''}${wrapAnchorAnswer(m.content)}${staleTag(m)}`
     ).join('\n'));
   }
 
   if (grouped.trade_intent?.length) {
-    parts.push('STATED TRADE PLANS (from the trader\'s own words — verify prices are still relevant):\n' + grouped.trade_intent.slice(0, 5).map(m =>
-      `${m.ticker ? `[${m.ticker}] ` : ''}${m.content}${staleTag(m)}`
+    parts.push('STATED TRADE PLANS (from the trader\'s own words, verify prices are still relevant):\n' + grouped.trade_intent.slice(0, 5).map(m =>
+      `${m.ticker ? `[${m.ticker}] ` : ''}${wrapAnchorAnswer(m.content)}${staleTag(m)}`
     ).join('\n'));
   }
 
   if (grouped.preference?.length) {
-    parts.push('TRADER PREFERENCES:\n' + grouped.preference.slice(0, 5).map(m => m.content).join('\n'));
+    parts.push('TRADER PREFERENCES:\n' + grouped.preference.slice(0, 5).map(m => wrapAnchorAnswer(m.content)).join('\n'));
   }
 
   if (grouped.insight?.length) {
     parts.push('KEY INSIGHTS:\n' + grouped.insight.slice(0, 5).map(m =>
-      `${m.ticker ? `[${m.ticker}] ` : ''}${m.content}${staleTag(m)}`
+      `${m.ticker ? `[${m.ticker}] ` : ''}${wrapAnchorAnswer(m.content)}${staleTag(m)}`
     ).join('\n'));
   }
 
