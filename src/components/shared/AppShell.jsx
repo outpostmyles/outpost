@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useAuth } from '../../hooks/useAuth.jsx';
 import { getMarketStatus } from '../../utils/market.js';
 import { api } from '../../lib/api.js';
@@ -10,8 +10,11 @@ import AgentTab from '../agent/AgentTab.jsx';
 import JournalTab from '../journal/JournalTab.jsx';
 import SettingsPage from '../settings/SettingsPage.jsx';
 import InstallPrompt from './InstallPrompt.jsx';
-import FounderDashboard from '../admin/FounderDashboard.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
+
+// Founder-only view: every regular user would otherwise pay to download admin
+// charts they can never open. Lazy chunk keeps it out of everyone else's bundle.
+const FounderDashboard = lazy(() => import('../admin/FounderDashboard.jsx'));
 
 const TABS = [
   { id: 'home', label: 'HOME', icon: HomeIcon },
@@ -252,7 +255,11 @@ export default function AppShell() {
           {activeTab === 'social' && <SocialTab showToast={showToast} />}
           {activeTab === 'journal' && <JournalTab showToast={showToast} onTabSwitch={switchTab} />}
           {activeTab === 'settings' && <SettingsPage user={user} onLogout={logout} showToast={showToast} onOpenAdmin={() => switchTab('admin')} />}
-          {activeTab === 'admin' && <FounderDashboard onBack={() => switchTab('settings')} />}
+          {activeTab === 'admin' && (
+            <Suspense fallback={null}>
+              <FounderDashboard onBack={() => switchTab('settings')} />
+            </Suspense>
+          )}
         </ErrorBoundary>
       </div>
 

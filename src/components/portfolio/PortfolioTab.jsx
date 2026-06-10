@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { api } from '../../lib/api.js';
 import { cachedFetch } from '../../lib/cache.js';
 import { assessPositionHealth } from '../../lib/positionHealth.js';
@@ -12,8 +12,11 @@ import { fmt, colorFor, getETDateStr } from '../../utils/market.js';
 import { computePositionStatus, fmtCompact } from '../../lib/positionStatus.js';
 import { renderPlainText } from '../../utils/renderText.js';
 import { TickerIcon, Spinner, EmptyState, Modal, FormField, FeedbackButtons, SkeletonCard, CountUp } from '../shared/UI.jsx';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import SaveToJournalSheet, { BookmarkButton } from '../journal/SaveToJournalSheet.jsx';
+
+// recharts is heavy and only used by the collapsed GROWTH chart, so it is its
+// own lazily-fetched chunk (see GrowthChartCanvas) and stays out of first paint.
+const GrowthChartCanvas = lazy(() => import('./GrowthChartCanvas.jsx'));
 import StockDossier from '../research/StockDossier.jsx';
 import PlanAdherenceCard from './PlanAdherenceCard.jsx';
 import PerformanceAttributionCard from './PerformanceAttributionCard.jsx';
@@ -2864,21 +2867,9 @@ function GrowthChartInline({ showGrowth, setShowGrowth }) {
               )}
             </div>
           )}
-          <div style={{ marginTop: 4, padding: '8px 0', height: 200 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'var(--faint)' }} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 9, fill: 'var(--faint)' }} tickFormatter={fmtCompact} />
-                <Tooltip
-                  contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11 }}
-                  labelStyle={{ color: 'var(--muted)' }}
-                  formatter={(v) => '$' + fmt(v)}
-                />
-                {hasSpy && <Line type="monotone" dataKey="spy" stroke="var(--faint)" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="S&P 500" />}
-                <Line type="monotone" dataKey="value" stroke="var(--blue)" strokeWidth={2} dot={false} name="You" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <Suspense fallback={<div style={{ marginTop: 4, padding: '8px 0', height: 200 }} />}>
+            <GrowthChartCanvas chartData={chartData} hasSpy={hasSpy} />
+          </Suspense>
         </>
       )}
     </div>

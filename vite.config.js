@@ -15,5 +15,17 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Pin the React runtime into its own chunk. It almost never changes, so a
+        // normal app-code deploy leaves this hash stable and returning users keep
+        // it from cache instead of re-downloading React every release. recharts is
+        // deliberately NOT listed here: it is dynamically imported (GrowthChartCanvas)
+        // and must stay in its own on-demand chunk, not get pulled into vendor.
+        manualChunks: {
+          react: ['react', 'react-dom'],
+        },
+      },
+    },
   },
 });
