@@ -95,7 +95,11 @@ export function summarizeDecisions(decisions) {
   const byType = {};
   for (const d of list) byType[d.type] = (byType[d.type] || 0) + 1;
 
-  const resolved = list.filter(d => d.outcomeStatus);
+  // Exclude the 'close' row from win/loss counting: when a position closes, the code
+  // both records a resolved close AND resolves the original open/add lots, so the
+  // same round-trip would otherwise be counted twice. The per-lot open/add (and the
+  // trim) resolutions are the honest record; close is a redundant marker here.
+  const resolved = list.filter(d => d.outcomeStatus && d.type !== 'close');
   const wins = resolved.filter(d => d.outcomeStatus === 'win').length;
   const losses = resolved.filter(d => d.outcomeStatus === 'loss').length;
 
@@ -194,7 +198,7 @@ export function aggregateRetail(decisions, { minSample = 3, topN = 20 } = {}) {
   const list = arr(decisions);
   const byTicker = new Map();
   for (const d of list) {
-    if (!OPENISH.has(d.type) && d.type !== 'close') continue;
+    if (!OPENISH.has(d.type)) continue; // open/add only: the resolved close row would double-count the round-trip
     const t = String(d.ticker || '').toUpperCase();
     if (!t) continue;
     if (!byTicker.has(t)) byTicker.set(t, { ticker: t, opens: 0, resolved: 0, wins: 0, users: new Set() });
@@ -333,7 +337,11 @@ export function aggregateQuality(decisions) {
 export const AI_SOURCES = ['deploy_cash', 'screener', 'dossier', 'agent'];
 const AI_SOURCE_SET = new Set(AI_SOURCES);
 export function adviceLift(decisions) {
-  const resolved = arr(decisions).filter(d => d.outcomeStatus && (OPENISH.has(d.type) || d.type === 'close'));
+  // Open/add lots only, NOT close. The close row is hard-coded source:'manual', so
+  // counting it leaked every ADVISED trade's realized outcome into the self-directed
+  // bucket (and double-counted the round-trip). The resolved open/add lots already
+  // carry the outcome attributed to their real source.
+  const resolved = arr(decisions).filter(d => d.outcomeStatus && OPENISH.has(d.type));
   const grp = (pred) => {
     const g = resolved.filter(pred);
     const wins = g.filter(d => d.outcomeStatus === 'win').length;

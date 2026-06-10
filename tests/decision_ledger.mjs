@@ -48,8 +48,10 @@ test('summary counts types, win rate, and process hygiene', () => {
   const s = summarizeDecisions([
     { type: 'open', thesis: 'a', pctOfBook: 10 },
     { type: 'open', pctOfBook: 50 },                                  // no thesis, oversized
-    { type: 'close', outcomeStatus: 'win', outcomePnlPct: 20 },
-    { type: 'close', outcomeStatus: 'loss', outcomePnlPct: -10 },
+    // Resolved outcomes are counted from open/add (and trim), NOT close, which would
+    // double-count the round-trip. Two trims stand in as the resolved outcomes here.
+    { type: 'trim', outcomeStatus: 'win', outcomePnlPct: 20 },
+    { type: 'trim', outcomeStatus: 'loss', outcomePnlPct: -10 },
   ]);
   assert.equal(s.total, 4);
   assert.equal(s.byType.open, 2);
@@ -58,6 +60,20 @@ test('summary counts types, win rate, and process hygiene', () => {
   assert.equal(s.thesisCoverage, 50);   // 1 of 2 opens had a thesis
   assert.equal(s.oversizedRate, 50);    // 1 of 2 opens over 35%
   assert.ok(s.avgGrade != null);
+});
+
+test('a close row never double-counts, and an advised outcome does not leak to self', () => {
+  // An advised buy (source agent) resolved to a win, plus the redundant close row the
+  // system also records (hard-coded source manual). The round-trip must count ONCE,
+  // attributed to advised, never a second time in the self-directed bucket.
+  const decisions = [
+    { type: 'open', ticker: 'AAA', userId: 'u1', source: 'agent', outcomeStatus: 'win' },
+    { type: 'close', ticker: 'AAA', userId: 'u1', source: 'manual', outcomeStatus: 'win' },
+  ];
+  assert.equal(summarizeDecisions(decisions).resolved, 1); // counted once, not twice
+  const lift = adviceLift(decisions);
+  assert.equal(lift.advised.n, 1);      // the win lives in the advised bucket
+  assert.equal(lift.selfDirected.n, 0); // and does NOT leak into self-directed
 });
 
 test('summary trend reads improving when recent grades beat older ones', () => {
@@ -122,19 +138,20 @@ test('detectBehaviorPatterns is safe on junk', () => {
 // ── aggregateRetail ──────────────────────────────────────────────────────────
 test('aggregate surfaces the crowded names and the retail traps', () => {
   const decisions = [
-    // NVDA: crowded across 3 users
+    // NVDA: crowded across 4 users
     { type: 'open', ticker: 'NVDA', userId: 'u1' },
     { type: 'open', ticker: 'NVDA', userId: 'u2' },
     { type: 'open', ticker: 'NVDA', userId: 'u3' },
-    // MEME: retail keeps losing on it (3 resolved, all losses)
-    { type: 'open', ticker: 'MEME', userId: 'u1' },
-    { type: 'close', ticker: 'MEME', userId: 'u1', outcomeStatus: 'loss' },
-    { type: 'close', ticker: 'MEME', userId: 'u2', outcomeStatus: 'loss' },
-    { type: 'close', ticker: 'MEME', userId: 'u3', outcomeStatus: 'loss' },
+    { type: 'open', ticker: 'NVDA', userId: 'u4' },
+    // MEME: retail keeps losing on it. The losses are resolved BUY lots (open with
+    // an outcome), which is how the ledger records realized outcomes, not close rows.
+    { type: 'open', ticker: 'MEME', userId: 'u1', outcomeStatus: 'loss' },
+    { type: 'open', ticker: 'MEME', userId: 'u2', outcomeStatus: 'loss' },
+    { type: 'open', ticker: 'MEME', userId: 'u3', outcomeStatus: 'loss' },
   ];
   const agg = aggregateRetail(decisions, { minSample: 3 });
   assert.equal(agg.crowded[0].ticker, 'NVDA');
-  assert.equal(agg.crowded[0].uniqueUsers, 3);
+  assert.equal(agg.crowded[0].uniqueUsers, 4);
   const trap = agg.retailTraps.find(t => t.ticker === 'MEME');
   assert.ok(trap);
   assert.equal(trap.retailWinRate, 0);
