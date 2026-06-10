@@ -20,9 +20,16 @@ export function calculatePositionSize({ account_size, risk_pct = 2, entry_price,
 
   const riskPerShare = entry_price - stop_loss;
   const riskDollars = account_size * (risk_pct / 100);
-  const shares = Math.floor(riskDollars / riskPerShare);
+  const riskBasedShares = Math.floor(riskDollars / riskPerShare);
+  // AFFORDABILITY CAP: never recommend more shares than the account can pay for. A
+  // tight stop makes the risk-based count balloon past the whole account (a $1,000
+  // account told to buy $5,000 of stock), which is the single worst thing to hand a
+  // beginner. The recommended size is the smaller of "risk-based" and "affordable".
+  const affordableShares = Math.max(0, Math.floor(account_size / entry_price));
+  const shares = Math.min(riskBasedShares, affordableShares);
+  const cappedByAffordability = riskBasedShares > affordableShares;
   const totalCost = shares * entry_price;
-  const portfolioPct = (totalCost / account_size * 100);
+  const portfolioPct = account_size > 0 ? (totalCost / account_size * 100) : 0;
 
   const result = {
     account_size,
@@ -30,7 +37,7 @@ export function calculatePositionSize({ account_size, risk_pct = 2, entry_price,
     entry_price: +entry_price.toFixed(2),
     stop_loss: +stop_loss.toFixed(2),
     risk_per_share: +riskPerShare.toFixed(2),
-    max_risk_dollars: +riskDollars.toFixed(2),
+    max_risk_dollars: +(shares * riskPerShare).toFixed(2),
     shares_to_buy: shares,
     total_cost: +totalCost.toFixed(2),
     portfolio_allocation_pct: +portfolioPct.toFixed(1),
@@ -52,6 +59,7 @@ export function calculatePositionSize({ account_size, risk_pct = 2, entry_price,
 
   // Warnings
   const warnings = [];
+  if (cappedByAffordability) warnings.push(`Capped to ${shares} share${shares === 1 ? '' : 's'}, the most a $${account_size} account can buy. Your stop is tight enough that a full ${risk_pct}% risk would cost more than your entire account, so this is the real ceiling. A true ${risk_pct}% risk would need a wider stop or more capital.`);
   if (portfolioPct > 25) warnings.push('Position is >25% of account, consider reducing size');
   if (portfolioPct > 50) warnings.push('DANGER: Position is >50% of account, way too concentrated');
   if (risk_pct > 5) warnings.push('Risking >5% per trade is aggressive, most pros risk 1-2%');

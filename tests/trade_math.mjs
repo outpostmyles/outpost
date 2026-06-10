@@ -41,6 +41,18 @@ test('position size: too-small account warns of zero shares', () => {
   assert.ok(r.warnings.some(w => w.includes('too small') || w.includes('1 share')));
 });
 
+test('position size: NEVER recommends more shares than the account can afford', () => {
+  // The dangerous case: a tight stop makes the risk-based size 100 shares ($5,000)
+  // on a $1,000 account. Must cap to the affordable 20 shares ($1,000), not 500%.
+  const r = calculatePositionSize({ account_size: 1000, risk_pct: 5, entry_price: 50, stop_loss: 49.5 });
+  assert.ok(r.total_cost <= 1000, `total cost ${r.total_cost} must fit the account`);
+  assert.equal(r.shares_to_buy, 20, 'capped to affordable (1000/50)');
+  assert.ok(r.portfolio_allocation_pct <= 100, 'never over 100% of the account');
+  assert.ok(r.warnings.some(w => /capped/i.test(w)), 'explains the cap to the user');
+  // max_risk_dollars reflects the ACTUAL position risk, not the unaffordable budget.
+  assert.equal(r.max_risk_dollars, 10, '20 shares * $0.50 stop distance');
+});
+
 test('position size: rejects bad inputs (incl. Infinity and bad risk_pct)', () => {
   assert.ok(calculatePositionSize({ account_size: 0, entry_price: 100, stop_loss: 90 }).error);
   assert.ok(calculatePositionSize({ account_size: Infinity, entry_price: 100, stop_loss: 90 }).error);
