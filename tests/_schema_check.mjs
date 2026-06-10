@@ -21,11 +21,16 @@ const TABLES = [
 ];
 
 // Every RPC the code calls. A missing one means trades/cash/credits break (some have
-// JS fallbacks, e.g. adjust_cash_balance; close/partial_close do NOT).
+// JS fallbacks, e.g. adjust_cash_balance and the *_and_credit wrappers; close/
+// partial_close do NOT). The migration-023 atomic wrappers are listed so a partial
+// 023 apply is caught here instead of silently running the non-atomic fallback.
 const RPCS = [
   { name: 'close_position', args: { p_position_id: ZERO, p_user_id: ZERO, p_sell_price: 1, p_pnl: 0, p_pnl_percent: 0, p_hold_days: 0, p_reflection_what_happened: null, p_reflection_lesson: null, p_thesis_played_out: null, p_exit_reflection: null, p_exit_outcome: null } },
   { name: 'partial_close_position', args: { p_position_id: ZERO, p_user_id: ZERO, p_sell_shares: 1, p_sell_price: 1, p_pnl: 0, p_pnl_percent: 0, p_hold_days: 0 } },
+  { name: 'close_position_and_credit', args: { p_position_id: ZERO, p_user_id: ZERO, p_sell_price: 1, p_pnl: 0, p_pnl_percent: 0, p_hold_days: 0, p_reflection_what_happened: null, p_reflection_lesson: null, p_thesis_played_out: null, p_exit_reflection: null, p_exit_outcome: null, p_proceeds: 0 } },
+  { name: 'partial_close_position_and_credit', args: { p_position_id: ZERO, p_user_id: ZERO, p_sell_shares: 1, p_sell_price: 1, p_pnl: 0, p_pnl_percent: 0, p_hold_days: 0, p_proceeds: 0 } },
   { name: 'adjust_cash_balance', args: { p_user_id: ZERO, p_delta: 0 } },
+  { name: 'set_cash_balance', args: { p_user_id: ZERO, p_amount: 0 } },
   { name: 'deduct_credits', args: { p_user_id: ZERO, p_amount: 0 } },
   { name: 'refund_credits', args: { p_user_id: ZERO, p_amount: 0 } },
 ];
