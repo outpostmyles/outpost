@@ -787,6 +787,9 @@ function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFi
         ? `Added ${result.addedShares} more to ${addedTicker}, now ${result.position.shares} sh at $${Number(result.position.avg_cost).toFixed(2)} avg`
         : `${addedTicker} added to portfolio`;
       showToast(toastMsg, 'success');
+      // Cash and holdings can drift if the cash step failed after the position saved
+      // (backend returns cashSynced:false). Tell the user instead of silently drifting.
+      if (result?.cashSynced === false) showToast('Position saved, but your cash balance did not update. You can set it in Settings.', 'error');
       setForm({ ticker: '', companyName: '', shares: '', avgCost: '', purchasedAt: '', entryThesis: '', reversalCondition: '', priceTarget: '', stopLoss: '' });
       setShowPlan(false);
       setFundFromCash(false);
@@ -1760,6 +1763,9 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
           'success',
         );
       }
+      // Surface a cash/holdings drift (cash step failed after the sale) instead of
+      // silently leaving the balance wrong.
+      if (res?.cashSynced === false) showToast('Sold, but your cash balance did not update. You can set it in Settings.', 'error');
     } catch {
       setErr('Failed to remove');
       setRemoving(false);
