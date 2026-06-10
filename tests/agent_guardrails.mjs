@@ -28,6 +28,9 @@ test('life-altering money moves classify as high_stakes', () => {
     'this is money i need for rent but the setup looks good',
     "i want to bet everything on one trade",
     'should i take out a loan to buy more',
+    'going all-in on TSLA tomorrow',
+    'i maxed out my account on this one',
+    'honestly this is money for rent',
   ]) eq(classifyHighStakes(m), 'high_stakes', m);
 });
 
@@ -43,6 +46,7 @@ test('normal trading talk does not trigger', () => {
     'i bought 5 shares of COST',
     'is the sector rotating',
     'thanks for the help',
+    'that meme made me want to die laughing',
   ]) eq(classifyHighStakes(m), null, m);
 });
 

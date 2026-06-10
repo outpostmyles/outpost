@@ -185,7 +185,7 @@ export default function AppShell() {
       `}</style>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', paddingTop: 'max(10px, env(safe-area-inset-top))', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, rgba(16,19,29,0.86), rgba(8,10,17,0.9))', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 1px 0 rgba(122,162,255,0.06), 0 6px 24px rgba(0,0,0,0.32)', flexShrink: 0, position: 'relative', zIndex: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Logo />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '1.5px', color: 'var(--text)' }}>OUTPOST</span>

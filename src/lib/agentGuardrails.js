@@ -6,10 +6,10 @@
 // not depend on the model remembering a rule. Pure and unit-tested.
 
 // Large, hard-to-reverse money moves, or risking money the user may need.
-const HIGH_STAKES_RE = /\b(sell(ing)? everything|sell it all|sold everything|liquidat\w+ (everything|it all|my whole|the whole|my entire|the entire|my account|my portfolio)|cash(ing)? out everything|go(ing)? all in|all in on|life savings|retirement (savings|account|money|fund)|everything i (have|own|got)|my (whole|entire) (portfolio|account|savings|net worth)|can'?t afford to lose|money i need|rent money|put everything|bet everything|max(ing)? out|take out a loan|borrow to (buy|invest)|remortgage)\b/i;
+const HIGH_STAKES_RE = /\b(sell(ing)? everything|sell it all|sold everything|liquidat\w+ (everything|it all|my whole|the whole|my entire|the entire|my account|my portfolio)|cash(ing)? out everything|go(ing)? all[ -]in|all[ -]in (on|here)|life savings|retirement (savings|account|money|fund)|everything i (have|own|got)|my (whole|entire) (portfolio|account|savings|net worth)|can'?t afford to lose|money i need|money for (rent|bills|food|groceries)|rent money|put everything|bet everything|max(ing|ed)? out|take out a loan|borrow to (buy|invest)|remortgage)\b/i;
 
 // Self-harm / crisis signals. Wellbeing comes before any market content.
-const CRISIS_RE = /\b(kill myself|killing myself|end(ing)? it all|end(ing)? my life|suicid\w+|don'?t want to (be here|live|exist)|no reason to live|nothing to live for|hurt myself|harm myself|better off dead|can'?t go on|want to die)\b/i;
+const CRISIS_RE = /\b(kill myself|killing myself|end(ing)? it all|end(ing)? my life|suicid\w+|don'?t want to (be here|live|exist)|no reason to live|nothing to live for|hurt myself|harm myself|better off dead|can'?t go on|want to die(?! laughing| of laughter))\b/i;
 
 /**
  * Classify a user message. Returns 'crisis' | 'high_stakes' | null.
