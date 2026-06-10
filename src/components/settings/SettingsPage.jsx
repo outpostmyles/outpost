@@ -266,7 +266,7 @@ export default function SettingsPage({ user, onLogout, showToast, onOpenAdmin })
     return next;
   })();
 
-  const PLAN_NAMES = { free: 'FREE', starter: 'STARTER', pro: 'PRO', elite: 'ELITE' };
+  const PLAN_NAMES = { free: 'FREE', starter: 'STARTER', pro: 'PRO', elite: 'ELITE', unlimited: 'BETA' };
   const STYLE_LABELS = { day_trading: 'Day Trader', swing: 'Swing Trader', investor: 'Investor' };
   const RISK_LABELS = { conservative: 'Conservative', moderate: 'Moderate', aggressive: 'Aggressive' };
 

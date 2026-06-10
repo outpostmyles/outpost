@@ -52,6 +52,7 @@ router.post('/signup', rateLimit(5), async (req, res) => {
     // Beta gate — Outpost is invite-only during private beta.
     // Allowlist is maintained in the beta_allowlist table; updateable without redeploy.
     // Set BETA_ALLOWLIST_OPEN=true to disable the gate (e.g. after public launch).
+    let isBetaUser = false;
     if (process.env.BETA_ALLOWLIST_OPEN !== 'true') {
       const { data: allowed } = await supabase
         .from('beta_allowlist')
@@ -63,6 +64,9 @@ router.post('/signup', rateLimit(5), async (req, res) => {
           error: 'Outpost is in private beta. Email hello@outpostapp.co for access.',
         });
       }
+      // Passed the private-beta gate: provision as a full beta tester (unlimited),
+      // not free, so testers don't hit paywalls on the core AI features.
+      isBetaUser = true;
     }
 
     const { data: existing } = await supabase.from('user_profiles').select('id').eq('email', emailClean).maybeSingle();
@@ -80,8 +84,8 @@ router.post('/signup', rateLimit(5), async (req, res) => {
       password_salt: 'bcrypt',
       session_token: tokenHash,
       session_expires: expires,
-      plan: 'free',
-      credits_remaining: PLAN_CREDITS.free,
+      plan: isBetaUser ? 'unlimited' : 'free',
+      credits_remaining: isBetaUser ? PLAN_CREDITS.unlimited : PLAN_CREDITS.free,
       credits_used_this_month: 0,
       billing_date: new Date().getDate(),
       risk_tolerance: 'moderate',
