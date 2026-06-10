@@ -93,8 +93,9 @@ router.post('/ai-feedback', requireAuth, rateLimit(20), async (req, res) => {
       created_at: new Date().toISOString(),
     });
 
-    // Feed into analytics aggregation
-    trackFeedback(cleanFeature, cleanRating === 'up', req.user.id);
+    // Feed the in-memory analytics counters. The DB row was already written above;
+    // trackFeedback no longer persists (it would have been a redundant second row).
+    trackFeedback(cleanFeature, cleanRating === 'up');
 
     res.json({ success: true });
   } catch (err) {

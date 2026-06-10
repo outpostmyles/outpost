@@ -24,3 +24,6 @@ tests/eval_results/
 # Stray dirs from earlier scaffold
 {src/
 out post new/
+
+# Generated DB setup bundle (regenerate with: bash scripts/build_setup_bundle.sh)
+prod_setup_bundle.sql

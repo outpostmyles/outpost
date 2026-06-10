@@ -35,17 +35,11 @@ CREATE TABLE IF NOT EXISTS analytics_daily (
 CREATE INDEX IF NOT EXISTS idx_analytics_daily_date
 ON analytics_daily(date DESC);
 
--- 4. Ensure ai_feedback table exists (used by settings.js and analytics.js)
-CREATE TABLE IF NOT EXISTS ai_feedback (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id uuid REFERENCES user_profiles(id) ON DELETE CASCADE,
-  feature text NOT NULL,
-  rating text,
-  positive boolean,
-  reason text,
-  response_preview text,
-  created_at timestamptz DEFAULT now()
-);
+-- 4. ai_feedback is defined canonically in schema.sql (the base), which runs first.
+-- It was re-declared here with an extra 'positive boolean' column, but that CREATE
+-- was always a no-op (the table already existed) and nothing reads 'positive' (every
+-- reader aggregates 'rating'), so it was dead and misleading. Dropped. The index
+-- below is the only ai_feedback index, so it stays.
 
 CREATE INDEX IF NOT EXISTS idx_ai_feedback_user
 ON ai_feedback(user_id, created_at DESC);

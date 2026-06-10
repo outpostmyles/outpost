@@ -80,9 +80,15 @@ export function trackFeature(feature, userId = null) {
 }
 
 /**
- * Track AI feedback (thumbs up/down).
+ * Track AI feedback (thumbs up/down) in the in-memory counters only.
+ * DB persistence is owned by the POST /feedback route (api/functions/settings.js),
+ * which writes the one canonical row with rating 'up'/'down' that every reader
+ * (admin, founderDigest, promptExperiments) aggregates. This used to write a SECOND
+ * row keyed on a 'positive' boolean that no reader looks at and that the base schema
+ * never defines, so it errored on every click on a fresh DB and piled up dead rows on
+ * the dev one. Counters here, the single canonical write there.
  */
-export function trackFeedback(feature, isPositive, userId = null) {
+export function trackFeedback(feature, isPositive) {
   if (isPositive) counters.feedback.thumbsUp++;
   else counters.feedback.thumbsDown++;
 
@@ -91,16 +97,6 @@ export function trackFeedback(feature, isPositive, userId = null) {
   }
   if (isPositive) counters.feedback.byFeature[feature].up++;
   else counters.feedback.byFeature[feature].down++;
-
-  // Persist to DB for long-term tracking (non-blocking)
-  if (userId) {
-    supabase.from('ai_feedback').insert({
-      user_id: userId,
-      feature,
-      positive: isPositive,
-      created_at: new Date().toISOString(),
-    }).then(() => {}).catch(e => console.error('[Analytics] Failed to persist feedback:', e.message));
-  }
 }
 
 /**

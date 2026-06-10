@@ -55,11 +55,22 @@ affordability check, the buy-side twin of 023). The app runs correctly without i
 but apply it. Then grab the keys (skip to 1b). To launch on a CLEAN project with no
 seed data, do 1a.
 
-### 1a. Fresh project (optional)  [YOU]
-1. New project in Supabase.
-2. SQL editor, run `supabase-setup.sql` (the base schema).
-3. Then run, in order, every file in `api/migrations/` from `002` through `024`.
-   Run them one at a time, oldest first. They are idempotent enough to re-run.
+### 1a. Fresh project (clean start, no seed data)  [YOU]
+1. New project in Supabase (business-email account; generate a strong DB password and
+   save it in your manager; pick a US region; Free tier is fine for the beta).
+2. Easiest correct path: build the one-file bundle with
+   `bash scripts/build_setup_bundle.sh` (writes `prod_setup_bundle.sql`). Open it,
+   copy all, paste into the Supabase SQL editor, and Run. It concatenates, in
+   dependency order, `schema.sql` then `supabase-setup.sql` then every migration
+   `002` through `024`, and is verified safe to run as a single batch.
+3. Prefer running files individually? Use THIS order (each is safe to re-run):
+   `schema.sql` (the base: 16 tables incl. user_profiles, positions) FIRST, then
+   `supabase-setup.sql` (adds closed_trades, error_log, indexes), then
+   `api/migrations/002` through `024`, oldest first. NOTE: schema.sql is the base, not
+   supabase-setup.sql; running supabase-setup.sql first will fail (it indexes tables
+   schema.sql creates).
+4. Verify before wiring the backend: `node tests/_schema_check.mjs` (prod creds in
+   .env) confirms every table and RPC the code needs actually exists.
 
 ### 1b. Grab the keys  [YOU]
 From Project Settings, API, copy: the Project URL, the `anon` public key, and the
