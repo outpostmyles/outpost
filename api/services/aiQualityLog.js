@@ -59,9 +59,10 @@ Respond with ONLY valid JSON:
 
 /**
  * Grade an output. Returns { score, failures, notes } or null on failure.
- * Uses Haiku — cheap and fast.
+ * Uses Haiku, cheap and fast. Exported so the offline model eval grades against the
+ * EXACT same rubric the live tracker uses (one definition of "good", no drift).
  */
-async function gradeResponse({ input, output, feature }) {
+export async function gradeResponse({ input, output, feature }) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);

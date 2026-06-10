@@ -6,6 +6,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { sessionPacing } from '../middleware/sessionPacing.js';
 import { buildAgentContext } from '../utils/promptEngine.js';
 import { safeName } from '../utils/fence.js';
+import { acceptsTemperature } from '../utils/modelParams.js';
 import { NO_DASH_RULE } from '../utils/aiStyle.js';
 import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
@@ -34,8 +35,8 @@ const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MAX_TOOL_ROUNDS = 5; // allow complex multi-tool queries to complete
 const MAX_RETRIES = 2; // retry on 429/529 errors
-const MODEL_SONNET = 'claude-sonnet-4-20250514';
-const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
+const MODEL_SONNET = config.models.agent; // Tier-3 brain, swap via AGENT_MODEL / config.models
+const MODEL_HAIKU = config.models.cheap;  // Tier-1/2 cheap tier, swap via CHEAP_MODEL / config.models
 const FREE_TIER_AGENT_LIMIT = 10; // free users get 10 agent messages per calendar month
 
 /**
@@ -294,7 +295,7 @@ function getEconomicCalendarContext() {
   return 'HEADS UP — major events coming:\n' + upcoming.join('\n');
 }
 
-const AGENT_SYSTEM = `You are Outpost — the friend in someone's phone who actually knows finance. You watch the markets alongside this specific person. You know their positions, their history, their style, and their goals.
+export const AGENT_SYSTEM = `You are Outpost, the friend in someone's phone who actually knows finance. You watch the markets alongside this specific person. You know their positions, their history, their style, and their goals.
 
 The person you're talking to is usually in their twenties or thirties, has somewhere between a few hundred and a few thousand dollars in this account, and is figuring this out as they go. They don't have a human financial advisor. They ask you what they'd ask a slightly-more-savvy friend.
 
@@ -946,7 +947,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
       let response = await callAnthropicWithRetry({
         model: selectedModel,
         max_tokens: responseTokens,
-        temperature,
+        ...(acceptsTemperature(selectedModel) ? { temperature } : {}), // newer models (Opus 4.7+/Fable) removed it
         system: [
           { type: 'text', text: AGENT_SYSTEM, cache_control: { type: 'ephemeral' } },
           { type: 'text', text: contextBlock },
@@ -1353,7 +1354,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
       let response = await callAnthropicWithRetry({
         model: selectedModel,
         max_tokens: responseTokens,
-        temperature,
+        ...(acceptsTemperature(selectedModel) ? { temperature } : {}), // newer models (Opus 4.7+/Fable) removed it
         system: [
           { type: 'text', text: AGENT_SYSTEM, cache_control: { type: 'ephemeral' } },
           { type: 'text', text: contextBlock },

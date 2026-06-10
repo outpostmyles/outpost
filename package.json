@@ -9,7 +9,8 @@
     "start": "node api/server.js",
     "server": "node --watch api/server.js",
     "jobs": "node api/jobs/runner.js",
-    "test": "node tests/run-all.mjs"
+    "test": "node tests/run-all.mjs",
+    "eval:model": "node tests/eval_model.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -54,4 +54,18 @@ config.brokerage = {
 // begin adding them back to responses once the data is concrete.
 config.surfaceRetailIntel = process.env.SURFACE_RETAIL_INTEL === 'true';
 
+// Model selection, per tier, behind one knob each. The model is a SWAPPABLE part:
+// when one retires (Sonnet 4 retires 2026-06-15) or a better one ships (Opus 4.8,
+// Fable 5, whatever's next), change the value here or via env and qualify it with
+// `npm run eval:model` BEFORE it reaches a user. Never hardcode a model id at a call
+// site again. Defaults are the current production models; override per environment.
+//   agent: the Tier-3 conversational brain (the product). Where intelligence matters.
+//   reads: Deploy Cash + position reads (ai.js). User-facing analysis.
+//   cheap: greetings, lookups, scans, the grader, jobs. Trivial/high-volume tasks.
+config.models = {
+  agent: process.env.AGENT_MODEL || 'claude-sonnet-4-20250514',
+  reads: process.env.READS_MODEL || 'claude-sonnet-4-20250514',
+  cheap: process.env.CHEAP_MODEL || 'claude-haiku-4-5-20251001',
+};
+
 console.log('✅ Environment validated');

@@ -27,9 +27,11 @@ const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const DISCLAIMER = 'Not financial advice. For educational purposes only. Trading involves substantial risk of loss.';
 
-// Model routing — Sonnet for premium tasks, Haiku for commodity tasks
-const MODEL_SONNET = 'claude-sonnet-4-20250514';
-const MODEL_HAIKU = 'claude-haiku-4-5-20251001';
+// Model routing, behind config (see config.models). Reads = Deploy Cash + position
+// reads; cheap = commodity tasks. Swap via READS_MODEL / CHEAP_MODEL, qualify with
+// `npm run eval:model` first. (ai.js passes no sampling params, so it's swap-safe.)
+const MODEL_SONNET = config.models.reads;
+const MODEL_HAIKU = config.models.cheap;
 
 const PLAN_LIMITS = { free: 0, starter: 1000, pro: 5000, elite: 15000 };
 
