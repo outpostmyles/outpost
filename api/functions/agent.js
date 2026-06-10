@@ -942,7 +942,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
       const isRecommendationQ = /\b(what should i buy|what stocks|good stocks|best stock|recommend|suggestion|pick|looking good|any ideas|what to buy|stocks to get|where.+put.+money)\b/i.test(trimmed);
       const temperature = isRecommendationQ ? 0.95 : 0.8;
 
-      console.log(`[Agent] Tier ${msgTier.tier} → ${selectedModel === MODEL_HAIKU ? 'Haiku' : 'Sonnet'}, tools=${msgTier.useTools}, maxTokens=${responseTokens}`);
+      console.log(`[Agent] Tier ${msgTier.tier} → ${selectedModel}, tools=${msgTier.useTools}, maxTokens=${responseTokens}`);
 
       let response = await callAnthropicWithRetry({
         model: selectedModel,
@@ -1319,7 +1319,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     const isRecommendationQ = /\b(what should i buy|what stocks|good stocks|best stock|recommend|suggestion|pick|looking good|any ideas|what to buy|stocks to get|where.+put.+money)\b/i.test(trimmed);
     const temperature = isRecommendationQ ? 0.95 : 0.8;
 
-    console.log(`[Agent/Stream] Tier ${msgTier.tier} → ${selectedModel === MODEL_HAIKU ? 'Haiku' : 'Sonnet'}, tools=${msgTier.useTools}`);
+    console.log(`[Agent/Stream] Tier ${msgTier.tier} → ${selectedModel}, tools=${msgTier.useTools}`);
 
     let fullReply = '';
     let toolRounds = 0;

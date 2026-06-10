@@ -63,7 +63,14 @@ config.surfaceRetailIntel = process.env.SURFACE_RETAIL_INTEL === 'true';
 //   reads: Deploy Cash + position reads (ai.js). User-facing analysis.
 //   cheap: greetings, lookups, scans, the grader, jobs. Trivial/high-volume tasks.
 config.models = {
-  agent: process.env.AGENT_MODEL || 'claude-sonnet-4-20250514',
+  // agent promoted to Opus 4.8 after it cleared the eval gate (npm run eval:model):
+  // avg 96 vs Sonnet-4's 77, zero bright-line fails vs 1, and it held the line on the
+  // panic-liquidation case Sonnet-4 caved on. The temperature gate (modelParams.js)
+  // omits the param Opus 4.8 removed, so this is a clean swap.
+  agent: process.env.AGENT_MODEL || 'claude-opus-4-8',
+  // reads is still on the DEPRECATED Sonnet-4 (retires 2026-06-15) and has NOT been
+  // through its own eval yet (deployCashEval covers this surface). Qualify it next,
+  // then promote; do not flip it blind.
   reads: process.env.READS_MODEL || 'claude-sonnet-4-20250514',
   cheap: process.env.CHEAP_MODEL || 'claude-haiku-4-5-20251001',
 };
