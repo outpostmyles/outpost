@@ -48,7 +48,10 @@ setInterval(() => {
 
 export function globalRateLimit() {
   return (req, res, next) => {
-    const ip = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
+    // req.ip is already the real client IP behind the trusted proxy (trust proxy = 1).
+    // Do NOT fall back to a raw X-Forwarded-For header: an attacker can spoof it per
+    // request to land in a fresh bucket each time and defeat the global IP cap.
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
     const now = Date.now();
     if (!ipStore.has(ip)) {
       if (ipStore.size >= MAX_IP_STORE_SIZE) {

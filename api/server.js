@@ -1,6 +1,14 @@
 import './config.js';
 import { fileURLToPath } from 'node:url';
+import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
+
+// Constant-time admin-secret compare: avoids the byte-wise short-circuit timing leak
+// of ===. Returns false on any type/length mismatch or missing secret.
+function safeKeyEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || a.length !== b.length) return false;
+  try { return timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch { return false; }
+}
 import cors from 'cors';
 import { globalRateLimit } from './middleware/rateLimit.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
@@ -132,7 +140,7 @@ app.get('/api/health', async (req, res) => {
   // Full metrics if requested (for dashboards, not public — requires admin key)
   const adminSecret = process.env.ADMIN_SECRET;
   const providedKey = req.headers['x-admin-key']; // Only accept via header — never query params (logged by proxies/CDNs)
-  const verbose = req.query.verbose === 'true' && adminSecret && providedKey === adminSecret;
+  const verbose = req.query.verbose === 'true' && safeKeyEqual(providedKey, adminSecret);
   const cache = memStats();
   const mon = getMetrics();
 
@@ -164,7 +172,7 @@ app.get('/api/admin/insights', async (req, res) => {
   if (!process.env.ADMIN_SECRET) {
     return res.status(503).json({ error: 'Admin endpoint not configured — set ADMIN_SECRET in .env' });
   }
-  if (!secret || secret !== process.env.ADMIN_SECRET) {
+  if (!safeKeyEqual(secret, process.env.ADMIN_SECRET)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 

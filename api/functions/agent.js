@@ -1089,7 +1089,7 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     // user never waits). Flagged replies land in the founder review queue, and the
     // founder brief rolls up agent_chat's flag rate and dominant failure over time.
     {
-      const tail = (Array.isArray(messages) ? messages.slice(-4) : [])
+      const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
         .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
         .filter(Boolean).join('\n\n');
       logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: reply || '' }).catch(() => {});
@@ -1458,7 +1458,7 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
 
     // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget).
     {
-      const tail = (Array.isArray(messages) ? messages.slice(-4) : [])
+      const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
         .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
         .filter(Boolean).join('\n\n');
       logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: fullReply || '' }).catch(() => {});

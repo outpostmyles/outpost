@@ -65,15 +65,22 @@ async function refundCredits(userId, amount, reason = 'ai_endpoint_error') {
 }
 
 async function getCache(key) {
-  const { data } = await supabase.from('ai_cache').select('*').eq('cache_key', key).maybeSingle();
+  // order+limit+maybeSingle so a duplicate-keyed row (two concurrent cold-cache
+  // writes, since there is no UNIQUE constraint on cache_key) returns the freshest
+  // row instead of throwing a 500 on the user.
+  const { data } = await supabase.from('ai_cache').select('*').eq('cache_key', key)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
   return data;
 }
 
 async function setCache(key, result) {
-  const { data: existing } = await supabase.from('ai_cache').select('id').eq('cache_key', key).maybeSingle();
+  // Collapse to a single row per key on every write: this prunes any duplicates a
+  // prior race left behind, so readers never see >1 row for a key. The brief gap
+  // between delete and insert just costs one recompute on a concurrent miss, fine
+  // for a cache. (A UNIQUE(cache_key) index is the fuller fix; this needs no migration.)
   const payload = { cache_key: key, result, created_at: new Date().toISOString() };
-  if (existing) await supabase.from('ai_cache').update(payload).eq('id', existing.id);
-  else await supabase.from('ai_cache').insert(payload);
+  await supabase.from('ai_cache').delete().eq('cache_key', key);
+  await supabase.from('ai_cache').insert(payload);
 }
 
 /**
