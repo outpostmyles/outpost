@@ -16,14 +16,49 @@
 // In-memory by design: the realistic case is the same user hitting the same instance
 // within seconds. A multi-instance deploy would need a shared store (DB/Redis); noted
 // here so it is not mistaken for cross-instance protection.
+//
+// Its OWN store, deliberately NOT the shared price cache. The double-submit marker has
+// a short 10s TTL, so in the shared 500-entry cache it was the soonest-to-expire entry
+// and therefore the preferred eviction victim: a market-open price refresh could fill
+// the cache and evict a still-fresh in-flight marker, silently re-opening the very
+// double-submit window this guards. In a dedicated map every entry is a short-lived
+// marker, so eviction (only a pathological-growth backstop) can only ever drop a
+// near-expired one, never a live claim out from under its retry.
 import { createHash } from 'crypto';
-import { memGet, memSet, memDel } from './memoryCache.js';
 
 const DEFAULT_TTL_MS = 10_000; // long enough for a double-click or an immediate retry
+const MAX_MARKERS = 5000;      // backstop; real concurrent in-flight count is tiny
+
+const store = new Map(); // key -> { response, expiresAt }
+
+// Periodic sweep of expired markers, unref'd so it never keeps the process alive.
+const sweep = setInterval(() => {
+  const now = Date.now();
+  for (const [k, e] of store) if (now > e.expiresAt) store.delete(k);
+}, 30_000);
+sweep.unref?.();
 
 function keyOf(parts) {
   const raw = (Array.isArray(parts) ? parts : [parts]).map(p => (p == null ? '' : String(p))).join('|');
   return 'idem_' + createHash('sha256').update(raw).digest('hex');
+}
+
+function getLive(key) {
+  const e = store.get(key);
+  if (!e) return null;
+  if (Date.now() > e.expiresAt) { store.delete(key); return null; } // lazy expiry
+  return e;
+}
+
+function put(key, response, ttlMs) {
+  if (!store.has(key) && store.size >= MAX_MARKERS) {
+    // Backstop only. Every entry shares the same short TTL band, so evicting the
+    // soonest-to-expire drops a near-dead marker, never preferentially a fresh one.
+    let oldest = null, oldestTime = Infinity;
+    for (const [k, e] of store) if (e.expiresAt < oldestTime) { oldest = k; oldestTime = e.expiresAt; }
+    if (oldest) store.delete(oldest);
+  }
+  store.set(key, { response, expiresAt: Date.now() + ttlMs });
 }
 
 /**
@@ -33,16 +68,16 @@ function keyOf(parts) {
  */
 export function idempotencyGuard(parts, ttlMs = DEFAULT_TTL_MS) {
   const key = keyOf(parts);
-  const existing = memGet(key);
+  const existing = getLive(key);
   if (existing) {
     // existing.response is null while the original is still in flight, or the
     // committed response once it finished.
     return { fresh: false, prior: existing.response ?? null };
   }
-  memSet(key, { response: null }, ttlMs); // in-flight marker; synchronous, atomic gate
+  put(key, null, ttlMs); // in-flight marker; synchronous, atomic gate
   return {
     fresh: true,
-    commit: (response) => memSet(key, { response: response ?? null }, ttlMs),
-    release: () => memDel(key),
+    commit: (response) => put(key, response ?? null, ttlMs),
+    release: () => store.delete(key),
   };
 }
