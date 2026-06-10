@@ -280,7 +280,7 @@ function getEconomicCalendarContext() {
     if (cpiDate.getDay() >= 1 && cpiDate.getDay() <= 5) { // weekday
       const cpiStr = cpiDate.toISOString().split('T')[0];
       if (cpiStr >= todayStr && cpiStr <= weekOutStr) {
-        upcoming.push(`CPI Inflation Data — around ${cpiStr} (HIGH IMPACT: hot inflation = market sell-off; cool inflation = rally. Watch for surprises vs estimates.)`);
+        upcoming.push(`CPI inflation data is usually released in the second week of this month (mid-month, the exact day varies and is NOT known here). If it comes up, say "around mid-month" and do not state a specific date as certain. HIGH IMPACT: hot inflation tends to sell off, cool inflation tends to rally.`);
         break;
       }
     }
