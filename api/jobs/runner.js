@@ -18,6 +18,7 @@ import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
+import { runModelWatch, hasAlerts, formatFindings } from '../services/modelWatch.js';
 import { PLAN_CREDITS } from '../constants/planCredits.js';
 import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
@@ -283,6 +284,17 @@ scheduleAt(0, 0, resetDailyCounters, 'Analytics daily reset');
 scheduleAt(2, 0, async () => {
   try { await buildDecisionIntelligence(); } catch (err) { console.error('[Jobs] Decision intelligence build failed:', err.message); }
 }, 'Decision intelligence');
+// Model tripwire: once a day, check the live model catalog against what we use. Alerts
+// when a model we depend on is gone/retiring or a new one has appeared, so we're never
+// unknowingly on a dead model again. Quiet unless there's something to act on; the
+// founder also runs it on demand via tests/_model_watch.mjs. Gate is npm run eval:model.
+scheduleAt(8, 15, async () => {
+  try {
+    const r = await runModelWatch();
+    if (hasAlerts(r.findings)) console.warn('[ModelWatch] ACTION NEEDED:\n' + formatFindings(r));
+    else console.log('[ModelWatch] all models current');
+  } catch (err) { console.error('[Jobs] Model watch failed:', err.message); }
+}, 'Model watch');
 resetCredits();
 
 // ─── Price alert monitor ────────────────────────────────────────────────
