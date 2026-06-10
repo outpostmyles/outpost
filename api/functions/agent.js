@@ -1351,6 +1351,13 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     const streamController = new AbortController();
     const streamTimeout = setTimeout(() => streamController.abort(), 60000);
 
+    // If the client disconnects mid-stream (closed tab, dropped connection), abort
+    // the in-flight Anthropic work right away instead of running the whole tool loop
+    // to completion and paying for tokens no one will read. The writes already no-op
+    // via clientDisconnected; this stops the upstream spend too. The abort routes
+    // through the same catch the 60s timeout uses, so the loop unwinds cleanly.
+    res.on('close', () => { clearTimeout(streamTimeout); streamController.abort(); });
+
     try {
       // Non-streaming tool loop phase — tools must complete before we can stream the final response
       let needsToolLoop = true;

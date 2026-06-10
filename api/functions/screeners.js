@@ -18,6 +18,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { dailyAiCeiling } from '../middleware/aiCeiling.js';
 import { config } from '../config.js';
 import { sanitizeString } from '../middleware/validate.js';
 import { lookupStock, getHistoricalPrice } from '../services/agentTools.js';
@@ -32,6 +33,20 @@ import { logAndGrade } from '../services/aiQualityLog.js';
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const MODEL = 'claude-haiku-4-5-20251001';
+
+// Anthropic calls must not hang a user request forever (their API can stall, not
+// just error, during an incident). Cap every screener call at 30s via an abort
+// signal, the same ceiling the jobs pipeline (bargainRadar) uses. On timeout the
+// create() rejects and the caller's existing try/catch degrades honestly.
+async function createWithTimeout(body, ms = 30000) {
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await anthropic.messages.create(body, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(tm);
+  }
+}
 const MAX_SCREENERS = 8;
 const MAX_CANDIDATES = 18;
 
@@ -68,7 +83,7 @@ export async function runScreenerQuery(query) {
   // 1. Claude proposes candidates that fit the theme/query.
   let candTickers = [];
   try {
-    const msg = await anthropic.messages.create({
+    const msg = await createWithTimeout({
       model: MODEL,
       max_tokens: 400,
       messages: [{ role: 'user', content:
@@ -130,7 +145,7 @@ export async function runScreenerQuery(query) {
 
   let parsed = null;
   try {
-    const msg = await anthropic.messages.create({
+    const msg = await createWithTimeout({
       model: MODEL,
       max_tokens: 1000,
       messages: [{ role: 'user', content:
@@ -199,7 +214,7 @@ export async function persistScreenerRun(screener, { silent = false } = {}) {
 // so the screen the user owns reads naturally and future runs honor the change.
 async function mergeQuery(base, refinement) {
   try {
-    const msg = await anthropic.messages.create({
+    const msg = await createWithTimeout({
       model: MODEL,
       max_tokens: 100,
       messages: [{ role: 'user', content:
@@ -250,7 +265,7 @@ router.get('/', requireAuth, rateLimit(30), async (req, res) => {
 });
 
 // POST / — create a screener and run it once so the user sees results immediately
-router.post('/', requireAuth, rateLimit(10), async (req, res) => {
+router.post('/', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {
     const query = sanitizeString(req.body.query, 300);
     if (!query) return res.status(400).json({ error: 'Tell the screener what to look for' });
@@ -273,7 +288,7 @@ router.post('/', requireAuth, rateLimit(10), async (req, res) => {
 });
 
 // POST /:id/run — re-run a screener on demand
-router.post('/:id/run', requireAuth, rateLimit(10), async (req, res) => {
+router.post('/:id/run', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {
     const { data: s } = await supabase.from('screeners').select('*').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
     if (!s) return res.status(404).json({ error: 'Screener not found' });
@@ -300,7 +315,7 @@ router.post('/:id/seen', requireAuth, rateLimit(60), async (req, res) => {
 });
 
 // POST /:id/refine — shape the screen in plain English, then re-run it
-router.post('/:id/refine', requireAuth, rateLimit(10), async (req, res) => {
+router.post('/:id/refine', requireAuth, rateLimit(10), dailyAiCeiling(), async (req, res) => {
   try {
     const refinement = sanitizeString(req.body.refinement, 200);
     if (!refinement) return res.status(400).json({ error: 'Tell the screener how to refine it' });

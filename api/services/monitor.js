@@ -75,8 +75,11 @@ export function trackPriceRefresh(success = true, staleCount = 0) {
 }
 
 /**
- * Track an error with context. Keeps last 100 in memory,
- * and logs critical ones to Supabase.
+ * Track an error with context. Keeps last 100 in memory, and persists 'error' and
+ * 'critical' to Supabase so they survive a restart (the in-memory ring is wiped on
+ * every deploy). 'warn'/'info' stay in memory only. Without this, the single most
+ * important failure class for a beta, the agent returning "unavailable" to a paying
+ * user, was invisible the moment the process restarted.
  */
 export function trackError(endpoint, error, severity = 'error') {
   const entry = {
@@ -92,8 +95,9 @@ export function trackError(endpoint, error, severity = 'error') {
     metrics.recentErrors.shift();
   }
 
-  // Log critical errors to DB (non-blocking, fails silently if table doesn't exist)
-  if (severity === 'critical') {
+  // Persist error+ to DB (non-blocking, fails silently if table doesn't exist).
+  // warn/info are noise for durable storage and stay in the in-memory ring only.
+  if (severity === 'critical' || severity === 'error') {
     try {
       supabase.from('error_log').insert({
         endpoint,
