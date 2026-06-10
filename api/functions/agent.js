@@ -772,7 +772,12 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
     // (default 300) Claude calls per day. Catches abuse or a credit-system bug
     // before it racks up four-figure Anthropic spend overnight. Resets at UTC
     // midnight via the ledger keying. Logged once per user per day.
-    const ceiling = checkAndIncrementAiCall(req.user.id);
+    // Mirror the dailyAiCeiling middleware exemptions: an unlimited (beta/founder)
+    // account is never throttled, and local dev is never capped. Otherwise a beta
+    // user or a founder demo could hit a 429 on the agent, the busiest surface.
+    const ceiling = (plan === 'unlimited' || config.nodeEnv !== 'production')
+      ? { allowed: true }
+      : checkAndIncrementAiCall(req.user.id);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (If this seems wrong, let support know — limit ${ceiling.cap}, used ${ceiling.count}.)`,
@@ -1149,7 +1154,12 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
     }
 
     // Hard per-user daily call ceiling (same gate as the non-streaming endpoint).
-    const ceiling = checkAndIncrementAiCall(req.user.id);
+    // Mirror the dailyAiCeiling middleware exemptions: an unlimited (beta/founder)
+    // account is never throttled, and local dev is never capped. Otherwise a beta
+    // user or a founder demo could hit a 429 on the agent, the busiest surface.
+    const ceiling = (plan === 'unlimited' || config.nodeEnv !== 'production')
+      ? { allowed: true }
+      : checkAndIncrementAiCall(req.user.id);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (limit ${ceiling.cap}, used ${ceiling.count}.)`,

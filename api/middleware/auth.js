@@ -1,12 +1,22 @@
 import { validateToken } from '../db.js';
 import { memGet, memSet, memDel, memStats } from '../services/memoryCache.js';
 
-const AUTH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// 60s, not 5 minutes: short enough that a revoked or expired session can't be
+// replayed from cache for long, including on a replica that didn't handle the
+// logout (invalidateAuth only clears the in-process cache of one instance).
+const AUTH_CACHE_TTL = 60 * 1000;
 
 async function cachedValidateToken(token) {
   const cacheKey = `auth_${token}`;
   const cached = memGet(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    // Re-check expiry on every cache hit (cheap, no DB call): the cached row carries
+    // session_expires, so an expired session is never served from cache even inside
+    // the TTL window. A still-valid session returns immediately.
+    const exp = cached.session_expires ? new Date(cached.session_expires).getTime() : 0;
+    if (Number.isFinite(exp) && exp > Date.now()) return cached;
+    memDel(cacheKey); // expired: fall through to a fresh DB validation, which will reject it too
+  }
 
   const user = await validateToken(token);
   if (user) {
