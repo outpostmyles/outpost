@@ -60,16 +60,20 @@ seed data, do 1a.
    save it in your manager; pick a US region; Free tier is fine for the beta).
 2. Easiest correct path: build the one-file bundle with
    `bash scripts/build_setup_bundle.sh` (writes `prod_setup_bundle.sql`). Open it,
-   copy all, paste into the Supabase SQL editor, and Run. It concatenates, in
+   copy all, paste into the Supabase SQL editor, and Run it ONCE. It concatenates, in
    dependency order, `schema.sql` then `supabase-setup.sql` then every migration
-   `002` through `024`, and is verified safe to run as a single batch.
-3. Prefer running files individually? Use THIS order (each is safe to re-run):
-   `schema.sql` (the base: 16 tables incl. user_profiles, positions) FIRST, then
-   `supabase-setup.sql` (adds closed_trades, error_log, indexes), then
-   `api/migrations/002` through `024`, oldest first. NOTE: schema.sql is the base, not
-   supabase-setup.sql; running supabase-setup.sql first will fail (it indexes tables
-   schema.sql creates).
-4. Verify before wiring the backend: `node tests/_schema_check.mjs` (prod creds in
+   `002` through `025` (the last turns on RLS).
+3. IMPORTANT: the bundle is a ONE-SHOT, not idempotent. Migration 007 drops + recreates
+   tables (a journal redesign), so running the bundle twice on the same database errors
+   with `relation "journal_sections" does not exist`. If a run was partial, or you need
+   to redo it, run `scripts/reset_public_schema.sql` FIRST (drops every public table,
+   SAFE only when there is no data to keep), then run the bundle once.
+4. Prefer running files individually? Use THIS order: `schema.sql` (the base: 16 tables
+   incl. user_profiles, positions) FIRST, then `supabase-setup.sql` (adds closed_trades,
+   error_log, indexes), then `api/migrations/002` through `025`, oldest first. NOTE:
+   schema.sql is the base, not supabase-setup.sql; running supabase-setup.sql first will
+   fail (it indexes tables schema.sql creates).
+5. Verify before wiring the backend: `node tests/_schema_check.mjs` (prod creds in
    .env) confirms every table and RPC the code needs actually exists.
 
 ### 1b. Grab the keys  [YOU]
