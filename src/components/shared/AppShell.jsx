@@ -256,7 +256,7 @@ export default function AppShell() {
           {activeTab === 'journal' && <JournalTab showToast={showToast} onTabSwitch={switchTab} />}
           {activeTab === 'settings' && <SettingsPage user={user} onLogout={logout} showToast={showToast} onOpenAdmin={() => switchTab('admin')} />}
           {activeTab === 'admin' && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>Loading…</div>}>
               <FounderDashboard onBack={() => switchTab('settings')} />
             </Suspense>
           )}

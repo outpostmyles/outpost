@@ -2561,16 +2561,19 @@ function TrackRecordCard() {
 function CashModal({ current, onClose, onDone, showToast }) {
   const [amount, setAmount] = useState(current != null ? String(current) : '');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false); // synchronous double-click guard; `saving` state lags a render
   async function save() {
+    if (savingRef.current) return; // a fast double-tap (Enter + click) fires before the button disables
     const amt = parseFloat(amount);
     if (!isFinite(amt) || amt < 0) { showToast?.('Enter a cash amount of zero or more', 'error'); return; }
+    savingRef.current = true;
     setSaving(true);
     try {
       await api.portfolio.setCash(amt);
       showToast?.('Cash balance updated', 'success');
       onDone?.();
       onClose();
-    } catch (e) { showToast?.(e.error || 'Could not save', 'error'); setSaving(false); }
+    } catch (e) { showToast?.(e.error || 'Could not save', 'error'); setSaving(false); savingRef.current = false; }
   }
   return (
     <Modal title="Cash balance" onClose={onClose}>
@@ -2930,14 +2933,17 @@ function ThesesDrawer({ onClose }) {
   const [sortPast, setSortPast] = useState('closed'); // 'closed' | 'pnl'
 
   useEffect(() => {
+    let alive = true; // don't setState if the drawer closed before both calls resolve
     Promise.all([
       api.portfolio.value().catch(() => ({ positions: [] })),
       api.portfolio.closedTrades().catch(() => ({ trades: [] })),
     ]).then(([pv, ct]) => {
+      if (!alive) return;
       setActive(pv?.positions ?? []);
       setPast(ct?.trades ?? []);
       setLoading(false);
     });
+    return () => { alive = false; };
   }, []);
 
   const sortedActive = [...active].sort((a, b) => {
