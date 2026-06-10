@@ -17,6 +17,10 @@
 // restarts and multiple API instances.
 
 const DEFAULT_DAILY_CAP = parseInt(process.env.AI_DAILY_CALL_CAP || '300', 10);
+// Beta/founder 'unlimited' accounts get a HIGH but finite daily cap, not a full
+// exemption: enough that real use never hits it, low enough that a runaway client
+// loop on an unlimited account can't run an unbounded Anthropic tab.
+export const UNLIMITED_DAILY_CAP = parseInt(process.env.AI_UNLIMITED_DAILY_CAP || '2000', 10);
 
 // Map<userId, { dateKey, count, alertedAt }>
 const ledger = new Map();

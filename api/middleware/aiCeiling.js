@@ -4,7 +4,7 @@
 //
 // Note: this MUST run AFTER requireAuth — it needs req.user.id. The middleware
 // no-ops (passes through) if req.user is missing rather than crashing.
-import { checkAndIncrementAiCall } from '../services/aiSpendCeiling.js';
+import { checkAndIncrementAiCall, UNLIMITED_DAILY_CAP } from '../services/aiSpendCeiling.js';
 import { config } from '../config.js';
 
 export function dailyAiCeiling() {
@@ -13,10 +13,10 @@ export function dailyAiCeiling() {
     // Never cap on a local/dev server (you are testing your own app); production
     // still enforces it.
     if (config.nodeEnv !== 'production') return next();
-    // The 'unlimited' beta tier is exempt from the per-day cap, same as session
-    // pacing, so a beta/founder account is never throttled mid-test.
-    if (req.user.plan === 'unlimited') return next();
-    const ceiling = checkAndIncrementAiCall(req.user.id);
+    // The 'unlimited' beta tier gets a HIGH but finite cap (not a full exemption), so
+    // a runaway client loop can't run an unbounded tab while normal use never hits it.
+    // Free/paid plans keep the default cap.
+    const ceiling = checkAndIncrementAiCall(req.user.id, req.user.plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
     if (!ceiling.allowed) {
       // 429 not 402 — credits aren't the issue here, the per-day cap is.
       // The frontend's existing 429 handler shows a "slow down" toast.

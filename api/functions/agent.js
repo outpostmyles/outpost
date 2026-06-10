@@ -27,7 +27,7 @@ function scopeConv(query, convId) {
 import { config } from '../config.js';
 import { trackAICall, trackToolCall, trackTruncation, trackError } from '../services/monitor.js';
 import { trackFeature, trackAgentUsage, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
-import { checkAndIncrementAiCall } from '../services/aiSpendCeiling.js';
+import { checkAndIncrementAiCall, UNLIMITED_DAILY_CAP } from '../services/aiSpendCeiling.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -772,12 +772,13 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
     // (default 300) Claude calls per day. Catches abuse or a credit-system bug
     // before it racks up four-figure Anthropic spend overnight. Resets at UTC
     // midnight via the ledger keying. Logged once per user per day.
-    // Mirror the dailyAiCeiling middleware exemptions: an unlimited (beta/founder)
-    // account is never throttled, and local dev is never capped. Otherwise a beta
-    // user or a founder demo could hit a 429 on the agent, the busiest surface.
-    const ceiling = (plan === 'unlimited' || config.nodeEnv !== 'production')
+    // Mirror the dailyAiCeiling middleware: local dev is never capped, and an
+    // unlimited (beta/founder) account gets a HIGH but finite cap (not a full
+    // exemption), so a runaway client loop can't run an unbounded tab while normal
+    // use never hits it. Free/paid plans keep the default cap.
+    const ceiling = config.nodeEnv !== 'production'
       ? { allowed: true }
-      : checkAndIncrementAiCall(req.user.id);
+      : checkAndIncrementAiCall(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (If this seems wrong, let support know — limit ${ceiling.cap}, used ${ceiling.count}.)`,
@@ -1086,9 +1087,10 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     }
 
     // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget, the
-    // user never waits). Flagged replies land in the founder review queue, and the
-    // founder brief rolls up agent_chat's flag rate and dominant failure over time.
-    {
+    // user never waits). Skip tier-1 small talk (greetings/acks): the grader auto-passes
+    // it, so grading it is pure cost and review-queue noise. Flagged replies land in the
+    // founder review queue and roll up in the brief.
+    if (classifyMessageTier(content).tier !== 1) {
       const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
         .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
         .filter(Boolean).join('\n\n');
@@ -1154,12 +1156,13 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
     }
 
     // Hard per-user daily call ceiling (same gate as the non-streaming endpoint).
-    // Mirror the dailyAiCeiling middleware exemptions: an unlimited (beta/founder)
-    // account is never throttled, and local dev is never capped. Otherwise a beta
-    // user or a founder demo could hit a 429 on the agent, the busiest surface.
-    const ceiling = (plan === 'unlimited' || config.nodeEnv !== 'production')
+    // Mirror the dailyAiCeiling middleware: local dev is never capped, and an
+    // unlimited (beta/founder) account gets a HIGH but finite cap (not a full
+    // exemption), so a runaway client loop can't run an unbounded tab while normal
+    // use never hits it. Free/paid plans keep the default cap.
+    const ceiling = config.nodeEnv !== 'production'
       ? { allowed: true }
-      : checkAndIncrementAiCall(req.user.id);
+      : checkAndIncrementAiCall(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (limit ${ceiling.cap}, used ${ceiling.count}.)`,
@@ -1463,8 +1466,10 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     const assistantMsg = { user_id: req.user.id, role: 'assistant', content: fullReply, conversation_id: convId || null, created_at: new Date().toISOString() };
     try { await supabase.from('agent_messages').insert(assistantMsg); } catch {}
 
-    // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget).
-    {
+    // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget). Skip
+    // tier-1 small talk (greetings/acks): the grader auto-passes it, so it is pure
+    // cost and review-queue noise.
+    if (classifyMessageTier(content).tier !== 1) {
       const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
         .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
         .filter(Boolean).join('\n\n');
