@@ -69,7 +69,9 @@ export default function PerformanceAttributionCard({ showToast }) {
     if (styles?.length) {
       lines.push('By style:');
       for (const s of styles) {
-        lines.push(`  ${s.label}: ${s.count} trades, ${s.winRate}% win, ${s.totalPnl >= 0 ? '+' : ''}$${fmt(s.totalPnl)} net`);
+        // Same rule as the on-screen table: no win-rate claim off fewer than 3 trades.
+        const rate = s.count >= 3 ? `${s.winRate}% win` : `${s.winCount}W / ${s.lossCount}L`;
+        lines.push(`  ${s.label}: ${s.count} trades, ${rate}, ${s.totalPnl >= 0 ? '+' : ''}$${fmt(s.totalPnl)} net`);
       }
       lines.push('');
     }
@@ -169,10 +171,23 @@ export default function PerformanceAttributionCard({ showToast }) {
                       </p>
                     </div>
                     <div style={{ textAlign: 'right', minWidth: 60 }}>
-                      <p style={{ fontSize: 11, fontWeight: 700, color: s.winRate >= 50 ? 'var(--green)' : 'var(--red)' }}>
-                        {s.winRate.toFixed(0)}% win
-                      </p>
-                      <p style={{ fontSize: 9, color: 'var(--faint)' }}>{s.winCount}W / {s.lossCount}L</p>
+                      {/* A win rate off one or two trades is not an edge. Under a header
+                          that says "where your edge lives," only show the rate once the
+                          bucket has 3+ trades (same bar the insights use). Below that,
+                          show the honest raw W/L count, no colored "100% win" claim. */}
+                      {s.count >= 3 ? (
+                        <>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: s.winRate >= 50 ? 'var(--green)' : 'var(--red)' }}>
+                            {s.winRate.toFixed(0)}% win
+                          </p>
+                          <p style={{ fontSize: 9, color: 'var(--faint)' }}>{s.winCount}W / {s.lossCount}L</p>
+                        </>
+                      ) : (
+                        <>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--faint)' }}>{s.winCount}W / {s.lossCount}L</p>
+                          <p style={{ fontSize: 9, color: 'var(--faint)' }}>too few to rate</p>
+                        </>
+                      )}
                     </div>
                     <div style={{ textAlign: 'right', minWidth: 65 }}>
                       <p style={{ fontSize: 11, fontWeight: 700, color: colorFor(s.totalPnl) }}>
