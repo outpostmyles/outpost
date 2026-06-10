@@ -78,16 +78,22 @@ export function calculateRiskReward({ entry_price, stop_loss, targets }) {
   if (!Number.isFinite(entry_price) || entry_price <= 0) return { error: 'Entry price must be a positive number' };
   if (!Number.isFinite(stop_loss) || stop_loss <= 0) return { error: 'Stop loss must be a positive number' };
   if (entry_price === stop_loss) return { error: 'Entry price and stop loss cannot be equal' };
+  // Outpost is long-only. A stop at or above entry is either a typo or a short
+  // setup, and grading it would silently hand the user short-side math the rest of
+  // the app can never act on. Reject it, exactly as calculatePositionSize does.
+  if (stop_loss > entry_price) return { error: 'Stop loss must sit below entry. Outpost is long-only, so a stop above entry is not a valid setup.' };
   if (!Array.isArray(targets) || targets.length === 0) return { error: 'Need at least one target' };
-  const cleanTargets = targets.filter(t => Number.isFinite(t) && t > 0);
-  if (cleanTargets.length === 0) return { error: 'All targets must be positive numbers' };
+  // For a long, a real profit target sits above entry. Drop anything that does not
+  // (non-finite, non-positive, or at/below entry) so the reward math stays positive
+  // and the grade stays meaningful.
+  const cleanTargets = targets.filter(t => Number.isFinite(t) && t > entry_price);
+  if (cleanTargets.length === 0) return { error: 'For a long, at least one target must be above entry' };
   targets = cleanTargets;
 
-  const riskPerShare = Math.abs(entry_price - stop_loss);
-  const isLong = entry_price > stop_loss;
+  const riskPerShare = entry_price - stop_loss;
 
   const targetAnalysis = targets.map((target, i) => {
-    const rewardPerShare = isLong ? (target - entry_price) : (entry_price - target);
+    const rewardPerShare = target - entry_price;
     const ratio = riskPerShare > 0 ? rewardPerShare / riskPerShare : 0;
     const movePct = ((target - entry_price) / entry_price * 100);
     return {
@@ -104,7 +110,7 @@ export function calculateRiskReward({ entry_price, stop_loss, targets }) {
   const bestRR = Math.max(...targetAnalysis.map(t => parseFloat(t.risk_reward_ratio)));
 
   return {
-    direction: isLong ? 'LONG' : 'SHORT',
+    direction: 'LONG',
     entry_price: +entry_price.toFixed(2),
     stop_loss: +stop_loss.toFixed(2),
     risk_per_share: +riskPerShare.toFixed(2),

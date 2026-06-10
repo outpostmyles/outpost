@@ -74,10 +74,11 @@ test('risk/reward: long setup grades correctly', () => {
   assert.equal(r.targets[0].risk_reward_ratio, '3.0:1');
 });
 
-test('risk/reward: short setup is detected', () => {
+test('risk/reward: short setup is rejected (long-only)', () => {
+  // stop above entry is a short; long-only Outpost must refuse to grade it
   const r = calculateRiskReward({ entry_price: 90, stop_loss: 100, targets: [70] });
-  assert.equal(r.direction, 'SHORT');
-  assert.equal(r.targets[0].risk_reward_ratio, '2.0:1');
+  assert.ok(r.error);
+  assert.equal(r.direction, undefined);
 });
 
 test('risk/reward: rejects bad inputs', () => {
@@ -85,6 +86,7 @@ test('risk/reward: rejects bad inputs', () => {
   assert.ok(calculateRiskReward({ entry_price: Infinity, stop_loss: 90, targets: [120] }).error);
   assert.ok(calculateRiskReward({ entry_price: 100, stop_loss: 90, targets: [] }).error);
   assert.ok(calculateRiskReward({ entry_price: 100, stop_loss: 90, targets: [Infinity, -5] }).error); // none valid
+  assert.ok(calculateRiskReward({ entry_price: 100, stop_loss: 90, targets: [80, 95] }).error); // all targets at/below entry
 });
 
 let pass = 0, fail = 0;
