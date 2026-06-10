@@ -29,7 +29,7 @@ const SUITE = [
   'sale_math', 'trader_model', 'counterfactual', 'emotion_read', 'concentration_read',
   'ledger_integrity', 'buy_proposal', 'agent_report_card', 'move_explainer',
   'attribution_patterns', 'proactive_digest', 'deploy_cash_eval', 'trade_plan',
-  'isolation_audit', 'portfolio_value', 'cash_balance', 'idempotency',
+  'isolation_audit', 'portfolio_value', 'cash_balance', 'idempotency', 'agent_guardrails',
 ];
 
 // Strip the harness-injected Anthropic vars so children load keys from .env via
