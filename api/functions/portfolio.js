@@ -675,6 +675,26 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     const validation = await validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss });
     if (!validation.ok) return res.status(400).json({ error: validation.error });
 
+    // Funded buy: confirm the cash is actually there BEFORE we touch holdings.
+    // adjustCashBalance floors a debit at zero (cash never goes negative), so a buy
+    // larger than your cash would otherwise create the FULL position while cash
+    // stopped at $0, conjuring account value out of nothing and drifting the books.
+    // Reject the way a real brokerage would so cash + holdings always reconcile. The
+    // 0.005 tolerance lets an exact-cash buy through despite float dust. (avg_cost 0
+    // means "recording an existing holding, no funding," so there is nothing to fund.)
+    if (req.body?.fundFromCash && avgCost > 0) {
+      const needed = shares * avgCost;
+      const available = await getCashBalance(req.user.id);
+      if (needed > available + 0.005) {
+        return res.status(400).json({
+          error: `Not enough cash for this buy. You have $${available.toFixed(2)} and it needs $${needed.toFixed(2)}. Add cash or lower the size.`,
+          insufficientCash: true,
+          available: +available.toFixed(2),
+          needed: +needed.toFixed(2),
+        });
+      }
+    }
+
     // Already hold this ticker? Then this is a "bought more" add: blend it into
     // the existing position at the new weighted-average cost instead of erroring.
     // A merge makes no new position, so it does NOT count against the plan limit.
