@@ -19,7 +19,7 @@ import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
 import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
-import { getCashBalance, setCashBalance, adjustCashBalanceSafe } from '../services/cashBalance.js';
+import { getCashBalance, setCashBalance, adjustCashBalanceSafe, isMissingRpc } from '../services/cashBalance.js';
 import { idempotencyGuard } from '../services/idempotency.js';
 import { recordDecision, resolveOpenDecisions } from '../services/decisionLedger.js';
 import { AI_SOURCES } from '../../src/lib/decisionLedger.js';
@@ -1175,7 +1175,7 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     if (reqSellShares != null && Number.isFinite(reqSellShares) && reqSellShares > 0 && reqSellShares < (pos.shares ?? 0)) {
       const sale = computeSale({ avgCost: pos.avg_cost, shares: pos.shares, sellShares: reqSellShares, sellPrice, purchasedAt: pos.purchased_at, nowMs: Date.now() });
       if (!sale.ok) return res.status(400).json({ error: 'Invalid number of shares to sell' });
-      const { data: closed, error: trimErr } = await supabase.rpc('partial_close_position', {
+      const trimArgs = {
         p_position_id: req.params.id,
         p_user_id: req.user.id,
         p_sell_shares: sale.sharesSold,
@@ -1183,15 +1183,30 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
         p_pnl: sale.pnl,
         p_pnl_percent: sale.pnlPercent,
         p_hold_days: sale.holdDays,
-      });
-      if (trimErr) throw trimErr;
+      };
+      // Prefer the atomic trim+credit (migration 023): the share reduction, the
+      // archive of the sold portion, and the cash credit commit in ONE transaction.
+      // Fall back to the two-step (020 trim, then credit) if 023 is not applied yet.
+      let closed, cashAfter = null, cashSynced = true;
+      const atomicTrim = await supabase.rpc('partial_close_position_and_credit', { ...trimArgs, p_proceeds: sale.proceeds });
+      if (atomicTrim.error && isMissingRpc(atomicTrim.error)) {
+        const legacy = await supabase.rpc('partial_close_position', trimArgs);
+        if (legacy.error) throw legacy.error;
+        closed = legacy.data;
+        if (closed) {
+          const tc = await adjustCashBalanceSafe(req.user.id, sale.proceeds);
+          cashAfter = tc.cash; cashSynced = tc.ok;
+          if (!tc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
+        }
+      } else {
+        if (atomicTrim.error) throw atomicTrim.error;
+        closed = atomicTrim.data;
+        if (closed) cashAfter = await getCashBalance(req.user.id); // credited atomically in the RPC
+      }
       if (!closed) return res.status(404).json({ error: 'Position not found' }); // raced with another trim/close
-      const trimCash = await adjustCashBalanceSafe(req.user.id, sale.proceeds);
-      const cashAfter = trimCash.cash;
-      if (!trimCash.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
       const trimStatus = sale.pnl > 0 ? 'win' : sale.pnl < 0 ? 'loss' : 'even';
       recordDecision(req.user.id, { type: 'trim', ticker: pos.ticker, shares: sale.sharesSold, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: trimStatus, outcomePnl: sale.pnl, outcomePnlPct: sale.pnlPercent, outcomeHoldDays: sale.holdDays }).catch(() => {});
-      const trimPayload = { success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter, cashSynced: trimCash.ok };
+      const trimPayload = { success: true, partial: true, sharesSold: sale.sharesSold, remaining: sale.remaining, proceeds: sale.proceeds, cash: cashAfter, cashSynced };
       idem.commit(trimPayload); committed = true;
       return res.json(trimPayload);
     }
@@ -1256,7 +1271,7 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     // If the INSERT fails (constraint violation, etc) the DELETE rolls back
     // and the position is preserved. Previous pattern silently lost the
     // closed_trades row when the async archive INSERT failed.
-    const { data: closed, error: rpcErr } = await supabase.rpc('close_position', {
+    const closeArgs = {
       p_position_id: req.params.id,
       p_user_id: req.user.id,
       p_sell_price: parseFloat(sellPrice.toFixed(2)),
@@ -1268,8 +1283,33 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       p_thesis_played_out: thesisPlayedOut,
       p_exit_reflection: exitReflection,
       p_exit_outcome: exitOutcome,
-    });
-    if (rpcErr) throw rpcErr;
+    };
+    const roundedProceeds = parseFloat(proceeds.toFixed(2));
+
+    // Prefer the atomic close+credit (migration 023): the position close and the
+    // cash credit commit in ONE transaction, so a crash can never leave the shares
+    // sold with the proceeds uncredited. If 023 is not applied yet, fall back to the
+    // two-step (close via 016, then credit) which is resilient but has that drift
+    // window. Same money result either way.
+    let closed, cash = null, cashSynced = true;
+    const atomicClose = await supabase.rpc('close_position_and_credit', { ...closeArgs, p_proceeds: roundedProceeds });
+    if (atomicClose.error && isMissingRpc(atomicClose.error)) {
+      const legacy = await supabase.rpc('close_position', closeArgs);
+      if (legacy.error) throw legacy.error;
+      closed = legacy.data;
+      if (closed) {
+        // Closing is a sale: proceeds become cash so the account total does not drop.
+        const cc = await adjustCashBalanceSafe(req.user.id, proceeds);
+        cash = cc.cash; cashSynced = cc.ok;
+        if (!cc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${proceeds.toFixed(2)} proceeds after close of ${pos.ticker} for user ${req.user.id}; position closed, cash NOT credited.`);
+      }
+    } else {
+      if (atomicClose.error) throw atomicClose.error;
+      closed = atomicClose.data;
+      // Proceeds were credited atomically inside the RPC; read the balance back for
+      // the response. cashSynced stays true because the credit already committed.
+      if (closed) cash = await getCashBalance(req.user.id);
+    }
     // Null return = position was already deleted between our read and the RPC
     // (double-close race). Treat as 404. Caller's first attempt won.
     if (!closed) return res.status(404).json({ error: 'Position not found' });
@@ -1288,11 +1328,8 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       }
     }
 
-    // Closing is a sale: the proceeds become cash, so the account total does not
-    // drop, the value just moves from holdings into cash.
-    const closeCash = await adjustCashBalanceSafe(req.user.id, proceeds);
-    const cash = closeCash.cash;
-    if (!closeCash.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${proceeds.toFixed(2)} proceeds after close of ${pos.ticker} for user ${req.user.id}; position closed, cash NOT credited.`);
+    // Cash was credited above: atomically inside close_position_and_credit (023),
+    // or via the two-step fallback. `cash` and `cashSynced` are already set.
 
     // Ledger: record the close with its outcome, and stamp that outcome back
     // onto the original buy decisions for this ticker so they get graded by how
@@ -1300,7 +1337,7 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     const outStatus = pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'even';
     recordDecision(req.user.id, { type: 'close', ticker: pos.ticker, shares: pos.shares, price: sellPrice, thesis: pos.entry_thesis || null, source: 'manual', outcomeStatus: outStatus, outcomePnl: pnl, outcomePnlPct: pnlPercent, outcomeHoldDays: holdDays, thesisPlayedOut }).catch(() => {});
     resolveOpenDecisions(req.user.id, pos.ticker, { sellPrice, pnl, pnlPercent, holdDays, thesisPlayedOut }).catch(() => {});
-    const closePayload = { success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash, cashSynced: closeCash.ok };
+    const closePayload = { success: true, proceeds: parseFloat(proceeds.toFixed(2)), cash, cashSynced };
     idem.commit(closePayload); committed = true;
     res.json(closePayload);
   } catch (err) {

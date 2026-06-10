@@ -3,12 +3,31 @@
 // finite always (a NaN proceeds can never poison the balance), never negative
 // (you can't have less than no cash), always cents. The DB read-modify-write and
 // the zero-window-free write live in cashBalance.js around this; this pins the math.
-import { nextCashBalance } from '../api/services/cashBalance.js';
+import { nextCashBalance, isMissingRpc } from '../api/services/cashBalance.js';
 
 const tests = [];
 function test(n, f) { tests.push({ n, f }); }
 function eq(a, b, msg) { if (a !== b) throw new Error(`${msg || 'eq'}: expected ${b}, got ${a}`); }
 function ok(c, msg) { if (!c) throw new Error(msg || 'expected truthy'); }
+
+// isMissingRpc decides whether an atomic-RPC caller falls back to its resilient JS
+// path. It MUST say yes only for "function not found" (migration not applied yet)
+// and no for every real error, or a genuine DB failure would silently degrade to
+// the non-atomic path and hide a problem.
+test('isMissingRpc: true only for a missing-function error', () => {
+  ok(isMissingRpc({ code: 'PGRST202' }), 'PostgREST schema-cache miss');
+  ok(isMissingRpc({ code: '42883' }), 'Postgres undefined_function');
+  ok(isMissingRpc({ message: 'Could not find the function public.close_position_and_credit' }), 'PostgREST message');
+  ok(isMissingRpc({ message: 'function set_cash_balance(uuid, numeric) does not exist' }), 'pg message');
+});
+test('isMissingRpc: false for real errors and empties', () => {
+  ok(!isMissingRpc(null), 'null');
+  ok(!isMissingRpc(undefined), 'undefined');
+  ok(!isMissingRpc({ code: '23505', message: 'duplicate key value violates unique constraint' }), 'unique violation');
+  ok(!isMissingRpc({ code: '40P01', message: 'deadlock detected' }), 'deadlock');
+  ok(!isMissingRpc({ message: 'permission denied for function adjust_cash_balance' }), 'permission denied');
+  ok(!isMissingRpc({ message: 'connection terminated' }), 'connection drop');
+});
 
 test('a credit adds to the balance, rounded to cents', () => {
   eq(nextCashBalance(100, 50), 150, 'credit');

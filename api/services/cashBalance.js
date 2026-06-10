@@ -14,6 +14,20 @@ import { supabase } from '../db.js';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Is this Supabase error "the RPC function does not exist" (migration not applied
+ * yet) rather than a real failure? Lets every atomic-RPC caller fall back to its
+ * resilient JS path before the migration is run, and only then. PostgREST returns
+ * PGRST202 for a missing function; Postgres itself uses 42883 (undefined_function).
+ */
+export function isMissingRpc(error) {
+  if (!error) return false;
+  const code = error.code || '';
+  if (code === 'PGRST202' || code === '42883') return true;
+  const msg = (error.message || '').toLowerCase();
+  return msg.includes('does not exist') || msg.includes('could not find the function');
+}
+
+/**
  * The new balance after applying a delta. The ONE place cash arithmetic lives:
  * finite-guard both inputs (a NaN proceeds must never poison the balance), clamp
  * at zero (cash never goes negative), round to cents. Pure and unit-tested.
@@ -40,6 +54,19 @@ export async function getCashBalance(userId) {
 
 export async function setCashBalance(userId, amount) {
   const amt = nextCashBalance(amount, 0);
+  // Prefer the atomic set (migration 023): it writes the balance under the SAME
+  // per-user advisory lock adjust_cash_balance uses, so "set my cash to match my
+  // brokerage" and a trade's credit/debit serialize instead of clobbering each
+  // other. Only fall back to the JS insert-then-prune below if 023 is not applied
+  // yet (function missing); a real RPC error still falls through to the resilient
+  // path rather than throwing, same philosophy as adjustCashBalance.
+  try {
+    const { data, error } = await supabase.rpc('set_cash_balance', { p_user_id: userId, p_amount: amt });
+    if (!error) {
+      const v = Number(data);
+      if (Number.isFinite(v) && v >= 0) return v;
+    }
+  } catch { /* fall through to the JS path */ }
   // Insert the new canonical row FIRST, then prune older ones. getCashBalance reads
   // the latest by created_at, so there is NEVER a window where the row is missing.
   // The old delete-then-insert had a gap where a concurrent read returned $0 (a
