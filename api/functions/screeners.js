@@ -27,6 +27,7 @@ import { markScreenerNewcomers } from '../services/screenerDiff.js';
 import { applyPriceBound } from '../services/screenerConstraints.js';
 import { staticSector } from '../services/sectorMap.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -145,6 +146,9 @@ export async function runScreenerQuery(query) {
     });
     recordClaudeUsage({ feature: 'screener', model: msg.model, usage: msg.usage, userId: null });
     parsed = parseJson(msg.content?.[0]?.text);
+    // Beta tracker: grade the screen vetting against the grounded-data rubric
+    // (does each kept name actually fit the query and the live numbers).
+    logAndGrade({ userId: null, feature: 'screener', input: `${query}\n${lines}`, output: msg.content?.[0]?.text || '' }).catch(() => {});
   } catch (e) {
     console.error('[Screener] vetting failed:', e.message);
   }

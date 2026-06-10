@@ -35,6 +35,7 @@ import {
 import { SCAN_UNIVERSE } from '../utils/stockUniverse.js';
 import { config } from '../config.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -288,6 +289,8 @@ Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("b
     } finally { clearTimeout(tm); }
 
     const text = msg.content?.[0]?.text || '';
+    // Beta tracker: grade the bargain verdicts against the grounded-data rubric.
+    logAndGrade({ userId: null, feature: 'bargain_radar', input: candidates.map(c => c.ticker).join(', '), output: text }).catch(() => {});
     const match = text.match(/\{[\s\S]*\}/);
     let parsed = null;
     if (match) {

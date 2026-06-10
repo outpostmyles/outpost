@@ -27,6 +27,7 @@ import { todayStr, isWeekday, isMarketHours } from '../utils/marketHours.js';
 import { config } from '../config.js';
 import { PLAIN_TEXT_RULE } from '../utils/aiStyle.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 import { summarizeMovers } from '../services/moverSummary.js';
 
 const router = express.Router();
@@ -179,6 +180,9 @@ Return JSON in this exact shape:
     } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
+    // Beta tracker: grade the move-explainer against the grounded-data rubric
+    // (no invented catalysts) so a fabricated "why it moved" lands in the queue.
+    logAndGrade({ userId: null, feature: 'explainer', input: userMsg, output: text }).catch(() => {});
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     return JSON.parse(match[0]);

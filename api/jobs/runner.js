@@ -17,6 +17,7 @@ import { resetDailyCounters } from '../services/analytics.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 import { PLAN_CREDITS } from '../constants/planCredits.js';
 import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
@@ -121,6 +122,8 @@ ${PLAIN_TEXT_RULE}`;
     // Trim to the last complete sentence so a token-cap cutoff never ships a
     // dangling fragment to the user's morning brief.
     const brief = trimToLastSentence(msg.content[0].text);
+    // Beta tracker: grade the morning brief against the grounded-data rubric.
+    logAndGrade({ userId: user?.id ?? null, feature: 'brief', input: userMsg, output: brief }).catch(() => {});
     const now = new Date().toISOString();
     await supabase.from('ai_cache').insert({ cache_key: cacheKey, result: brief, created_at: now });
 
