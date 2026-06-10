@@ -504,6 +504,18 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
     });
   }
 
+  // Stop a streaming reply: abort the request, keep whatever streamed so far (drop an
+  // empty "Thinking..." placeholder), and re-enable the input. Without this the user
+  // had no way to cancel a slow or stuck stream.
+  function stop() {
+    if (streamRef.current) { streamRef.current.abort(); streamRef.current = null; }
+    setMessages(m => m
+      .filter(msg => !(msg.streaming && !msg.content))
+      .map(msg => (msg.streaming ? { ...msg, streaming: false } : msg)));
+    setSending(false);
+    inputRef.current?.focus();
+  }
+
   // Apply an agent-proposed change. The agent never wrote anything; this is the
   // user-initiated commit, through the same owner-scoped endpoint the portfolio
   // editor uses. Throws on failure so the card can re-enable for a retry.
@@ -688,9 +700,15 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
           style={{ flex: 1, fontSize: 12 }}
           disabled={sending || freeLimitReached}
         />
-        <button onClick={() => send()} disabled={!input.trim() || sending || freeLimitReached} className="btn btn-blue" style={{ padding: '8px 14px', opacity: !input.trim() || sending || freeLimitReached ? 0.4 : 1 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
+        {sending ? (
+          <button onClick={stop} className="btn btn-muted" style={{ padding: '8px 14px' }} aria-label="Stop">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+        ) : (
+          <button onClick={() => send()} disabled={!input.trim() || freeLimitReached} className="btn btn-blue" style={{ padding: '8px 14px', opacity: !input.trim() || freeLimitReached ? 0.4 : 1 }} aria-label="Send">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        )}
       </div>
 
       {thinkOpen && <ThinkThroughCard onClose={() => setThinkOpen(false)} showToast={showToast} />}

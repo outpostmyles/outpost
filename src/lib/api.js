@@ -217,6 +217,17 @@ export const api = {
       const token = getToken();
       const controller = new AbortController();
 
+      // Idle watchdog: if no data (not even a heartbeat ping) arrives for 45s, the
+      // connection is dead. Without this, a silently dropped mobile connection leaves
+      // reader.read() pending forever and the chat hangs on "Thinking..." until the
+      // user kills the app. The server pings every 15s, so 45s = 3 missed pings.
+      const IDLE_MS = 45000;
+      let timedOut = false;
+      let idleTimer = null;
+      const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+      const armIdle = () => { clearIdle(); idleTimer = setTimeout(() => { timedOut = true; controller.abort(); }, IDLE_MS); };
+      armIdle();
+
       fetch(`${BASE}/api/agent/stream`, {
         method: 'POST',
         headers: {
@@ -227,6 +238,7 @@ export const api = {
         signal: controller.signal,
       }).then(async (res) => {
         if (!res.ok) {
+          clearIdle();
           const data = await res.json().catch(() => ({}));
           if (res.status === 401) {
             localStorage.removeItem('outpost_token');
@@ -243,7 +255,8 @@ export const api = {
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) { clearIdle(); break; }
+          armIdle(); // received a chunk or heartbeat ping: reset the watchdog
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
@@ -268,12 +281,12 @@ export const api = {
           }
         }
       }).catch((err) => {
-        if (err.name !== 'AbortError') {
-          onError?.(err.message || 'Network error');
-        }
+        clearIdle();
+        if (timedOut) onError?.('The connection dropped. Tap to try again.');
+        else if (err.name !== 'AbortError') onError?.(err.message || 'Network error');
       });
 
-      return { abort: () => controller.abort() };
+      return { abort: () => { clearIdle(); controller.abort(); } };
     },
   },
   settings: {

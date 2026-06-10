@@ -1215,6 +1215,13 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
     };
 
+    // Heartbeat: the agent does a non-streaming model call (often 10-30s) before any
+    // text is sent, and the client runs an idle watchdog. A ping every 15s keeps a
+    // legitimately slow stream alive, while a genuinely dropped connection still trips
+    // the client's timeout. The client harmlessly ignores 'ping' events.
+    const heartbeat = setInterval(() => sendEvent('ping', { t: 1 }), 15000);
+    res.on('close', () => clearInterval(heartbeat));
+
     // Fetch context, history, memories in parallel
     let messageHistory, ctx, memoryStr;
     try {
