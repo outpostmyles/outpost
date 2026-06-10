@@ -213,13 +213,26 @@ function classifyVIX(value) {
   return 'Low';
 }
 
+// Bare third-party fetches (CNN, alternative.me F&G) must not hang the shared
+// background refresh forever if the host stalls. 10s abort; returns the Response or
+// throws, which the callers below already catch and degrade from.
+async function timedFetch(url, opts = {}, ms = 10000) {
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(tm);
+  }
+}
+
 export async function getFearGreed() {
   const cached = memGet('poly_fear_greed');
   if (cached) return cached;
 
   // Primary: CNN's STOCK MARKET Fear & Greed Index (the real one)
   try {
-    const res = await fetch('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', {
+    const res = await timedFetch('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Accept': 'application/json' },
     });
     if (res.ok) {
@@ -239,14 +252,18 @@ export async function getFearGreed() {
 
   // Fallback: alternative.me crypto F&G (less accurate for stocks but better than nothing)
   try {
-    const res = await fetch('https://api.alternative.me/fng/?limit=1');
+    const res = await timedFetch('https://api.alternative.me/fng/?limit=1');
     const raw = await res.json();
     const item = raw?.data?.[0];
     if (item) {
+      // Guard a non-numeric value: parseInt('x') is NaN, which would otherwise get
+      // cached for 30 min and surface as a NaN fear/greed reading. Only accept finite.
       const value = parseInt(item.value, 10);
-      const result = { value, label: item.value_classification, source: 'crypto_fallback' };
-      memSet('poly_fear_greed', result, 30 * 60000);
-      return result;
+      if (Number.isFinite(value)) {
+        const result = { value, label: item.value_classification, source: 'crypto_fallback' };
+        memSet('poly_fear_greed', result, 30 * 60000);
+        return result;
+      }
     }
   } catch (e) {
     console.error('Alternative.me F&G fetch failed:', e.message);

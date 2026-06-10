@@ -72,6 +72,19 @@ async function validateTickerAndPrices({ ticker, avgCost, priceTarget, stopLoss 
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
+
+// The SPY benchmark fetches are the only outbound calls in this file without a
+// timeout. A hung Polygon socket would otherwise keep the user's request open until
+// the load balancer kills it. 15s abort, same ceiling as the rest of the data layer.
+async function timedFetch(url, ms = 15000) {
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(tm);
+  }
+}
 const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
 
 // Cash balance helpers now live in services/cashBalance.js so every surface
@@ -1395,7 +1408,7 @@ router.get('/snapshots', requireAuth, rateLimit(10), async (req, res) => {
         const fromDate = snaps[0].date;
         const toDate = snaps[snaps.length - 1].date;
         const spyUrl = `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${config.polygonKey}`;
-        const spyRes = await fetch(spyUrl);
+        const spyRes = await timedFetch(spyUrl);
         if (spyRes.ok) {
           const spyJson = await spyRes.json();
           const bars = spyJson?.results ?? [];
@@ -1560,7 +1573,7 @@ router.get('/performance', requireAuth, rateLimit(5), async (req, res) => {
         const fromDate = snapshots[0].date;
         const toDate = snapshots[snapshots.length - 1].date;
         const spyUrl = `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${config.polygonKey}`;
-        const spyRes = await fetch(spyUrl);
+        const spyRes = await timedFetch(spyUrl);
         if (spyRes.ok) {
           const spyJson = await spyRes.json();
           const bars = spyJson?.results ?? [];
