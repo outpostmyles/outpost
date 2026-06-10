@@ -18,6 +18,7 @@ import { assessTradePlan } from '../services/tradePlan.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
+import { buildFundedBuyArgs } from '../../src/lib/buyMath.js';
 import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 import { getCashBalance, setCashBalance, adjustCashBalanceSafe, isMissingRpc } from '../services/cashBalance.js';
 import { idempotencyGuard } from '../services/idempotency.js';
@@ -85,6 +86,39 @@ async function timedFetch(url, ms = 15000) {
     clearTimeout(tm);
   }
 }
+// Atomic funded-buy path (migration 024): write the position and debit cash in ONE
+// transaction. Maps the pure-computed args to RPC params and normalizes the result:
+//   { applied:false }                         -> RPC absent; caller uses the two-step
+//   { applied:true, ok:true, position, cash } -> wrote + debited atomically
+//   { applied:true, ok:false, reason, ... }   -> insufficient_cash / not_found / duplicate
+// Throws on an unexpected DB error (caller's try/catch returns 500).
+async function tryFundedBuyRpc(userId, args) {
+  const { data, error } = await supabase.rpc('buy_position_funded', {
+    p_user_id: userId,
+    p_position_id: args.positionId,
+    p_cost: args.cost,
+    p_shares: args.shares,
+    p_avg_cost: args.avgCost,
+    p_ticker: args.ticker,
+    p_company_name: args.companyName,
+    p_purchased_at: args.purchasedAt,
+    p_source: args.source,
+    p_reversal_condition: args.reversalCondition,
+    p_trade_notes: args.tradeNotes,
+    p_entry_thesis: args.entryThesis,
+    p_thesis_written_at: args.thesisWrittenAt,
+    p_thesis_source: args.thesisSource,
+    p_price_target: args.priceTarget,
+    p_stop_loss: args.stopLoss,
+  });
+  if (error) {
+    if (isMissingRpc(error)) return { applied: false };        // 024 not applied yet
+    if (error.code === '23505') return { applied: true, ok: false, reason: 'duplicate' };
+    throw error;
+  }
+  return { applied: true, ...data }; // data = { ok, position?, cash?, reason?, available?, needed? }
+}
+
 const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
 
 // Cash balance helpers now live in services/cashBalance.js so every surface
@@ -728,22 +762,41 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       if (priceTarget && !held.price_target) updateData.price_target = priceTarget;
       if (stopLoss && !held.stop_loss) updateData.stop_loss = stopLoss;
 
-      const { data: position, error: mergeErr } = await supabase.from('positions')
-        .update(updateData).eq('id', held.id).eq('user_id', req.user.id).select().single();
-      if (mergeErr) return res.status(500).json({ error: 'Failed to update position' });
+      let position, cash = null, cashSynced = true, handled = false;
+
+      // Funded add: do the blend UPDATE and the cash debit in ONE transaction via the
+      // atomic RPC (migration 024), so a crash can't leave shares added with cash not
+      // debited. Falls back to the two-step below if 024 is not applied. A non-funded
+      // add moves no cash, so it always takes the plain UPDATE path.
+      if (req.body?.fundFromCash) {
+        const args = buildFundedBuyArgs({ held, ticker, shares, avgCost, entryThesis, priceTarget, stopLoss, thesisSource, nowIso: new Date().toISOString() });
+        const atomic = await tryFundedBuyRpc(req.user.id, args);
+        if (atomic.applied) {
+          if (!atomic.ok) {
+            if (atomic.reason === 'insufficient_cash') return res.status(400).json({ error: `Not enough cash for this buy. You have $${(atomic.available ?? 0).toFixed(2)} and it needs $${(atomic.needed ?? 0).toFixed(2)}. Add cash or lower the size.`, insufficientCash: true, available: atomic.available, needed: atomic.needed });
+            if (atomic.reason === 'not_found') return res.status(404).json({ error: 'Position not found' });
+            return res.status(500).json({ error: 'Failed to update position' });
+          }
+          position = atomic.position; cash = atomic.cash; cashSynced = true; handled = true;
+        }
+      }
+
+      if (!handled) {
+        const { data: pos, error: mergeErr } = await supabase.from('positions')
+          .update(updateData).eq('id', held.id).eq('user_id', req.user.id).select().single();
+        if (mergeErr) return res.status(500).json({ error: 'Failed to update position' });
+        position = pos;
+        // A funded buy moves the added cost out of cash, same as a fresh buy.
+        if (req.body?.fundFromCash) {
+          const cost = shares * avgCost;
+          const r = await adjustCashBalanceSafe(req.user.id, -cost);
+          cash = r.cash; cashSynced = r.ok;
+          if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after add-to-position ${ticker} for user ${req.user.id}; holdings updated, cash NOT.`);
+        }
+      }
 
       requestRefresh();
       trackFeature('add_position', req.user.id);
-
-      // A funded buy moves the added cost out of cash, same as a fresh buy.
-      let cash = null;
-      let cashSynced = true; // no funding requested = nothing to sync
-      if (req.body?.fundFromCash) {
-        const cost = shares * avgCost;
-        const r = await adjustCashBalanceSafe(req.user.id, -cost);
-        cash = r.cash; cashSynced = r.ok;
-        if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after add-to-position ${ticker} for user ${req.user.id}; holdings updated, cash NOT.`);
-      }
       // Ledger: an add-to-position is a decision, captured with full context.
       recordDecision(req.user.id, { type: 'add', ticker, shares, price: avgCost, thesis: entryThesis || held.entry_thesis || null, source }).catch(() => {});
       const mergePayload = { success: true, position, merged: true, addedShares: shares, cash, cashSynced };
@@ -781,27 +834,46 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
     if (tradeNotes) insertData.trade_notes = tradeNotes;
     if (source && source !== 'manual') insertData.source = source;
 
-    const { data: position, error } = await supabase.from('positions').insert(insertData).select().single();
+    let position, cash = null, cashSynced = true, handled = false;
 
-    if (error) {
-      // Handle duplicate from race condition (unique constraint on user_id + ticker)
-      if (error.code === '23505') return res.status(409).json({ error: `${ticker} is already in your portfolio` });
-      return res.status(500).json({ error: 'Failed to add position' });
+    // Funded new buy (a real purchase): insert the position and debit cash in ONE
+    // transaction via the atomic RPC (migration 024), so a crash can't create the
+    // position with cash never debited. Falls back to the two-step below if 024 is
+    // not applied. A non-funded buy (recording a holding you already own) moves no
+    // cash, so it always takes the plain insert path.
+    if (req.body?.fundFromCash) {
+      const args = buildFundedBuyArgs({ held: null, ticker, shares, avgCost, companyName, purchaseDate, entryThesis, reversalCondition, priceTarget, stopLoss, tradeNotes, thesisSource, source, nowIso: new Date().toISOString() });
+      const atomic = await tryFundedBuyRpc(req.user.id, args);
+      if (atomic.applied) {
+        if (!atomic.ok) {
+          if (atomic.reason === 'insufficient_cash') return res.status(400).json({ error: `Not enough cash for this buy. You have $${(atomic.available ?? 0).toFixed(2)} and it needs $${(atomic.needed ?? 0).toFixed(2)}. Add cash or lower the size.`, insufficientCash: true, available: atomic.available, needed: atomic.needed });
+          if (atomic.reason === 'duplicate') return res.status(409).json({ error: `${ticker} is already in your portfolio` });
+          return res.status(500).json({ error: 'Failed to add position' });
+        }
+        position = atomic.position; cash = atomic.cash; cashSynced = true; handled = true;
+      }
     }
+
+    if (!handled) {
+      const { data: pos, error } = await supabase.from('positions').insert(insertData).select().single();
+      if (error) {
+        // Handle duplicate from race condition (unique constraint on user_id + ticker)
+        if (error.code === '23505') return res.status(409).json({ error: `${ticker} is already in your portfolio` });
+        return res.status(500).json({ error: 'Failed to add position' });
+      }
+      position = pos;
+      // A funded buy moves money from cash into the new position, so the account total stays continuous.
+      if (req.body?.fundFromCash) {
+        const cost = (position.shares || 0) * (position.avg_cost || 0);
+        const r = await adjustCashBalanceSafe(req.user.id, -cost);
+        cash = r.cash; cashSynced = r.ok;
+        if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after buy ${ticker} for user ${req.user.id}; position created, cash NOT.`);
+      }
+    }
+
     requestRefresh(); // Tell price pool to pick up the new ticker
     trackFeature('add_position', req.user.id);
     if (entryThesis || priceTarget || stopLoss) trackTradePlan(req.user.id);
-
-    // A funded buy (a real purchase, not recording an existing holding) moves money
-    // from cash into the new position, so the account total stays continuous.
-    let cash = null;
-    let cashSynced = true; // no funding requested = nothing to sync
-    if (req.body?.fundFromCash) {
-      const cost = (position.shares || 0) * (position.avg_cost || 0);
-      const r = await adjustCashBalanceSafe(req.user.id, -cost);
-      cash = r.cash; cashSynced = r.ok;
-      if (!r.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to debit $${cost.toFixed(2)} after buy ${ticker} for user ${req.user.id}; position created, cash NOT.`);
-    }
     // Ledger: opening a new position is a decision, captured with full context.
     // Frontier #2: capture whether they pre-committed a falsification (a reversal
     // condition, "I am wrong if X"), so the Machine can later measure whether the

@@ -47,18 +47,18 @@ Railway and Vercel both deploy from the GitHub repo.
 
 ## Step 1. Supabase: schema + keys
 
-Your existing project is migrated through `022_atomic_cash_balance.sql`. The beta
-adds ONE more: run `023_atomic_close_with_cash.sql` in the SQL editor before the
-beta (it folds the cash credit into the same transaction as a position close/trim
-so a crash can't drift cash from holdings, and serializes "set my cash" under the
-same per-user lock). The app runs correctly without it (it falls back to the
-resilient two-step), so this is an upgrade, not a hard gate, but apply it. Then
-grab the keys (skip to 1b). To launch on a CLEAN project with no seed data, do 1a.
+Your existing project is migrated through `023_atomic_close_with_cash.sql` (already
+applied). The beta adds ONE more: run `024_atomic_funded_buy.sql` in the SQL editor
+(it folds a funded buy's position write and cash debit into one transaction with the
+affordability check, the buy-side twin of 023). The app runs correctly without it
+(it falls back to the resilient two-step), so this is an upgrade, not a hard gate,
+but apply it. Then grab the keys (skip to 1b). To launch on a CLEAN project with no
+seed data, do 1a.
 
 ### 1a. Fresh project (optional)  [YOU]
 1. New project in Supabase.
 2. SQL editor, run `supabase-setup.sql` (the base schema).
-3. Then run, in order, every file in `api/migrations/` from `002` through `023`.
+3. Then run, in order, every file in `api/migrations/` from `002` through `024`.
    Run them one at a time, oldest first. They are idempotent enough to re-run.
 
 ### 1b. Grab the keys  [YOU]

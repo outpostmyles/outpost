@@ -31,6 +31,7 @@ const RPCS = [
   { name: 'partial_close_position_and_credit', args: { p_position_id: ZERO, p_user_id: ZERO, p_sell_shares: 1, p_sell_price: 1, p_pnl: 0, p_pnl_percent: 0, p_hold_days: 0, p_proceeds: 0 } },
   { name: 'adjust_cash_balance', args: { p_user_id: ZERO, p_delta: 0 } },
   { name: 'set_cash_balance', args: { p_user_id: ZERO, p_amount: 0 } },
+  { name: 'buy_position_funded', args: { p_user_id: ZERO, p_position_id: ZERO, p_cost: 0, p_shares: 1, p_avg_cost: 1, p_ticker: 'ZZZ', p_company_name: null, p_purchased_at: null, p_source: null, p_reversal_condition: null, p_trade_notes: null, p_entry_thesis: null, p_thesis_written_at: null, p_thesis_source: null, p_price_target: null, p_stop_loss: null } },
   { name: 'deduct_credits', args: { p_user_id: ZERO, p_amount: 0 } },
   { name: 'refund_credits', args: { p_user_id: ZERO, p_amount: 0 } },
 ];
