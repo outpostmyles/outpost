@@ -7,6 +7,7 @@ import { sessionPacing } from '../middleware/sessionPacing.js';
 import { buildAgentContext } from '../utils/promptEngine.js';
 import { NO_DASH_RULE } from '../utils/aiStyle.js';
 import { buildAccountabilityNudge } from '../services/accountabilityNudge.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 import { assessRegister, moodDirective } from '../services/pulseContext.js';
 import { getMemories, saveMemory, formatMemories, extractMemories } from '../services/agentMemory.js';
 import { AGENT_TOOLS, executeTool } from '../services/agentTools.js';
@@ -1050,6 +1051,16 @@ IMPORTANT: The above data is your starting context. For anything not covered her
       // Response still gets returned to the user below
     }
 
+    // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget, the
+    // user never waits). Flagged replies land in the founder review queue, and the
+    // founder brief rolls up agent_chat's flag rate and dominant failure over time.
+    {
+      const tail = (Array.isArray(messages) ? messages.slice(-4) : [])
+        .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
+        .filter(Boolean).join('\n\n');
+      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: reply || '' }).catch(() => {});
+    }
+
     // Extract and save memories from this exchange (non-blocking)
     const newMemories = extractMemories(content.trim());
     if (newMemories.length > 0) {
@@ -1403,6 +1414,14 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     // Save assistant message
     const assistantMsg = { user_id: req.user.id, role: 'assistant', content: fullReply, conversation_id: convId || null, created_at: new Date().toISOString() };
     try { await supabase.from('agent_messages').insert(assistantMsg); } catch {}
+
+    // Beta tracker: grade this reply against the SPINE rubric (fire-and-forget).
+    {
+      const tail = (Array.isArray(messages) ? messages.slice(-4) : [])
+        .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
+        .filter(Boolean).join('\n\n');
+      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: fullReply || '' }).catch(() => {});
+    }
 
     // Extract memories (non-blocking)
     const newMemories = extractMemories(content.trim());
