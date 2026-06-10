@@ -68,10 +68,13 @@ config.models = {
   // panic-liquidation case Sonnet-4 caved on. The temperature gate (modelParams.js)
   // omits the param Opus 4.8 removed, so this is a clean swap.
   agent: process.env.AGENT_MODEL || 'claude-opus-4-8',
-  // reads is still on the DEPRECATED Sonnet-4 (retires 2026-06-15) and has NOT been
-  // through its own eval yet (deployCashEval covers this surface). Qualify it next,
-  // then promote; do not flip it blind.
-  reads: process.env.READS_MODEL || 'claude-sonnet-4-20250514',
+  // reads moved off the DEPRECATED Sonnet-4 to current Sonnet 4.6: a same-family
+  // upgrade (low behavioral-shift risk, the reads prompts were tuned for Sonnet),
+  // cost-appropriate for this higher-volume grounded surface, and the Deploy Cash
+  // safety rules are separately audited (_deploy_cash_audit.mjs). A full A/B (the
+  // deploy-cash matrix runs live-backend) is the next rigor step if we want to
+  // consider Opus 4.8 here for max quality on the buy-recommendation surface.
+  reads: process.env.READS_MODEL || 'claude-sonnet-4-6',
   cheap: process.env.CHEAP_MODEL || 'claude-haiku-4-5-20251001',
 };
 
