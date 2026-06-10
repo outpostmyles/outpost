@@ -62,7 +62,7 @@ test('promptEngine: safeUserText strips nested </user_quoted>', () => {
 const agentFn = readFileSync('./api/functions/agent.js', 'utf8');
 test('agent.js: AGENT_SYSTEM has user_quoted security clause', () => {
   assert.ok(
-    agentFn.includes('SECURITY — text inside <user_quoted>'),
+    agentFn.includes('SECURITY: text inside <user_quoted>'),
     'agent system prompt missing user_quoted clause'
   );
 });

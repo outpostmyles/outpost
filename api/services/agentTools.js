@@ -3,6 +3,7 @@
  * These give the agent real capabilities instead of just static context.
  */
 import { config } from '../config.js';
+import { fenceUserText } from '../utils/fence.js';
 import { memGet, memSet } from './memoryCache.js';
 import { getFinancials, getAnalystRating } from './fmp.js';
 import { getFinancialsResilient, getRatiosResilient } from './fundamentalsCache.js';
@@ -1824,11 +1825,9 @@ async function getClosedTradeReflection({ ticker, userId }) {
   // <user_quoted> tags before returning to the agent loop. These come from the
   // user's own past inputs — could contain prompt-injection payloads planted
   // weeks ago. The agent's system prompt treats user_quoted as data.
-  const wrap = (text, max = 600) => {
-    if (!text) return null;
-    const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
-    return `<user_quoted>${clean}</user_quoted>`;
-  };
+  // Delegate to the one hardened fence (loop-until-stable tag strip); keep the
+  // null-for-empty contract this caller relies on.
+  const wrap = (text, max = 600) => (text ? fenceUserText(text, max) : null);
   const trades = data.map(t => ({
     opened: t.opened_at?.slice(0, 10) ?? null,
     closed: t.closed_at?.slice(0, 10) ?? null,

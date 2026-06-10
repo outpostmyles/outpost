@@ -7,6 +7,7 @@
  */
 
 import { supabase } from '../db.js';
+import { fenceUserText } from '../utils/fence.js';
 
 const MAX_MEMORIES_PER_USER = 50;
 
@@ -78,11 +79,8 @@ export async function saveMemory(userId, { type, content, ticker = null }) {
  * quote them back, not paraphrase. Strict prompt-injection wrapping applies
  * to the answer text since it's user-authored.
  */
-function wrapAnchorAnswer(text, max = 400) {
-  if (!text) return '';
-  const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
-  return `<user_quoted>${clean}</user_quoted>`;
-}
+// Delegate to the one hardened fence (loop-until-stable tag strip).
+const wrapAnchorAnswer = (text, max = 400) => fenceUserText(text, max);
 
 export function formatMemories(memories) {
   if (!memories?.length) return 'No prior insights stored yet. This is a new relationship — learn their style.';

@@ -1,4 +1,5 @@
 import { supabase } from '../db.js';
+import { fenceUserText, safeName } from './fence.js';
 import { getMarketData, getMoversData } from '../services/marketData.js';
 import { getPrices } from '../services/pricePool.js';
 import { getCashBalance } from '../services/cashBalance.js';
@@ -16,10 +17,9 @@ import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 // "ignore previous instructions" style injections planted in a position note.
 // Strips any nested </user_quoted> close-tag a clever attacker tries to use
 // to break out of the wrapper.
-function safeUserText(text, max = 500) {
-  if (!text) return '';
-  return `<user_quoted>${String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '')}</user_quoted>`;
-}
+// Delegate to the one hardened fence (loop-until-stable tag strip). Kept as a local
+// alias so the many call sites below read unchanged.
+const safeUserText = fenceUserText;
 
 /**
  * Get sector radar summary from cache for enriching other contexts.
@@ -149,7 +149,7 @@ export async function buildUserContext(userId, user) {
     ));
 
     return {
-      name: user.display_name || 'Trader',
+      name: safeName(user.display_name), // strip markup/newlines: this reaches the model raw as "Name: X"
       plan: user.plan || 'free',
       riskTolerance: user.risk_tolerance || 'moderate',
       tradingStyle: user.trading_style || 'swing',
@@ -181,7 +181,7 @@ export async function buildUserContext(userId, user) {
     };
   } catch {
     return {
-      name: user.display_name || 'Trader',
+      name: safeName(user.display_name), // strip markup/newlines: this reaches the model raw as "Name: X"
       plan: user.plan || 'free',
       riskTolerance: user.risk_tolerance || 'moderate',
       tradingStyle: user.trading_style || 'swing',

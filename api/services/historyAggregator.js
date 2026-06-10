@@ -38,6 +38,7 @@
  * Returns events sorted newest first. The caller paginates / further filters.
  */
 import { supabase } from '../db.js';
+import { fenceUserText } from '../utils/fence.js';
 
 const USER_MESSAGE_WORD_FLOOR = 40; // brief: ">40 words" gates non-trivial chats
 const DEFAULT_LIMIT = 30;
@@ -560,9 +561,9 @@ export async function getUserHistory(options) {
  * </user_quoted> close-tag to keep the wrapper intact.
  */
 export function wrapQuote(text, max = 400) {
-  if (!text) return text;
-  const clean = String(text).slice(0, max).replace(/<\/?user_quoted>/gi, '');
-  return `<user_quoted>${clean}</user_quoted>`;
+  // Delegate to the one hardened fence (loop-until-stable tag strip). Preserve the
+  // falsy-passthrough so a null quote stays null (the recall entry's context field).
+  return text ? fenceUserText(text, max) : text;
 }
 export async function recallHistory(options) {
   const events = await getUserHistory(options);
