@@ -200,16 +200,21 @@ function AuthPrivacyContent() {
 function Logo() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <svg width="28" height="28" viewBox="0 0 72 72" fill="none">
-          <rect x="18" y="18" width="36" height="22" rx="2" fill="#fff"/>
-          <rect x="22" y="23" width="8" height="5" rx="1" fill="#3b82f6"/>
-          <rect x="42" y="23" width="8" height="5" rx="1" fill="#3b82f6"/>
-          <rect x="15" y="40" width="42" height="2.5" rx="1" fill="#fff" opacity="0.6"/>
-          <line x1="22" y1="42" x2="15" y2="63" stroke="#fff" strokeWidth="5" strokeLinecap="round"/>
-          <line x1="30" y1="42" x2="27" y2="63" stroke="#fff" strokeWidth="5" strokeLinecap="round"/>
-          <line x1="42" y1="42" x2="45" y2="63" stroke="#fff" strokeWidth="5" strokeLinecap="round"/>
-          <line x1="50" y1="42" x2="57" y2="63" stroke="#fff" strokeWidth="5" strokeLinecap="round"/>
+      <div style={{ width: 48, height: 48, borderRadius: 12, background: '#0d1117', border: '1px solid rgba(122,162,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="30" height="30" viewBox="0 0 72 72" fill="none">
+          <g transform="translate(5.8,5.8) scale(0.84)" fill="none" stroke="#e8edf2" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M36 13 V8 M32 8 H40"/>
+            <path d="M11 24 L24 15 H48 L61 24 Z" fill="#e8edf2"/>
+            <rect x="18" y="24" width="36" height="13"/>
+            <rect x="21" y="26.5" width="30" height="8" fill="#3b82f6" stroke="none"/>
+            <path d="M28.5 26.5 V34.5 M36 26.5 V34.5 M43.5 26.5 V34.5" strokeWidth="1.6"/>
+            <path d="M13 37 H59"/>
+            <path d="M13 41 H59"/>
+            <path d="M15 37 V41 M25 37 V41 M36 37 V41 M47 37 V41 M57 37 V41"/>
+            <path d="M19 41 L11 63 M53 41 L61 63"/>
+            <path d="M19 41 L57 52 M53 41 L15 52 M15 52 H57 M15 52 L61 63 M57 52 L11 63"/>
+            <path d="M11 63 l-2 4 M61 63 l2 4"/>
+          </g>
         </svg>
       </div>
       <div style={{ textAlign: 'center' }}>
