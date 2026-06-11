@@ -26,8 +26,8 @@ const TABS = [
 
 function Logo() {
   return (
-    <div style={{ width: 26, height: 26, borderRadius: 7, background: '#0d1117', border: '1px solid rgba(122,162,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.4)' }}>
-      <svg width="22" height="22" viewBox="0 0 72 72" fill="none">
+    <div style={{ width: 34, height: 34, borderRadius: 9, background: '#0d1117', border: '1px solid rgba(122,162,255,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.4)' }}>
+      <svg width="30" height="30" viewBox="0 0 72 72" fill="none">
         <g transform="translate(5.8,5.8) scale(0.84)" fill="none" stroke="#e8edf2" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
           <path d="M36 13 V8 M32 8 H40"/>
           <path d="M11 24 L24 15 H48 L61 24 Z" fill="#e8edf2"/>
