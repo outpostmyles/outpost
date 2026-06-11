@@ -1,0 +1,9 @@
+# Vercel builds ONLY the Vite frontend (src/ -> dist/). The Express backend (api/) and
+# the jobs worker run on Railway, not here. Vercel auto-treats a top-level /api directory
+# as Serverless Functions and tries to compile it, which fails on api/config.js's
+# process.env.SUPABASE_URL ("Unhandled type: PropertyAccessExpression"). Excluding the
+# backend + tooling keeps Vercel to the frontend build, which already passes locally.
+api/
+tests/
+scripts/
+*.sql
