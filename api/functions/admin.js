@@ -55,8 +55,8 @@ router.get('/dashboard', requireAuth, requireAdmin, rateLimit(20), async (req, r
       supabase.from('watchlist').select('id', { count: 'exact', head: true }),
       supabase.from('agent_messages').select('id', { count: 'exact', head: true }),
       supabase.from('ai_feedback').select('feature,rating,variant,created_at').gte('created_at', sevenDaysAgo),
-      supabase.from('errors').select('id', { count: 'exact', head: true }).gte('timestamp', oneDayAgo),
-      supabase.from('errors').select('id', { count: 'exact', head: true }).gte('timestamp', sevenDaysAgo),
+      supabase.from('error_log').select('id', { count: 'exact', head: true }).gte('created_at', oneDayAgo),
+      supabase.from('error_log').select('id', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
       supabase.from('analytics_daily').select('date,data').gte('date', fourteenDaysAgo).order('date', { ascending: true }),
     ]);
 
@@ -303,7 +303,7 @@ router.get('/brief', requireAuth, requireAdmin, rateLimit(20), async (req, res) 
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }),
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }).gte('last_login', sevenDaysAgo),
       supabase.from('agent_messages').select('id', { count: 'exact', head: true }),
-      supabase.from('errors').select('id', { count: 'exact', head: true }).gte('timestamp', sevenDaysAgo),
+      supabase.from('error_log').select('id', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
       supabase.from('ai_feedback').select('feature,rating').gte('created_at', thirtyDaysAgo).then(r => r, () => null),
     ]);
     // Up/down per feature over the same window as the grader, so "grade the grader"
