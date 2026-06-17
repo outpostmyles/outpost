@@ -761,6 +761,10 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       if (entryThesis && !held.entry_thesis) { updateData.entry_thesis = entryThesis; updateData.thesis_written_at = new Date().toISOString(); updateData.thesis_source = thesisSource; }
       if (priceTarget && !held.price_target) updateData.price_target = priceTarget;
       if (stopLoss && !held.stop_loss) updateData.stop_loss = stopLoss;
+      // A funded add debited cash, so mark the position funded (it may have been a
+      // recorded holding before); its proceeds will credit cash on close. A
+      // non-funded add moves no cash and leaves the flag untouched.
+      if (req.body?.fundFromCash) updateData.funded_from_cash = true;
 
       let position, cash = null, cashSynced = true, handled = false;
 
@@ -820,6 +824,9 @@ router.post('/positions', requireAuth, rateLimit(10), async (req, res) => {
       avg_cost: avgCost ?? 0,
       purchased_at: purchaseDate ? purchaseDate.toISOString() : null,
       created_at: new Date().toISOString(),
+      // Remember whether this buy actually debited tracked cash. A future close
+      // credits cash only for funded buys; a recorded holding must not conjure it.
+      funded_from_cash: !!req.body?.fundFromCash,
     };
     // Only include trade plan fields if they have values (avoids errors if columns don't exist yet)
     if (entryThesis) {
@@ -949,6 +956,9 @@ router.post('/import', requireAuth, rateLimit(3), async (req, res) => {
           avg_cost: avgCost,
           purchased_at: purchasedAt,
           created_at: new Date().toISOString(),
+          // A CSV import is recording holdings you already own: no cash moved, so a
+          // future close must not credit cash. Explicit false (not the legacy null).
+          funded_from_cash: false,
         });
         if (insertErr) {
           if (insertErr.code === '23505') { results.skipped.push(ticker); existingTickers.add(ticker); }
@@ -1273,20 +1283,30 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
       // archive of the sold portion, and the cash credit commit in ONE transaction.
       // Fall back to the two-step (020 trim, then credit) if 023 is not applied yet.
       let closed, cashAfter = null, cashSynced = true;
-      const atomicTrim = await supabase.rpc('partial_close_position_and_credit', { ...trimArgs, p_proceeds: sale.proceeds });
-      if (atomicTrim.error && isMissingRpc(atomicTrim.error)) {
-        const legacy = await supabase.rpc('partial_close_position', trimArgs);
-        if (legacy.error) throw legacy.error;
-        closed = legacy.data;
-        if (closed) {
-          const tc = await adjustCashBalanceSafe(req.user.id, sale.proceeds);
-          cashAfter = tc.cash; cashSynced = tc.ok;
-          if (!tc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
-        }
+      // Symmetric cash model (migration 026): a trim credits proceeds to cash only
+      // if the position was funded from cash. A recorded holding (funded_from_cash
+      // === false) sells shares without crediting. NULL/true credit as before.
+      if (pos.funded_from_cash === false) {
+        const noCredit = await supabase.rpc('partial_close_position', trimArgs);
+        if (noCredit.error) throw noCredit.error;
+        closed = noCredit.data;
+        if (closed) cashAfter = await getCashBalance(req.user.id); // unchanged: nothing credited
       } else {
-        if (atomicTrim.error) throw atomicTrim.error;
-        closed = atomicTrim.data;
-        if (closed) cashAfter = await getCashBalance(req.user.id); // credited atomically in the RPC
+        const atomicTrim = await supabase.rpc('partial_close_position_and_credit', { ...trimArgs, p_proceeds: sale.proceeds });
+        if (atomicTrim.error && isMissingRpc(atomicTrim.error)) {
+          const legacy = await supabase.rpc('partial_close_position', trimArgs);
+          if (legacy.error) throw legacy.error;
+          closed = legacy.data;
+          if (closed) {
+            const tc = await adjustCashBalanceSafe(req.user.id, sale.proceeds);
+            cashAfter = tc.cash; cashSynced = tc.ok;
+            if (!tc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${sale.proceeds.toFixed(2)} proceeds after trim of ${pos.ticker} for user ${req.user.id}; shares sold, cash NOT credited.`);
+          }
+        } else {
+          if (atomicTrim.error) throw atomicTrim.error;
+          closed = atomicTrim.data;
+          if (closed) cashAfter = await getCashBalance(req.user.id); // credited atomically in the RPC
+        }
       }
       if (!closed) return res.status(404).json({ error: 'Position not found' }); // raced with another trim/close
       const trimStatus = sale.pnl > 0 ? 'win' : sale.pnl < 0 ? 'loss' : 'even';
@@ -1377,23 +1397,34 @@ router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => 
     // two-step (close via 016, then credit) which is resilient but has that drift
     // window. Same money result either way.
     let closed, cash = null, cashSynced = true;
-    const atomicClose = await supabase.rpc('close_position_and_credit', { ...closeArgs, p_proceeds: roundedProceeds });
-    if (atomicClose.error && isMissingRpc(atomicClose.error)) {
-      const legacy = await supabase.rpc('close_position', closeArgs);
-      if (legacy.error) throw legacy.error;
-      closed = legacy.data;
-      if (closed) {
-        // Closing is a sale: proceeds become cash so the account total does not drop.
-        const cc = await adjustCashBalanceSafe(req.user.id, proceeds);
-        cash = cc.cash; cashSynced = cc.ok;
-        if (!cc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${proceeds.toFixed(2)} proceeds after close of ${pos.ticker} for user ${req.user.id}; position closed, cash NOT credited.`);
-      }
+    // Symmetric cash model (migration 026): a close credits proceeds to cash ONLY
+    // if the buy debited cash. funded_from_cash === false is a recorded holding that
+    // never moved cash, so closing it must not conjure cash. NULL (legacy rows from
+    // before 026) and true both credit, preserving prior behavior.
+    if (pos.funded_from_cash === false) {
+      const noCredit = await supabase.rpc('close_position', closeArgs);
+      if (noCredit.error) throw noCredit.error;
+      closed = noCredit.data;
+      if (closed) cash = await getCashBalance(req.user.id); // unchanged: nothing credited
     } else {
-      if (atomicClose.error) throw atomicClose.error;
-      closed = atomicClose.data;
-      // Proceeds were credited atomically inside the RPC; read the balance back for
-      // the response. cashSynced stays true because the credit already committed.
-      if (closed) cash = await getCashBalance(req.user.id);
+      const atomicClose = await supabase.rpc('close_position_and_credit', { ...closeArgs, p_proceeds: roundedProceeds });
+      if (atomicClose.error && isMissingRpc(atomicClose.error)) {
+        const legacy = await supabase.rpc('close_position', closeArgs);
+        if (legacy.error) throw legacy.error;
+        closed = legacy.data;
+        if (closed) {
+          // Closing is a sale: proceeds become cash so the account total does not drop.
+          const cc = await adjustCashBalanceSafe(req.user.id, proceeds);
+          cash = cc.cash; cashSynced = cc.ok;
+          if (!cc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to credit $${proceeds.toFixed(2)} proceeds after close of ${pos.ticker} for user ${req.user.id}; position closed, cash NOT credited.`);
+        }
+      } else {
+        if (atomicClose.error) throw atomicClose.error;
+        closed = atomicClose.data;
+        // Proceeds were credited atomically inside the RPC; read the balance back for
+        // the response. cashSynced stays true because the credit already committed.
+        if (closed) cash = await getCashBalance(req.user.id);
+      }
     }
     // Null return = position was already deleted between our read and the RPC
     // (double-close race). Treat as 404. Caller's first attempt won.

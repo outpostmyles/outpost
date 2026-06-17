@@ -65,7 +65,9 @@ export async function syncBrokerage(userId) {
       .select('id').eq('user_id', userId).eq('ticker', u.ticker).maybeSingle();
     const row = { shares: u.shares, avg_cost: u.avgCost ?? null };
     if (existing) await supabase.from('positions').update(row).eq('id', existing.id);
-    else await supabase.from('positions').insert({ user_id: userId, ticker: u.ticker, ...row, created_at: new Date().toISOString() });
+    // A broker-synced holding is recorded, not bought through Outpost cash, so it
+    // must not credit cash on close (symmetric cash model, migration 026).
+    else await supabase.from('positions').insert({ user_id: userId, ticker: u.ticker, ...row, created_at: new Date().toISOString(), funded_from_cash: false });
   }
 
   // Cash from the broker is the account's real cash.
