@@ -6,11 +6,23 @@
 // choose to set it up, and the thesis they write is tagged as THEIRS.
 import { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
+import { FeedbackButtons } from '../shared/UI.jsx';
 
 const VERDICT = {
   thought_through: { color: 'var(--green)', label: 'Thought through' },
   has_gaps: { color: 'var(--amber)', label: 'Has gaps' },
   gut_buy: { color: 'var(--red)', label: 'Gut buy' },
+};
+
+// Red-team feature flag. Live now; set to false to hide the button instantly
+// (the backend endpoint is additive and harmless on its own).
+const RED_TEAM_ENABLED = true;
+
+// Referee verdict tone: which side the stress-test came down on.
+const RT_TONE = {
+  bull: { color: 'var(--green)', label: 'Bull case is stronger' },
+  bear: { color: 'var(--red)', label: 'Bear case is stronger' },
+  even: { color: 'var(--amber)', label: 'Too close to call' },
 };
 
 export default function ThinkThroughCard({ onClose, showToast }) {
@@ -25,6 +37,9 @@ export default function ThinkThroughCard({ onClose, showToast }) {
   const [assessment, setAssessment] = useState(null);
   const [grading, setGrading] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [redTeam, setRedTeam] = useState(null);
+  const [rtLoading, setRtLoading] = useState(false);
+  const [rtError, setRtError] = useState('');
 
   // Ground: the user's account value defaults the sizing, so they do not type it.
   useEffect(() => {
@@ -32,6 +47,10 @@ export default function ThinkThroughCard({ onClose, showToast }) {
     api.portfolio.value().then(v => { if (!cancelled) setAccountSize(v?.accountValue ?? v?.totalValue ?? null); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  // A red-team result is tied to the ticker it ran on; if the user changes the
+  // ticker, drop the stale result so they re-run on the new one.
+  useEffect(() => { setRedTeam(null); setRtError(''); }, [ticker]);
 
   // Live grading, debounced. Pure and cheap on the server, so it feels instant.
   useEffect(() => {
@@ -80,6 +99,19 @@ export default function ThinkThroughCard({ onClose, showToast }) {
     } catch (e) {
       showToast?.(e?.error || 'Could not set it up just now', 'error');
       setApplying(false);
+    }
+  }
+
+  async function runRedTeam() {
+    if (rtLoading || !ticker.trim()) return;
+    setRtLoading(true); setRtError('');
+    try {
+      const r = await api.ai.redTeam({ ticker: ticker.trim(), thesis: thesis.trim(), invalidation: invalidation.trim() });
+      setRedTeam(r);
+    } catch (e) {
+      setRtError(e?.error || 'Could not run the red-team just now.');
+    } finally {
+      setRtLoading(false);
     }
   }
 
@@ -152,6 +184,37 @@ export default function ThinkThroughCard({ onClose, showToast }) {
               )}
             </div>
           )}
+
+          {RED_TEAM_ENABLED && ticker.trim() && !redTeam && (
+            <button onClick={runRedTeam} disabled={rtLoading} className="btn btn-muted" style={{ width: '100%', padding: 11, fontSize: 12, letterSpacing: '0.5px', opacity: rtLoading ? 0.5 : 1 }}>
+              {rtLoading ? 'Weighing both sides...' : 'RED-TEAM THIS TRADE'}
+            </button>
+          )}
+          {rtError && <p style={{ fontSize: 10.5, color: 'var(--red)', textAlign: 'center', margin: 0 }}>{rtError}</p>}
+          {redTeam && (() => {
+            const t = RT_TONE[redTeam.lean] || RT_TONE.even;
+            return (
+              <div style={{ background: 'var(--surface)', border: `1px solid ${t.color}`, borderRadius: 9, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: t.color }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', color: t.color }}>{t.label.toUpperCase()}</span>
+                  <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{redTeam.confidence} confidence</span>
+                </div>
+                {redTeam.verdict && <p style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.55, margin: 0 }}>{redTeam.verdict}</p>}
+                {redTeam.crux && <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5, margin: 0 }}><span style={{ color: 'var(--text)', fontWeight: 700 }}>The crux: </span>{redTeam.crux}</p>}
+                {redTeam.whatWouldFlip && <p style={{ fontSize: 11, color: 'var(--faint)', lineHeight: 1.5, margin: 0 }}><span style={{ fontWeight: 700 }}>What would flip it: </span>{redTeam.whatWouldFlip}</p>}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 9 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--green)' }}>THE BULL</span>
+                  <p style={{ fontSize: 11.5, color: 'var(--text)', lineHeight: 1.55, margin: '3px 0 0', whiteSpace: 'pre-wrap' }}>{redTeam.bull}</p>
+                </div>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 9 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--red)' }}>THE BEAR</span>
+                  <p style={{ fontSize: 11.5, color: 'var(--text)', lineHeight: 1.55, margin: '3px 0 0', whiteSpace: 'pre-wrap' }}>{redTeam.bear}</p>
+                </div>
+                <FeedbackButtons feature="red_team" response={redTeam.verdict} />
+              </div>
+            );
+          })()}
 
           <button onClick={setUp} disabled={!canSetUp || applying} className="btn btn-blue" style={{ width: '100%', padding: 12, opacity: (!canSetUp || applying) ? 0.4 : 1 }}>
             {applying ? 'Setting up…' : 'Set up this buy with my plan'}

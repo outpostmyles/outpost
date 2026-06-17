@@ -85,6 +85,8 @@ export const api = {
   ai: {
     summary: (opts) => get(`/api/ai/summary${opts?.force ? '?force=true' : ''}`),
     analysis: (ticker, deep = false, force = false) => post('/api/ai/analysis', { ticker, deep, force }),
+    // Red-team your trade: Bull vs Bear vs Referee stress-test of a thesis.
+    redTeam: (body) => post('/api/ai/red-team', body),
     findOpportunity: () => post('/api/ai/find-opportunity'),
     news: (ticker) => post('/api/ai/news', { ticker }),
     brief: (opts) => get(`/api/ai/brief${opts?.force ? '?force=true' : ''}`),
