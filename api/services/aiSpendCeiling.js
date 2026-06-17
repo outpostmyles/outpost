@@ -62,6 +62,49 @@ export function checkAndIncrementAiCall(userId, cap = DEFAULT_DAILY_CAP) {
 }
 
 /**
+ * Check-only gate: is this user UNDER their daily cap right now? Does NOT
+ * increment. Use at a request boundary to fail fast (429) before starting
+ * expensive work, when the actual counting is done per-call by recordAiCall
+ * (e.g. the agent loop, where one request fans out to several model calls).
+ * Logs a single warn the first time a user is over the cap each day.
+ */
+export function peekAiCeiling(userId, cap = DEFAULT_DAILY_CAP) {
+  if (!userId) return { allowed: true, count: 0, cap };
+  const today = dateKey();
+  const entry = ledger.get(userId);
+  const count = (entry && entry.dateKey === today) ? entry.count : 0;
+  if (count >= cap) {
+    if (entry && !entry.alertedAt) {
+      console.warn(`[ai-ceiling] User ${userId} hit daily cap (${cap} calls). New turns blocked until UTC midnight.`);
+      entry.alertedAt = Date.now();
+    }
+    return { allowed: false, count, cap };
+  }
+  return { allowed: true, count, cap };
+}
+
+/**
+ * Increment-only: record that ONE real Anthropic call happened for this user.
+ * The counterpart to peekAiCeiling. A single agent request makes several model
+ * calls (initial + up to MAX_TOOL_ROUNDS tool rounds + a synthesis pass), so
+ * counting per-request undercounts true volume (and cost) by up to ~7x. Calling
+ * this once per actual model call keeps the daily ledger honest. No cap gate
+ * here: a turn already in flight is allowed to finish (the next turn's gate sees
+ * the higher count). Returns the new count.
+ */
+export function recordAiCall(userId) {
+  if (!userId) return 0;
+  const today = dateKey();
+  let entry = ledger.get(userId);
+  if (!entry || entry.dateKey !== today) {
+    entry = { dateKey: today, count: 0, alertedAt: 0 };
+    ledger.set(userId, entry);
+  }
+  entry.count += 1;
+  return entry.count;
+}
+
+/**
  * Inspection helper — current count without incrementing. Used by admin
  * insights and unit tests.
  */

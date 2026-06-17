@@ -29,7 +29,7 @@ function scopeConv(query, convId) {
 import { config } from '../config.js';
 import { trackAICall, trackToolCall, trackTruncation, trackError } from '../services/monitor.js';
 import { trackFeature, trackAgentUsage, trackCreditLimit, trackPlanGate } from '../services/analytics.js';
-import { checkAndIncrementAiCall, UNLIMITED_DAILY_CAP } from '../services/aiSpendCeiling.js';
+import { peekAiCeiling, recordAiCall, UNLIMITED_DAILY_CAP } from '../services/aiSpendCeiling.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -111,6 +111,12 @@ async function callAnthropicWithRetry(params, options = {}) {
     try {
       const res = await anthropic.messages.create(params, reqOptions);
       recordClaudeUsage({ feature, model: params.model, usage: res.usage, userId }); // fire-and-forget, fail-safe
+      // Count this REAL model call against the user's daily ceiling. One agent
+      // request fans out to several calls through this wrapper (initial + tool
+      // rounds + synthesis); the per-request gate only checks, so this is what
+      // keeps the daily count honest instead of undercounting ~7x. Prod-only,
+      // mirroring the gate (dev is never capped).
+      if (userId && config.nodeEnv === 'production') recordAiCall(userId);
       return res;
     } catch (err) {
       const status = err.status || err?.error?.status;
@@ -780,7 +786,7 @@ router.post('/messages', requireAuth, rateLimit(20), sessionPacing(), async (req
     // use never hits it. Free/paid plans keep the default cap.
     const ceiling = config.nodeEnv !== 'production'
       ? { allowed: true }
-      : checkAndIncrementAiCall(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
+      : peekAiCeiling(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (If this seems wrong, let support know — limit ${ceiling.cap}, used ${ceiling.count}.)`,
@@ -1164,7 +1170,7 @@ router.post('/stream', requireAuth, rateLimit(20), sessionPacing(), async (req, 
     // use never hits it. Free/paid plans keep the default cap.
     const ceiling = config.nodeEnv !== 'production'
       ? { allowed: true }
-      : checkAndIncrementAiCall(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
+      : peekAiCeiling(req.user.id, plan === 'unlimited' ? UNLIMITED_DAILY_CAP : undefined);
     if (!ceiling.allowed) {
       return res.status(429).json({
         error: `You've used a lot of AI today. The daily limit resets at midnight UTC. (limit ${ceiling.cap}, used ${ceiling.count}.)`,

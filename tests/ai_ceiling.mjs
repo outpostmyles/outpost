@@ -4,7 +4,7 @@
 //  3. Different users have independent counters
 //  4. Reset helper works
 import assert from 'node:assert/strict';
-import { checkAndIncrementAiCall, getAiCallCount, _resetAiCallCount } from '../api/services/aiSpendCeiling.js';
+import { checkAndIncrementAiCall, peekAiCeiling, recordAiCall, getAiCallCount, _resetAiCallCount } from '../api/services/aiSpendCeiling.js';
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
@@ -51,6 +51,48 @@ test('blocked user stays blocked across multiple over-cap attempts', () => {
     assert.equal(r.allowed, false);
   }
   assert.equal(getAiCallCount('u5'), 3); // didn't drift
+});
+
+test('peekAiCeiling checks without incrementing', () => {
+  _resetAiCallCount('p1');
+  const a = peekAiCeiling('p1', 5);
+  const b = peekAiCeiling('p1', 5);
+  assert.equal(a.allowed, true);
+  assert.equal(a.count, 0);
+  assert.equal(b.count, 0); // peeking never advances the counter
+  assert.equal(getAiCallCount('p1'), 0);
+});
+
+test('recordAiCall advances the counter (one per real model call)', () => {
+  _resetAiCallCount('p2');
+  for (let i = 1; i <= 7; i++) assert.equal(recordAiCall('p2'), i);
+  assert.equal(getAiCallCount('p2'), 7);
+});
+
+test('gate + per-call record: one request of 7 calls counts as 7, not 1', () => {
+  // The bug this split fixes: the old path incremented once per REQUEST, so a
+  // 7-call agent turn registered as 1 (a ~7x undercount). Now the gate only
+  // checks and each real model call records, so the daily ledger is honest.
+  _resetAiCallCount('p3');
+  const gate = peekAiCeiling('p3', 300); // start-of-turn gate, no increment
+  assert.equal(gate.allowed, true);
+  assert.equal(getAiCallCount('p3'), 0);
+  for (let i = 0; i < 7; i++) recordAiCall('p3'); // initial + tool rounds + synthesis
+  assert.equal(getAiCallCount('p3'), 7);
+});
+
+test('peekAiCeiling blocks at the cap, allows under it', () => {
+  _resetAiCallCount('p4');
+  for (let i = 0; i < 3; i++) recordAiCall('p4');
+  assert.equal(peekAiCeiling('p4', 3).allowed, false); // at cap
+  _resetAiCallCount('p5');
+  for (let i = 0; i < 2; i++) recordAiCall('p5');
+  assert.equal(peekAiCeiling('p5', 3).allowed, true); // under cap
+});
+
+test('anonymous: peek allowed, record is a no-op', () => {
+  assert.equal(peekAiCeiling(null, 5).allowed, true);
+  assert.equal(recordAiCall(null), 0);
 });
 
 let pass = 0, fail = 0;
