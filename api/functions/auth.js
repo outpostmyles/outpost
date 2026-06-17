@@ -54,11 +54,18 @@ router.post('/signup', rateLimit(5), async (req, res) => {
     // Set BETA_ALLOWLIST_OPEN=true to disable the gate (e.g. after public launch).
     let isBetaUser = false;
     if (process.env.BETA_ALLOWLIST_OPEN !== 'true') {
-      const { data: allowed } = await supabase
+      // Case-insensitive allowlist match. The signup input is already lowercased
+      // (emailClean above), but allowlist rows are seeded by hand, so a stray
+      // uppercase letter in a seeded email must never lock out an invited tester.
+      // The private-beta list is tiny, so we pull the rows and compare lowercased
+      // in JS rather than risk LIKE/ILIKE wildcard surprises (an underscore in an
+      // email local-part is a single-char wildcard to ilike and would over-match).
+      const { data: allowRows } = await supabase
         .from('beta_allowlist')
-        .select('id')
-        .eq('email', emailClean)
-        .maybeSingle();
+        .select('email');
+      const allowed = (allowRows || []).some(
+        (r) => (r.email || '').toLowerCase().trim() === emailClean
+      );
       if (!allowed) {
         return res.status(403).json({
           error: 'Outpost is in private beta. Email hello@outpostapp.co for access.',
