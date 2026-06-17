@@ -14,7 +14,7 @@ import { config } from '../config.js';
 import { buildBriefContext } from '../utils/promptEngine.js';
 import { getPrices, initPricePool } from '../services/pricePool.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
-import { runFounderDigest } from '../services/founderDigest.js';
+import { runFounderDigest, runQualityWatch } from '../services/founderDigest.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
 import { runModelWatch, hasAlerts, formatFindings } from '../services/modelWatch.js';
@@ -323,6 +323,17 @@ scheduleAt(8, 15, async () => {
     else console.log('[ModelWatch] all models current');
   } catch (err) { console.error('[Jobs] Model watch failed:', err.message); }
 }, 'Model watch');
+// QualityWatch: once a day, check whether any AI feature's flag rate jumped versus
+// the prior week and email the founder if so, so a prompt regression is caught the
+// day it shows up instead of whenever they next open the dashboard. Quiet unless
+// something actually regressed. The grader scores every reply; this only alerts.
+scheduleAt(8, 30, async () => {
+  try {
+    const r = await runQualityWatch();
+    if (r.regressed.length) console.warn(`[QualityWatch] ACTION NEEDED: ${r.regressed.length} feature(s) regressed: ` + r.regressed.map(x => `${x.feature} +${x.delta}pts`).join(', '));
+    else console.log('[QualityWatch] no AI quality regressions');
+  } catch (err) { console.error('[Jobs] Quality watch failed:', err.message); }
+}, 'Quality watch');
 resetCredits();
 
 // ─── Price alert monitor ────────────────────────────────────────────────

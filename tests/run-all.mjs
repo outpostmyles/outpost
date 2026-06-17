@@ -25,7 +25,7 @@ const SUITE = [
   'portfolio_actions', 'thesis_watch', 'read_continuity', 'decision_memory', 'journal_prompts',
   'composure', 'coach_reachout', 'quote_normalize', 'book_stats', 'ai_style', 'news_hygiene',
   'brokerage_sync', 'decision_ledger', 'agent_conversations', 'position_proposal',
-  'ai_pricing', 'ai_usage_summary', 'synthesis_freshness', 'founder_brief', 'process_scorecard',
+  'ai_pricing', 'ai_usage_summary', 'synthesis_freshness', 'founder_brief', 'quality_watch', 'process_scorecard',
   'sale_math', 'trader_model', 'counterfactual', 'emotion_read', 'concentration_read',
   'ledger_integrity', 'buy_proposal', 'agent_report_card', 'move_explainer',
   'attribution_patterns', 'proactive_digest', 'deploy_cash_eval', 'trade_plan',

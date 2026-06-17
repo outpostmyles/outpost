@@ -219,7 +219,10 @@ async function computeFromDb({ days = 30, limit = 20000 } = {}) {
   const now = Date.now();
   return {
     windowDays: days,
-    ...aggregateRetail(decisions),
+    // Retail-trap stats need at least 8 closed round-trips before they can surface,
+    // so a tiny sample never prints a meaningless "retail wins 33% (3 closed)" line
+    // once SURFACE_RETAIL_INTEL is enabled. Matches the founder's stated bar.
+    ...aggregateRetail(decisions, { minSample: 8 }),
     behavior: aggregateBehavior(decisions),
     quality: aggregateQuality(decisions),   // the objective: are users getting better
     adviceLift: adviceLift(decisions),       // the reward: does our advice help

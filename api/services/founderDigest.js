@@ -18,6 +18,7 @@ import { Resend } from 'resend';
 import { config } from '../config.js';
 import { supabase } from '../db.js';
 import { recordClaudeUsage } from './aiUsage.js';
+import { detectQualityRegressions } from '../../src/lib/founderBrief.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
 const resend = config.resendKey ? new Resend(config.resendKey) : null;
@@ -259,7 +260,7 @@ function markdownToHtml(md) {
 /**
  * Email the digest to all FOUNDER_EMAILS recipients.
  */
-async function sendEmail({ markdown }) {
+async function sendEmail({ markdown, subjectOverride }) {
   if (!resend) {
     console.warn('[founderDigest] Resend not configured — skipping email send');
     return { sent: 0, recipients: [] };
@@ -285,13 +286,42 @@ async function sendEmail({ markdown }) {
   let sent = 0;
   for (const to of recipients) {
     try {
-      await resend.emails.send({ from: FROM_ADDRESS, to, subject, html, text: markdown });
+      await resend.emails.send({ from: FROM_ADDRESS, to, subject: subjectOverride || subject, html, text: markdown });
       sent++;
     } catch (err) {
       console.error('[founderDigest] send failed for', to, ':', err.message);
     }
   }
   return { sent, recipients };
+}
+
+/**
+ * Daily QualityWatch alarm. If any AI feature's flag rate jumped versus the prior
+ * window, email the founder so a prompt regression is caught the day it lands, not
+ * whenever they next happen to open the dashboard. Quiet unless something actually
+ * regressed (no email, no noise). The grader already scores every reply; the pure
+ * per-feature detection lives in founderBrief (detectQualityRegressions).
+ */
+export async function runQualityWatch({ email = true, windowDays = 7, flagThreshold = 70, minRecent = 10, deltaThreshold = 15 } = {}) {
+  const since = new Date(Date.now() - 2 * windowDays * 86400000).toISOString();
+  const { data } = await supabase.from('ai_response_log')
+    .select('feature, score, created_at')
+    .gte('created_at', since)
+    .not('score', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(5000);
+  const regressed = detectQualityRegressions(data ?? [], { now: Date.now(), windowDays, flagThreshold, minRecent, deltaThreshold });
+  if (!regressed.length) return { regressed: [], email: { sent: 0, recipients: [] } };
+  const md = [
+    '# Outpost QualityWatch alarm',
+    '',
+    `${regressed.length} AI ${regressed.length === 1 ? 'feature' : 'features'} got worse in the last ${windowDays} days. Flag rate is the share of graded responses scoring under ${flagThreshold}.`,
+    '',
+    ...regressed.map(x => `- **${x.feature}**: flag rate ${x.priorPct}% to ${x.recentPct}% (up ${x.delta} points, ${x.recentN} recent graded). Check the prompt and the review queue.`),
+  ].join('\n');
+  let emailResult = { sent: 0, recipients: [] };
+  if (email) emailResult = await sendEmail({ markdown: md, subjectOverride: 'Outpost QualityWatch: a feature regressed' });
+  return { regressed, email: emailResult };
 }
 
 /**

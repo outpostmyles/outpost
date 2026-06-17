@@ -78,6 +78,43 @@ export function buildQualityTrend(rows, { now = 0, windowDays = 7, flagThreshold
   };
 }
 
+/**
+ * Per-feature quality REGRESSION detector for the daily QualityWatch alarm. A
+ * feature regressed when its recent-window flag rate jumped at least
+ * deltaThreshold points over the prior window, with at least minRecent graded
+ * responses in BOTH windows so the move is signal, not noise. This is the
+ * per-feature counterpart to buildQualityTrend's pooled flagRateDelta. Pure:
+ * the caller passes the rows and a `now` timestamp. Returns regressed features,
+ * worst first; an improvement (negative delta) never alarms.
+ */
+export function detectQualityRegressions(rows, { now = 0, windowDays = 7, flagThreshold = 70, minRecent = 10, deltaThreshold = 15 } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const cutoff = now - windowDays * 86400000;
+  const feat = new Map(); // feature -> { rg, rf, pg, pf } recent/prior graded/flagged
+  for (const r of list) {
+    if (r?.score == null) continue;
+    const score = Number(r.score);
+    if (!Number.isFinite(score)) continue;
+    const t = Date.parse(r?.created_at);
+    if (!Number.isFinite(t)) continue;
+    const f = r.feature || 'unknown';
+    let e = feat.get(f);
+    if (!e) { e = { feature: f, rg: 0, rf: 0, pg: 0, pf: 0 }; feat.set(f, e); }
+    const flagged = score < flagThreshold;
+    if (t >= cutoff) { e.rg++; if (flagged) e.rf++; }
+    else { e.pg++; if (flagged) e.pf++; }
+  }
+  const regressed = [];
+  for (const e of feat.values()) {
+    if (e.rg < minRecent || e.pg < minRecent) continue; // need real sample in both windows
+    const recentPct = Math.round((e.rf / e.rg) * 100);
+    const priorPct = Math.round((e.pf / e.pg) * 100);
+    const delta = recentPct - priorPct;
+    if (delta >= deltaThreshold) regressed.push({ feature: e.feature, delta, recentPct, priorPct, recentN: e.rg, priorN: e.pg });
+  }
+  return regressed.sort((a, b) => b.delta - a.delta);
+}
+
 // The "what to look at" list: neutral notes for the founder, gated by confidence
 // so we never recommend acting on noise. Never imperative about the app itself.
 /**
