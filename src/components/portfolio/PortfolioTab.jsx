@@ -2594,6 +2594,11 @@ function CashModal({ current, onClose, onDone, showToast }) {
 function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  // When the value fetch fails transiently (flaky connection), we flip this
+  // instead of silently blanking the page. A user with real holdings must
+  // never see the "No positions yet" empty state just because a request
+  // dropped, that reads like the app wiped their portfolio.
+  const [loadError, setLoadError] = useState(false);
   const [modal, setModal] = useState(null); // 'add' | 'import' | 'menu' | 'closed' | 'theses' | null
   const [showGrowth, setShowGrowth] = useState(false);
   // Phase 4 — when the user picks a Deploy Cash recommendation, the Home
@@ -2610,7 +2615,16 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { const d = await api.portfolio.value(); setData(d); } catch {}
+    setLoadError(false);
+    try {
+      const d = await api.portfolio.value();
+      setData(d);
+    } catch {
+      // Keep any previously loaded data on screen rather than blanking it,
+      // and flag the error so we show a recoverable retry UI instead of the
+      // zero-positions empty state.
+      setLoadError(true);
+    }
     setLoading(false);
   }, []);
 
@@ -2661,6 +2675,19 @@ function PortfolioSubTab({ marketOpen, showToast, onTabSwitch }) {
   // feed via buildPortfolioActions, so the old inline computations were removed.)
 
   if (loading) return <div style={{ padding: 16 }}><SkeletonCard /><SkeletonCard /></div>;
+
+  // The fetch failed and we have nothing usable to show. Render a recoverable
+  // error instead of the zero-positions empty state, otherwise a user with real
+  // holdings thinks the app wiped their portfolio and asks them to re-add it.
+  if (loadError && positions.length === 0) {
+    return (
+      <EmptyState
+        title="Couldn't load your portfolio"
+        subtitle="Check your connection and try again. Your positions are safe, this is just a hiccup fetching them."
+        action={<button onClick={load} className="btn btn-green">Retry</button>}
+      />
+    );
+  }
 
   return (
     <div>
