@@ -18,7 +18,7 @@
 // Style/risk still get sensible defaults written silently on completion so the
 // downstream agent context never sees a missing field.
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../hooks/useAuth.jsx';
 
@@ -51,6 +51,12 @@ export default function ConversationalOnboarding() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // One optional identity line, captured after the magic moment and persisted via
+  // the existing anchor endpoint. These first-person words are what the agent, the
+  // first-read, and the welcome moment quote so they sound like they know the user.
+  const [anchor, setAnchor] = useState('');
+  const anchorSaved = useRef(false);
+
   async function runFirstRead(rawTicker) {
     const t = String(rawTicker ?? frTicker).toUpperCase().replace(/[^A-Z.]/g, '').slice(0, 6);
     if (!t) { setFrError('Type a ticker, like NVDA.'); return; }
@@ -65,6 +71,16 @@ export default function ConversationalOnboarding() {
     }
   }
 
+  // Persist the optional identity answer, best effort and once. Honors the server's
+  // 3-word minimum; a skip or a failure never blocks the user. Every read site
+  // no-ops when anchors are absent, so this only adds personalization, never gates.
+  async function saveAnchor() {
+    const a = anchor.trim();
+    if (anchorSaved.current || a.split(/\s+/).filter(Boolean).length < 3) return;
+    anchorSaved.current = true;
+    try { await api.onboarding.answer({ questionIdx: 0, answer: a.slice(0, 800) }); } catch {}
+  }
+
   // Write the defaults the rest of the app expects, add the chosen stock to the
   // watchlist so the app is not empty on arrival, and mark onboarding done.
   // Every step is best effort: a single failure never traps the user in the flow.
@@ -72,6 +88,7 @@ export default function ConversationalOnboarding() {
     if (submitting) return;
     setSubmitting(true);
     setError('');
+    saveAnchor();
     if (frResult?.ticker) {
       try { await api.social.addToWatchlist({ ticker: frResult.ticker, companyName: frResult.ticker }); } catch {}
     }
@@ -90,7 +107,7 @@ export default function ConversationalOnboarding() {
     }
   }
 
-  function startTour() { setTourStep(0); setPhase('tour'); }
+  function startTour() { saveAnchor(); setTourStep(0); setPhase('tour'); }
 
   // ─── Phase: hook ────────────────────────────────────────────────────────
   if (phase === 'hook') {
@@ -136,6 +153,17 @@ export default function ConversationalOnboarding() {
         {frResult && !frLoading && (
           <>
             <ReadCard r={frResult} />
+            <div style={{ margin: '2px 0 14px' }}>
+              <label style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 6, letterSpacing: '0.2px' }}>One quick thing, optional: what got you into investing?</label>
+              <textarea
+                value={anchor}
+                onChange={e => setAnchor(e.target.value.slice(0, 800))}
+                rows={2}
+                placeholder="A sentence is plenty. It helps Outpost sound like it actually knows you."
+                className="input"
+                style={{ width: '100%', padding: '10px 12px', fontSize: 13, resize: 'vertical', lineHeight: 1.5, boxSizing: 'border-box' }}
+              />
+            </div>
             <button onClick={startTour} className="btn btn-blue" style={{ width: '100%', padding: 13, marginTop: 4 }}>
               See the rest of Outpost  →
             </button>

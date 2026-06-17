@@ -13,7 +13,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { buildBriefContext } from '../utils/promptEngine.js';
 import { getPrices, initPricePool } from '../services/pricePool.js';
-import { resetDailyCounters } from '../services/analytics.js';
 import { alertMonitorTick } from '../services/alertMonitor.js';
 import { runFounderDigest } from '../services/founderDigest.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
@@ -304,7 +303,9 @@ scheduleAt(18, 30, async () => {
   try { await runDailyScreeners(); } catch (err) { console.error('[Jobs] Screener refresh failed:', err.message); }
 }, 'Screener refresh');
 scheduleAt(0, 1, resetCredits, 'Credit resets');
-scheduleAt(0, 0, resetDailyCounters, 'Analytics daily reset');
+// Analytics daily reset moved to the WEB process (api/server.js boot): the in-memory
+// counters it snapshots are mutated by web route handlers, so the worker only ever
+// wrote all-zero rows to analytics_daily.
 // The decision-intelligence machine: roll the whole ledger into the cached
 // aggregate overnight (after the day's trades have resolved), so the founder view
 // and any pre-trade base-rate checks read fresh, precomputed intelligence.

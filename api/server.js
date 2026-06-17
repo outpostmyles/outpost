@@ -41,7 +41,8 @@ import { alertMonitorTick } from './services/alertMonitor.js';
 import { memStats } from './services/memoryCache.js';
 import { supabase } from './db.js';
 import { getMetrics, trackError } from './services/monitor.js';
-import { generateInsights, getAnalyticsSummary } from './services/analytics.js';
+import { generateInsights, getAnalyticsSummary, resetDailyCounters } from './services/analytics.js';
+import { getETTime } from './utils/marketHours.js';
 
 const app = express();
 
@@ -266,6 +267,23 @@ async function boot() {
       console.log('[AlertMonitor] Scheduled every 5 minutes (market hours only)');
     } else {
       console.log('[AlertMonitor] Skipped — running in jobs process');
+    }
+
+    // Analytics daily snapshot MUST run in THIS (web) process. The in-memory usage
+    // counters (trackFeature / trackFeedback / ...) are mutated only by web route
+    // handlers, so only this process holds real data to persist into analytics_daily.
+    // It used to be scheduled on the worker, whose counter copy is always zero, so it
+    // silently wrote all-zero rows. Pinned to ~00:00 ET, re-armed every 24h. NOT gated
+    // on JOBS_SEPARATE_PROCESS: the data lives here, not on the worker.
+    {
+      const nowET = getETTime();
+      const midnight = new Date(nowET);
+      midnight.setHours(0, 0, 0, 0);
+      let delay = midnight.getTime() - nowET.getTime();
+      if (delay < 0) delay += 24 * 60 * 60 * 1000;
+      const snap = () => Promise.resolve().then(resetDailyCounters).catch(err => console.error('[Analytics] daily snapshot failed:', err?.message || err));
+      setTimeout(() => { snap(); setInterval(snap, 24 * 60 * 60 * 1000); }, delay);
+      console.log(`[Analytics] Daily snapshot scheduled in ${Math.round(delay / 60000)}m (web process)`);
     }
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
