@@ -27,3 +27,6 @@ out post new/
 
 # Generated DB setup bundle (regenerate with: bash scripts/build_setup_bundle.sh)
 prod_setup_bundle.sql
+
+# One-time reset+rebuild paste (reset_public_schema.sql + the bundle, concatenated)
+prod_reset_and_rebuild.sql

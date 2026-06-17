@@ -296,7 +296,7 @@ function OptionCard({ opt, sessionId, onPick, showToast }) {
 
   async function fetchCounter() {
     if (!sessionId) {
-      showToast?.('Counter-arguments need the session log — apply migration 015 in Supabase first.', 'error');
+      showToast?.('Counter-arguments are not available for this one yet.', 'error');
       return;
     }
     setCounterLoading(true);
@@ -344,9 +344,9 @@ function OptionCard({ opt, sessionId, onPick, showToast }) {
       <div style={{ display: 'flex', gap: 6 }}>
         <button
           onClick={fetchCounter}
-          disabled={counterLoading}
+          disabled={counterLoading || !sessionId}
           className="btn btn-muted"
-          style={{ flex: 1, fontSize: 11, padding: '8px 0' }}
+          style={{ flex: 1, fontSize: 11, padding: '8px 0', opacity: !sessionId ? 0.4 : 1 }}
         >
           {counterLoading ? '…' : counter ? 'Hide pushback' : 'Talk me out of it'}
         </button>
