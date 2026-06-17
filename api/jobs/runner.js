@@ -19,10 +19,28 @@ import { runFounderDigest } from '../services/founderDigest.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
 import { logAndGrade } from '../services/aiQualityLog.js';
 import { runModelWatch, hasAlerts, formatFindings } from '../services/modelWatch.js';
+import { trackError } from '../services/monitor.js';
 import { PLAN_CREDITS } from '../constants/planCredits.js';
 import { PLAIN_TEXT_RULE, NO_DASH_RULE, trimToLastSentence } from '../utils/aiStyle.js';
 
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
+
+// Process-level safety net for the standalone jobs worker. The web server has
+// these (server.js); this process did not, so a single rejected Supabase call
+// inside an unwrapped scheduled job (resetCredits ran bare at boot and at 00:01)
+// could crash the whole worker and silently take the price-alert monitor and
+// every morning email down with it. unhandledRejection logs and keeps running so
+// a transient blip never kills the worker; uncaughtException logs and exits so
+// the platform restarts us from a clean state.
+process.on('unhandledRejection', (reason) => {
+  trackError('jobs.unhandledRejection', reason, 'critical');
+  console.error('[Jobs][CRITICAL] Unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  trackError('jobs.uncaughtException', err, 'critical');
+  console.error('[Jobs][CRITICAL] Uncaught exception:', err);
+  setTimeout(() => process.exit(1), 1000);
+});
 
 // NOTE: the buzz/social scanner is started by the API server (server.js calls
 // startBackgroundScanner on boot), so it is NOT run here. The old per-category
@@ -199,12 +217,16 @@ async function takeSnapshots() {
 }
 
 async function resetCredits() {
-  const today = new Date().getDate();
-  const { data: users } = await supabase.from('user_profiles').select('id,plan,billing_date').eq('billing_date', today);
-  for (const user of users ?? []) {
-    await supabase.from('user_profiles').update({ credits_remaining: PLAN_CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
+  try {
+    const today = new Date().getDate();
+    const { data: users } = await supabase.from('user_profiles').select('id,plan,billing_date').eq('billing_date', today);
+    for (const user of users ?? []) {
+      await supabase.from('user_profiles').update({ credits_remaining: PLAN_CREDITS[user.plan] ?? 50, credits_used_this_month: 0 }).eq('id', user.id);
+    }
+    if (users?.length) console.log(`[Jobs] Reset credits for ${users.length} users`);
+  } catch (err) {
+    console.error('[Jobs] Credit reset failed:', err?.message || err);
   }
-  if (users?.length) console.log(`[Jobs] Reset credits for ${users.length} users`);
 }
 
 function scheduleAt(hour, min, fn, label) {
@@ -213,9 +235,14 @@ function scheduleAt(hour, min, fn, label) {
   target.setHours(hour, min, 0, 0);
   let delay = target.getTime() - now.getTime();
   if (delay < 0) delay += 24 * 60 * 60 * 1000;
+  // Wrap every fire so a rejection from any job — even one passed as a raw async
+  // fn (resetCredits / resetDailyCounters below) — is caught and logged with its
+  // label instead of becoming an unhandled rejection that crashes the worker.
+  const safeFn = () => Promise.resolve().then(fn).catch((err) =>
+    console.error(`[Jobs] ${label} failed:`, err?.message || err));
   setTimeout(() => {
-    fn();
-    setInterval(fn, 24 * 60 * 60 * 1000);
+    safeFn();
+    setInterval(safeFn, 24 * 60 * 60 * 1000);
   }, delay);
   console.log(`[Jobs] Scheduled ${label} in ${Math.round(delay / 60000)}m`);
 }
