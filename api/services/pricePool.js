@@ -18,6 +18,13 @@ const prices = new Map();
 let lastFetchAt = null;
 let allTickers = new Set();
 let interval = null;
+// Single-flight guard. refreshPrices can run longer than the 30s interval when
+// Polygon is slow (each getSnapshots batch has a 15s abort and the missing-ticker
+// fallback fans out up to 10 individual 15s getSnapshot calls). The setInterval
+// gates only on elapsed time vs lastFetchAt, so a long run lets the next tick
+// launch a SECOND concurrent refreshPrices that hits Polygon again and mutates
+// the shared prices Map concurrently. This flag ensures only one runs at a time.
+let isRefreshing = false;
 
 // Always-include benchmarks. Without these, features that compare a position's
 // move to the broad market (e.g. /analysis MARKET-RELATIVE) silently lose
@@ -118,6 +125,12 @@ async function collectTickers() {
  * Fetch prices for all tickers in one batch call.
  */
 async function refreshPrices() {
+  // Skip if a refresh is already in flight. The time-based gate in setInterval
+  // (and the debounce in requestRefresh) still throttle cadence; this only
+  // prevents an overlapping run when a refresh runs longer than the interval.
+  // A skipped guarded call is correct behavior, not a dropped update.
+  if (isRefreshing) return;
+  isRefreshing = true;
   try {
     const tickers = await collectTickers();
 
@@ -180,6 +193,8 @@ async function refreshPrices() {
   } catch (err) {
     console.error('[PricePool] Refresh error:', err.message);
     trackPriceRefresh(false, 0);
+  } finally {
+    isRefreshing = false;
   }
 }
 

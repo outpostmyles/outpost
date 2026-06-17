@@ -545,8 +545,13 @@ export default function HomeTab({ marketStatus, sentiment, onSentimentLoad, onTa
           <NoticesCard onTabSwitch={onTabSwitch} refreshKey={lastUpdated?.getTime() ?? 0} />
 
           {/* Deploy Cash — the recurring engagement moment for users with
-              new money to put to work. */}
-          <DeployCashCard onTabSwitch={onTabSwitch} showToast={showToast} />
+              new money to put to work. Hidden for a brand-new tester with no
+              positions and nothing in the book, so "deploy your cash" never
+              lands before they've done the one onboarding step. Shows once
+              they have a position or a positive book value to deploy against. */}
+          {((data.portfolio?.positions?.length ?? 0) >= 1 || (data.portfolio?.accountValue ?? data.portfolio?.totalValue ?? 0) > 0) && (
+            <DeployCashCard onTabSwitch={onTabSwitch} showToast={showToast} />
+          )}
 
           {/* TODAY — Outpost's 5 ranked picks, always at the top of Home.
               Each row deep-links to its origin (portfolio, watchlist, etc.). */}
