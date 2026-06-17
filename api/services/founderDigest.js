@@ -53,7 +53,7 @@ async function gatherWeekData() {
   const [{ data: logs = [] }, { data: feedback = [] }] = await Promise.all([
     supabase
       .from('ai_response_log')
-      .select('feature, ticker, variant, score, failures, grader_notes, input_preview, output, created_at')
+      .select('feature, ticker, variant, score, failures, grader_notes, input_preview, output, created_at, review_verdict')
       .gte('created_at', sevenDaysAgo)
       .order('created_at', { ascending: false })
       .limit(5000),
@@ -305,7 +305,7 @@ async function sendEmail({ markdown, subjectOverride }) {
 export async function runQualityWatch({ email = true, windowDays = 7, flagThreshold = 70, minRecent = 10, deltaThreshold = 15 } = {}) {
   const since = new Date(Date.now() - 2 * windowDays * 86400000).toISOString();
   const { data } = await supabase.from('ai_response_log')
-    .select('feature, score, created_at')
+    .select('feature, score, created_at, review_verdict')
     .gte('created_at', since)
     .not('score', 'is', null)
     .order('created_at', { ascending: false })

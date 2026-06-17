@@ -27,14 +27,24 @@ export function summarizeQuality(rows, { flagThreshold = 70 } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const feat = new Map();
   const failTally = new Map();
-  let graded = 0, flagged = 0;
+  let graded = 0, flagged = 0, reviewedFlags = 0, confirmedProblems = 0;
   for (const row of list) {
     if (row?.score == null) continue; // Number(null) is 0, not NaN, so guard explicitly
     const score = Number(row.score);
     if (!Number.isFinite(score)) continue;
     graded++;
-    const isFlagged = score < flagThreshold;
+    const lowScore = score < flagThreshold;   // the grader's raw flag
+    const verdict = row.review_verdict;        // the founder's human label, if reviewed
+    // A response the founder marked 'fine' is a grader false-positive they already
+    // corrected, so it no longer counts as a flag. 'problem' and not-yet-reviewed
+    // low scores stay flagged (trust the grader until a human overrides it). This
+    // is what makes the founder's review effort actually clean the numbers.
+    const isFlagged = lowScore && verdict !== 'fine';
     if (isFlagged) flagged++;
+    if (lowScore && (verdict === 'fine' || verdict === 'problem')) {
+      reviewedFlags++;
+      if (verdict === 'problem') confirmedProblems++;
+    }
     const f = row.feature || 'unknown';
     let e = feat.get(f);
     if (!e) { e = { feature: f, count: 0, scoreSum: 0, flagged: 0, fails: new Map() }; feat.set(f, e); }
@@ -50,7 +60,12 @@ export function summarizeQuality(rows, { flagThreshold = 70 } = {}) {
     .map(e => ({ feature: e.feature, count: e.count, avgScore: e.count ? Math.round(e.scoreSum / e.count) : null, flagged: e.flagged, topFailure: topKey(e.fails) }))
     .sort((a, b) => (a.avgScore ?? 101) - (b.avgScore ?? 101));
   const topFailures = [...failTally.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
-  return { graded, flagged, flaggedPct: graded ? Math.round((flagged / graded) * 100) : 0, byFeature, topFailures };
+  return {
+    graded, flagged, flaggedPct: graded ? Math.round((flagged / graded) * 100) : 0, byFeature, topFailures,
+    // Human-review calibration: of the grader's flags you actually reviewed, what
+    // share were real problems. Low precision means the grader over-flags. null until reviewed.
+    reviewedFlags, graderPrecision: reviewedFlags ? Math.round((confirmedProblems / reviewedFlags) * 100) : null,
+  };
 }
 
 /**
@@ -100,7 +115,9 @@ export function detectQualityRegressions(rows, { now = 0, windowDays = 7, flagTh
     const f = r.feature || 'unknown';
     let e = feat.get(f);
     if (!e) { e = { feature: f, rg: 0, rf: 0, pg: 0, pf: 0 }; feat.set(f, e); }
-    const flagged = score < flagThreshold;
+    // Review-aware: a low score the founder marked 'fine' is a corrected false
+    // positive, so it does not count as a flag toward a regression.
+    const flagged = score < flagThreshold && r.review_verdict !== 'fine';
     if (t >= cutoff) { e.rg++; if (flagged) e.rf++; }
     else { e.pg++; if (flagged) e.pf++; }
   }

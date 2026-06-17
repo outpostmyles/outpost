@@ -52,6 +52,14 @@ test('worst regression sorts first across features', () => {
   assert.equal(r[0].feature, 'b'); // 80pt jump beats a's 50pt jump
 });
 
+test('a low score the founder marked "fine" does not count toward a regression', () => {
+  // Recent rows would be 100% flagged by raw score, but the founder cleared them all.
+  const prior = rows('agent_chat', 12, false, 10);
+  const recent = Array.from({ length: 12 }, () => ({ feature: 'agent_chat', score: 40, review_verdict: 'fine', created_at: new Date(NOW - DAY).toISOString() }));
+  const r = detectQualityRegressions([...prior, ...recent], { now: NOW, minRecent: 10, deltaThreshold: 15 });
+  assert.equal(r.length, 0); // already human-cleared, so no false alarm
+});
+
 let pass = 0, fail = 0;
 for (const t of tests) {
   try { t.fn(); console.log(`ok    ${t.name}`); pass++; }

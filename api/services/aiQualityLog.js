@@ -134,7 +134,7 @@ export async function getQualityAggregate({ days = 30, flagThreshold = 70 } = {}
   try {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data } = await supabase.from('ai_response_log')
-      .select('feature, score, failures, created_at')
+      .select('feature, score, failures, created_at, review_verdict')
       .gte('created_at', since)
       .not('score', 'is', null)
       .order('created_at', { ascending: false })
@@ -153,7 +153,7 @@ export async function getQualityTrend({ days = 30, windowDays = 7, flagThreshold
   try {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const { data } = await supabase.from('ai_response_log')
-      .select('feature, score, failures, created_at')
+      .select('feature, score, failures, created_at, review_verdict')
       .gte('created_at', since)
       .not('score', 'is', null)
       .order('created_at', { ascending: false })

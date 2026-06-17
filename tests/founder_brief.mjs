@@ -39,6 +39,30 @@ test('buildQualityTrend computes a recent-vs-prior flag rate delta', () => {
   assert.equal(t.graded, 6); // overall still aggregates everything
 });
 
+test('summarizeQuality: a low score the founder marked "fine" stops counting as a flag', () => {
+  const q = summarizeQuality([
+    { feature: 'x', score: 40, review_verdict: 'fine' },     // grader flagged, human cleared -> not a flag
+    { feature: 'x', score: 40, review_verdict: 'problem' },  // grader flagged, human confirmed -> a flag
+    { feature: 'x', score: 40 },                              // flagged, not yet reviewed -> a flag
+    { feature: 'x', score: 90 },                              // clean
+  ]);
+  assert.equal(q.graded, 4);
+  assert.equal(q.flagged, 2);     // problem + unreviewed, NOT the 'fine' one
+  assert.equal(q.flaggedPct, 50);
+});
+
+test('summarizeQuality: grader precision = real problems / reviewed flags', () => {
+  const q = summarizeQuality([
+    { feature: 'x', score: 40, review_verdict: 'problem' },
+    { feature: 'x', score: 45, review_verdict: 'problem' },
+    { feature: 'x', score: 50, review_verdict: 'fine' },     // grader was wrong here
+    { feature: 'x', score: 90 },                              // clean, never a flag
+  ]);
+  assert.equal(q.reviewedFlags, 3);
+  assert.equal(q.graderPrecision, 67);  // 2 of 3 reviewed flags were real (round 66.6)
+  assert.equal(summarizeQuality([{ feature: 'x', score: 90 }]).graderPrecision, null); // nothing reviewed
+});
+
 test('buildQualityTrend leaves the delta null when a window is empty', () => {
   const t = buildQualityTrend([qrow('s', 60, 1, ['T'])], { now: NOW, windowDays: 7 });
   assert.equal(t.flagRateDelta, null); // no prior-window rows to compare
