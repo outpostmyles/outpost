@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { FeedbackButtons } from '../shared/UI.jsx';
 
 /**
  * SCREENERS — the main event in Social, structured like the agent: a LIST of the
@@ -464,10 +465,38 @@ function ResultRow({ r, status, compareMode, selected, onToggle, onAsk, onWatch,
 // book. The screener finds names; this is the room you research one in.
 const dsNote = { fontSize: 11, color: 'var(--faint)', lineHeight: 1.45, margin: '6px 0 0' };
 
+// Multi-lens read feature flag (instant kill switch) + synthesis tone map.
+const MULTI_LENS_ENABLED = true;
+const ML_TONE = {
+  constructive: { color: 'var(--green)', label: 'Constructive' },
+  cautious: { color: 'var(--red)', label: 'Cautious' },
+  mixed: { color: 'var(--amber)', label: 'Mixed picture' },
+};
+
 export function DossierView({ ticker, dossier, loading, error, status, onStatus, sameHeld, onCompareHoldings, context, onBack, onWatch, onAsk }) {
   const d = dossier;
   const f = d?.fundamentals || {};
   const hasFund = f && Object.values(f).some(v => v != null);
+
+  // Multi-lens read: four grounded lenses + a synthesis, run on demand. Result is
+  // tied to this ticker; a ticker change drops it so the user re-runs on the new one.
+  const [ml, setMl] = useState(null);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlError, setMlError] = useState('');
+  useEffect(() => { setMl(null); setMlError(''); }, [ticker]);
+  async function runFullRead() {
+    if (mlLoading) return;
+    setMlLoading(true); setMlError('');
+    try {
+      const r = await api.ai.multiLens({ ticker: (d?.ticker) || ticker, thesis: d?.holding?.thesis || context?.thesis || '' });
+      setMl(r);
+    } catch (e) {
+      setMlError(e?.error || 'Could not run the full read just now.');
+    } finally {
+      setMlLoading(false);
+    }
+  }
+
   return (
     <div style={{ paddingBottom: 44 }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -603,10 +632,42 @@ export function DossierView({ ticker, dossier, loading, error, status, onStatus,
             <p style={dsNote}>Your call sticks to {(dossier?.ticker) || ticker} everywhere in Outpost. Tap the active one to clear it.</p>
           </DSection>
 
+          {ml && (() => {
+            const t = ML_TONE[ml.lean] || ML_TONE.mixed;
+            const body = { fontSize: 12, color: 'var(--text)', lineHeight: 1.55, margin: 0, whiteSpace: 'pre-wrap' };
+            return (
+              <>
+                <DSection title="OUTPOST READ" accent>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: t.color }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', color: t.color }}>{t.label.toUpperCase()}</span>
+                    <span style={{ fontSize: 9, color: 'var(--faint)', marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{ml.confidence} confidence</span>
+                  </div>
+                  {ml.oneLine && <p style={{ fontSize: 12.5, color: 'var(--text)', fontWeight: 600, lineHeight: 1.5, margin: '0 0 8px' }}>{ml.oneLine}</p>}
+                  {ml.synthesis && <p style={body}>{ml.synthesis}</p>}
+                  {ml.watch && <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, margin: '8px 0 0' }}><span style={{ fontWeight: 700 }}>Watch next: </span>{ml.watch}</p>}
+                  <div style={{ marginTop: 8 }}><FeedbackButtons feature="multi_lens" response={ml.synthesis} /></div>
+                </DSection>
+                <DSection title="THE BUSINESS"><p style={body}>{ml.business}</p></DSection>
+                <DSection title="THE CHART"><p style={body}>{ml.chart}</p></DSection>
+                <DSection title="THE STORY"><p style={body}>{ml.story}</p></DSection>
+                <DSection title="THE RISK"><p style={body}>{ml.risk}</p></DSection>
+              </>
+            );
+          })()}
+
           <div style={{ display: 'flex', gap: 8, padding: '14px 16px' }}>
             <button onClick={onAsk} className="btn btn-blue" style={{ flex: 1, fontSize: 11, padding: '10px' }}>DEEP DIVE WITH OUTPOST</button>
             <button onClick={onWatch} className="btn btn-muted" style={{ fontSize: 11, padding: '10px 14px' }}>+ WATCH</button>
           </div>
+          {MULTI_LENS_ENABLED && !ml && (
+            <div style={{ padding: '0 16px 16px' }}>
+              <button onClick={runFullRead} disabled={mlLoading} className="btn btn-muted" style={{ width: '100%', fontSize: 11, padding: '11px', letterSpacing: '0.5px', opacity: mlLoading ? 0.5 : 1 }}>
+                {mlLoading ? 'Four lenses reading...' : 'FULL READ: 4 grounded lenses + synthesis'}
+              </button>
+              {mlError && <p style={{ fontSize: 10.5, color: 'var(--red)', textAlign: 'center', margin: '8px 0 0' }}>{mlError}</p>}
+            </div>
+          )}
         </>
       ) : null}
     </div>
