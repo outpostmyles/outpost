@@ -81,8 +81,31 @@ create table if not exists watchlist (
   change_percent numeric,
   last_sentiment text,
   last_mention_count integer,
+  notes text,
+  alert_price numeric,
   added_at timestamptz default now(),
   unique(user_id, ticker)
+);
+
+-- Custom natural-language screeners (Social) + their last vetted results.
+create table if not exists screeners (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references user_profiles(id) on delete cascade,
+  name text not null,
+  query text not null,
+  results jsonb,
+  last_run_at timestamptz,
+  created_at timestamptz default now()
+);
+create index if not exists screeners_user_idx on screeners (user_id);
+
+-- Per-user, per-ticker research status (drives the dossier researched/watching badge).
+create table if not exists research_status (
+  user_id uuid references user_profiles(id) on delete cascade,
+  ticker text not null,
+  status text not null,
+  updated_at timestamptz default now(),
+  primary key (user_id, ticker)
 );
 
 create table if not exists futures_trades (
