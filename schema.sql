@@ -107,6 +107,7 @@ create table if not exists agent_messages (
   user_id uuid references user_profiles(id) on delete cascade,
   role text not null,
   content text not null,
+  conversation_id text,                          -- multiple-conversations feature (see migration 027)
   created_at timestamptz default now()
 );
 
