@@ -29,6 +29,19 @@ test('prices plain input + output at the model rate', () => {
   assert.equal(p.outputTokens, 1_000_000);
 });
 
+test('opus is priced at the current 4.x list rate ($5 in / $25 out), not the legacy $15/$75', () => {
+  const r = rateForModel('claude-opus-4-8');
+  assert.equal(r.tier, 'opus');
+  assert.equal(r.input, 5);   // Opus 4.x input rate (was wrongly $15 — legacy Claude-3 Opus)
+  assert.equal(r.output, 25); // Opus 4.x output rate (was wrongly $75)
+  // 1M input + 1M output on opus = $5 + $25 = $30
+  const p = priceUsage('claude-opus-4-8', { input_tokens: 1_000_000, output_tokens: 1_000_000 });
+  assert.ok(close(p.costUsd, 30), `expected $30, got ${p.costUsd}`);
+  // cache rates follow the 1.25x-write / 0.1x-read convention off the $5 input: 6.25 + 0.5 = $6.75
+  const c = priceUsage('claude-opus-4-8', { cache_creation_input_tokens: 1_000_000, cache_read_input_tokens: 1_000_000 });
+  assert.ok(close(c.costUsd, 6.75), `expected $6.75, got ${c.costUsd}`);
+});
+
 test('haiku is cheaper than sonnet for the same usage', () => {
   const u = { input_tokens: 500_000, output_tokens: 200_000 };
   const haiku = priceUsage('claude-haiku-4-5-20251001', u).costUsd;

@@ -11,7 +11,7 @@
 // input_tokens already excludes the cached portion, so each is priced separately.
 
 const PER_MTOK = {
-  opus:   { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  opus:   { input: 5,  output: 25, cacheWrite: 6.25,  cacheRead: 0.5 },
   sonnet: { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
   haiku:  { input: 1,  output: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
 };
