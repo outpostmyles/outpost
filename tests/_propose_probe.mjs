@@ -8,7 +8,7 @@
 import { supabase } from '../api/db.js';
 import { executeTool } from '../api/services/agentTools.js';
 
-const email = (process.argv[2] || 'mylesschen@gmail.com').toLowerCase().trim();
+const email = (process.argv[2] || 'you@example.com').toLowerCase().trim();
 const { data: u } = await supabase.from('user_profiles').select('id, email').eq('email', email).maybeSingle();
 if (!u) { console.error(`No account for ${email}`); process.exit(1); }
 

@@ -8,7 +8,7 @@ import { supabase } from '../api/db.js';
 import { getMemories, formatMemories, extractMemories } from '../api/services/agentMemory.js';
 import { getUserPatternBlock } from '../api/services/decisionLedger.js';
 
-const email = (process.argv[2] || 'mylesschen@gmail.com').toLowerCase().trim();
+const email = (process.argv[2] || 'you@example.com').toLowerCase().trim();
 const { data: u } = await supabase.from('user_profiles').select('id, email, display_name').eq('email', email).maybeSingle();
 if (!u) { console.error(`No account for ${email}. Try: node scripts/reset-password.mjs --list`); process.exit(1); }
 console.log(`\nAccount: ${u.email} (${u.display_name || 'no name'})  id=${u.id}`);

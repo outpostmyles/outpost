@@ -53,7 +53,7 @@ export default function ActivationChecklist({ portfolio, userId, plan, onTabSwit
     },
   ];
 
-  // Upgrade task suppressed until Stripe is wired — see LAUNCH_PLAN Phase 0.1.
+  // Upgrade task suppressed until Stripe is wired.
   // The task was showing a hardcoded price + plan name and pointed to a flow
   // that doesn't exist yet. Re-enable once the real upgrade path lands.
   // if (!isPaid) {

@@ -290,7 +290,7 @@ export default function SettingsPage({ user, onLogout, showToast, onOpenAdmin })
           <p style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '0.5px' }}>RESETS IN {daysLeft} DAYS · {PLAN_NAMES[plan]} PLAN</p>
         </div>
 
-        {/* Upgrade / Buy Credits buttons hidden until Stripe is wired (LAUNCH_PLAN Phase 0.1).
+        {/* Upgrade / Buy Credits buttons hidden until Stripe is wired.
             Original gate was `plan !== 'pro'` which also incorrectly showed for elite users. */}
         {false && plan !== 'pro' && (
           <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>

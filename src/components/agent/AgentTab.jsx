@@ -605,7 +605,7 @@ export default function AgentTab({ user, showToast, onOpenerWaiting, active = tr
         </div>
       )}
 
-      {/* Free tier banner — UPGRADE button suppressed until Stripe is wired (LAUNCH_PLAN Phase 0.1) */}
+      {/* Free tier banner: UPGRADE button suppressed until Stripe is wired */}
       {!isPaid && (
         <div style={{ padding: '8px 16px', background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(59,130,246,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
           <p style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>

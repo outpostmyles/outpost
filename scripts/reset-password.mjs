@@ -7,7 +7,7 @@
 //   node scripts/reset-password.mjs <email> '<newPassword>'
 //
 // Example:
-//   node scripts/reset-password.mjs mylesschen@gmail.com 'MyNewPass123'
+//   node scripts/reset-password.mjs you@example.com 'MyNewPass123'
 //
 // To just see which accounts exist (read-only), pass --list:
 //   node scripts/reset-password.mjs --list
