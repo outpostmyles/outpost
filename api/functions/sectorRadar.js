@@ -15,6 +15,7 @@ import { getSnapshots } from '../utils/polygon.js';
 import { getBreakingNews, isFinnhubAvailable } from '../utils/finnhub.js';
 import { config } from '../config.js';
 import { recordClaudeUsage } from '../services/aiUsage.js';
+import { logAndGrade } from '../services/aiQualityLog.js';
 
 const router = express.Router();
 const anthropic = new Anthropic({ apiKey: config.anthropicKey });
@@ -141,20 +142,21 @@ async function generateRadarAnalysis(sectors, newsClusters, spyChange) {
     return `${s.ticker} (${s.name}): ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}% today, ${s.relativeStrength >= 0 ? '+' : ''}${s.relativeStrength.toFixed(2)}% vs SPY, ${newsStr}`;
   }).join('\n');
 
-  const systemPrompt = `You are Outpost — the friend in someone's phone who actually knows finance. You're watching which parts of the market are heating up or cooling down so a regular investor can see what's catching attention before it's obvious.
+  const systemPrompt = `You are Outpost, the friend in someone's phone who actually knows finance. You're watching which parts of the market are heating up or cooling down so a regular investor can see what's catching attention.
+
+You are given ONLY these signals per sector ETF: its move today, its move RELATIVE to SPY, and (when present) how many news headlines clustered around it plus the theme keywords from those headlines. You do NOT know WHY anything moved. You have no data on rates, oil, the Fed, earnings, or any macro driver.
 
 ANALYSIS RULES:
-1. Look for sectors that are moving against the broader market — doing well on a bad day, or doing badly on a good day. That tells you something is going on.
-2. When multiple news headlines cluster around the same theme, big investors usually follow within days. Pay attention.
-3. Separate core sectors (Tech, Energy, Financials) from emerging themes (quantum, AI, uranium). Both matter, but they're different stories.
-4. For each pick, write the THESIS in one plain-English sentence — not "it's up" but WHY money is showing up there. Max 18 words.
-5. Be forward-looking — what's the NEXT move, not what already happened.
-6. Maximum 3 heating up + 2 cooling down. Quality over quantity.
+1. The signal is RELATIVE STRENGTH: a sector moving against the market (up on a down day, or down on an up day) is the thing worth flagging. Rank on the relative-strength number you were given.
+2. CRITICAL GROUNDING: write each thesis using ONLY the move, the move vs SPY, and the theme keywords you were given. NEVER invent the cause. Do not say "rate-cut expectations", "oil drops on demand worries", "the Fed", "earnings", or any macro reason you were not given. If a sector has clustered headlines you may name the THEME KEYWORDS (they are in the input) but not the macro story behind them. If it has no news clustering, speak only to the relative-strength number and treat the cause as unconfirmed.
+3. Separate core sectors (Tech, Energy, Financials) from emerging themes (quantum, AI, uranium); both matter but they're different stories.
+4. THESIS: one plain-English sentence, max 20 words. No markdown, asterisks, headers, bullets, or dashes. State the real numbers and hand the "why" to the user to check. Never inflate a small move into a big one.
+5. Maximum 3 heating up + 2 cooling down. Quality over quantity.
 
-VOICE — the thesis fields are user-facing. Write them like a friend, not a fund manager:
-- Plain English by default. Use full sector names ("Technology", "Energy") not just tickers in the thesis text.
-- NEVER use these words in the thesis without immediate context: rotation, allocation, institutional, smart money, divergence, breadth, beta, alpha, capex, ROI, tape, broad tape, headwinds, tailwinds, secular.
-- Good thesis examples: "Banks are catching a bid as rate-cut expectations rise — money is moving in.", "Energy is sliding while oil drops on demand worries — investors are stepping back."
+VOICE: full sector names ("Technology", "Energy"), not tickers, in the thesis. NEVER use: rotation, allocation, institutional, smart money, divergence, breadth, beta, alpha, capex, ROI, tape, broad tape, headwinds, tailwinds, secular.
+Good thesis examples (grounded, no invented cause):
+- "Technology is up 1.8% while the market is flat and headlines are clustering on AI; worth a look at what's driving it."
+- "Energy is lagging the market by 2.1% today with nothing notable in the headlines yet."
 
 Return ONLY valid JSON, no markdown.`;
 
@@ -185,6 +187,10 @@ Return JSON with:
     } finally { clearTimeout(tm); }
 
     const text = msg.content[0].text;
+    // Beta tracker: grade the sector theses against the grounded-data rubric, using the
+    // SAME signal lines the model saw as input so grounded numbers/themes aren't read as
+    // invented (mirrors the bargain_radar fix).
+    logAndGrade({ userId: null, feature: 'sector_radar', input: `SPY ${spyChange >= 0 ? '+' : ''}${spyChange.toFixed(2)}% today\n${sectorSignals}`, output: text }).catch(() => {});
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       return JSON.parse(match[0]);

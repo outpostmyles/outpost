@@ -1099,10 +1099,18 @@ IMPORTANT: The above data is your starting context. For anything not covered her
     // it, so grading it is pure cost and review-queue noise. Flagged replies land in the
     // founder review queue and roll up in the brief.
     if (classifyMessageTier(content).tier !== 1) {
-      const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
-        .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
-        .filter(Boolean).join('\n\n');
-      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: reply || '' }).catch(() => {});
+      // Grade against what the agent ACTUALLY saw: its context block (positions, cash,
+      // P&L, market data, news) plus a digest of the tool results it fetched, then the
+      // user's message. The old tail-of-string-messages dropped all of that (the context
+      // lives in `system`, tool results are array-content turns), so the grader read every
+      // real number as invented and tripped the bright line. Same class as bargain_radar.
+      const toolDigest = (Array.isArray(messages) ? messages : [])
+        .flatMap(m => Array.isArray(m.content)
+          ? m.content.filter(b => b?.type === 'tool_result').map(b => typeof b.content === 'string' ? b.content : JSON.stringify(b.content))
+          : [])
+        .join('\n').slice(0, 3000);
+      const graderInput = `CONTEXT THE AGENT SAW:\n${contextBlock}\n\nTOOL RESULTS:\n${toolDigest || '(none)'}\n\nLATEST USER MESSAGE:\n${content}`;
+      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: graderInput, output: reply || '' }).catch(() => {});
     }
 
     // Extract and save memories from this exchange (non-blocking)
@@ -1485,10 +1493,16 @@ IMPORTANT: Use YOUR TOOLS to look up real data for anything not covered above.`;
     // tier-1 small talk (greetings/acks): the grader auto-passes it, so it is pure
     // cost and review-queue noise.
     if (classifyMessageTier(content).tier !== 1) {
-      const tail = (Array.isArray(messages) ? messages.slice(-8) : [])
-        .map(m => (typeof m.content === 'string' ? `${m.role}: ${m.content}` : null))
-        .filter(Boolean).join('\n\n');
-      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: tail || content || '', output: fullReply || '' }).catch(() => {});
+      // Grade against what the agent ACTUALLY saw (context block + tool-result digest +
+      // user message), not just prior chat lines. See the non-stream handler for why:
+      // the old tail dropped every grounded number and the grader read it as invented.
+      const toolDigest = (Array.isArray(messages) ? messages : [])
+        .flatMap(m => Array.isArray(m.content)
+          ? m.content.filter(b => b?.type === 'tool_result').map(b => typeof b.content === 'string' ? b.content : JSON.stringify(b.content))
+          : [])
+        .join('\n').slice(0, 3000);
+      const graderInput = `CONTEXT THE AGENT SAW:\n${contextBlock}\n\nTOOL RESULTS:\n${toolDigest || '(none)'}\n\nLATEST USER MESSAGE:\n${content}`;
+      logAndGrade({ userId: req.user.id, feature: 'agent_chat', input: graderInput, output: fullReply || '' }).catch(() => {});
     }
 
     // Extract memories (non-blocking)

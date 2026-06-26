@@ -645,7 +645,9 @@ Answer "should they worry?" — calmly when calm is correct, plainly when it's n
       userId: req.user.id,
       feature: isDeep ? 'analysis_deep' : 'analysis_quick',
       ticker,
-      input: posContext + (planContext ? '\n' + planContext : '') + '\n' + (moveContext || '') + '\n' + (drawdownContext || ''),
+      // Grade against the SAME context the model saw (position + move + market + the real
+      // headlines), not a subset, so headline-grounded reads aren't over-flagged as invented.
+      input: `POSITION: ${posContext}${planContext}${drawdownContext}\nTODAY: ${snap?.changePercent ?? 'N/A'}% move${moveContext}\nMARKET: ${ctx.regime}, VIX ${ctx.vix}\nNEWS:\n${tickerHeadlines}`,
       output: analysis,
     }).catch(() => {});
   } catch (err) {
