@@ -255,21 +255,21 @@ async function stage5ClaudeFilter(candidates) {
     return `${i + 1}. ${c.ticker} — price $${c.price}, ${c.pctOffHigh.toFixed(1)}% off 52w high ($${c.fiftyTwoWeekHigh}), RSI ${c.rsi.toFixed(1)}${analystStr}${ptStr}`;
   }).join('\n');
 
-  const systemPrompt = `You are Outpost — the friend in someone's phone who actually knows finance. You're looking at stocks that have dropped a lot and deciding which ones look like a real opportunity ("buyable dip") versus which ones are dropping for a good reason ("avoid").
+  const systemPrompt = `You are Outpost, the friend in someone's phone who actually knows finance, scanning stocks that have fallen a lot.
 
-BUYABLE DIP signals: the whole market is down and this stock got dragged along with it, a sector is out of favor, one bad earnings report that doesn't change the long-term story, fear over tariffs or rates that will pass.
+You are given ONLY these numbers for each stock: its price, how far it sits below its 52-week high, its RSI, and when available the current analyst rating and price target. You do NOT know why it dropped, what its last earnings said, or any news about it. You have no data on the business, its customers, its executives, or any catalyst.
 
-AVOID signals: the business itself is fading (declining customers, products getting replaced), accounting problems, key executives leaving, a regulator just delivered a death blow, the company is losing its biggest customer, real questions about whether the company will survive.
+CRITICAL GROUNDING RULE: write each thesis using ONLY the numbers you were given. NEVER invent a reason for the drop. Do not say it "got dragged down with the market", "one bad earnings report", "the sector is out of favor", "customers are leaving", "accounting problems", or anything about what the company is doing or why it fell. You have zero data on any of that, and making it up is the worst thing you can do in a finance app. If a verdict would require knowing the cause, you cannot know it. Speak only to what the numbers say, and hand the "why did it fall" question to the user as the thing for them to check.
 
-For each stock, write the THESIS as one sentence a regular person would understand. Max 18 words. Plain English — never use "secular decline", "story intact", "going-concern", "broken thesis", "macro-driven", or "regulatory headwind". Say what's actually going on.
+Decide "buyable" versus "avoid" from the numbers you actually have:
+- lean BUYABLE when it is deeply oversold (low RSI), analysts still rate it well, and there is meaningful upside to their price target. Frame it as oversold and analysts still constructive, worth researching why it fell.
+- lean AVOID when it is barely off its high, not really oversold, analysts are lukewarm, or it already sits near or above their target.
 
-Good examples:
-- "Got dragged down with the whole market — the company itself is still doing fine."
-- "Tech sector is out of favor right now, but the business hasn't changed."
-- "One bad earnings report overdone — the long-term story still works."
-- "Customers are leaving for cheaper options — this looks like a real problem, not a dip."
+THESIS rules: one plain-English sentence, max 22 words. No markdown, asterisks, headers, bullets, or dashes. State the real numbers, never inflate "slightly" into "a lot", and point the user to check what caused the drop. Examples (grounded, no invented cause):
+- "Down 38% from its high and deeply oversold at RSI 22; analysts still rate it 4 of 5, so worth checking what dropped it."
+- "Only 11% off its high and analysts look lukewarm; not oversold enough to call a real bargain yet."
 
-Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("buyable" or "avoid"), and the plain-English thesis.`;
+Return ONLY valid JSON, no markdown. For each stock: ticker, verdict ("buyable" or "avoid"), and the grounded thesis.`;
 
   try {
     const ctrl = new AbortController();
@@ -282,7 +282,7 @@ Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("b
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: [{
           role: 'user',
-          content: `Evaluate these oversold large-caps. Which are buyable dips and which are real problems?\n\n${lines}\n\nReturn JSON:\n{\n  "verdicts": [\n    { "ticker": "XYZ", "verdict": "buyable" | "avoid", "thesis": "one sentence" }\n  ]\n}`,
+          content: `Evaluate these oversold large-caps using ONLY the numbers given. Which look buyable (deeply oversold, analysts still constructive) and which look weak? Do NOT invent any reason for the drops; if you do not know why a stock fell, say to check it.\n\n${lines}\n\nReturn JSON:\n{\n  "verdicts": [\n    { "ticker": "XYZ", "verdict": "buyable" | "avoid", "thesis": "one grounded sentence" }\n  ]\n}`,
         }],
       }, { signal: ctrl.signal });
       recordClaudeUsage({ feature: 'bargain_radar', model: msg.model, usage: msg.usage, userId: null });
@@ -290,7 +290,10 @@ Return ONLY valid JSON, no markdown. For each stock, output: ticker, verdict ("b
 
     const text = msg.content?.[0]?.text || '';
     // Beta tracker: grade the bargain verdicts against the grounded-data rubric.
-    logAndGrade({ userId: null, feature: 'bargain_radar', input: candidates.map(c => c.ticker).join(', '), output: text }).catch(() => {});
+    // Grade against the ACTUAL data lines Claude was given (not just the ticker list), so
+    // the grounding rules (NO_INVENTED_DETAILS / NO_FAKE_CATALYSTS) can tell a number that
+    // came from the input apart from one the model invented.
+    logAndGrade({ userId: null, feature: 'bargain_radar', input: lines, output: text }).catch(() => {});
     const match = text.match(/\{[\s\S]*\}/);
     let parsed = null;
     if (match) {
