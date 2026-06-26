@@ -119,7 +119,9 @@ async function tryFundedBuyRpc(userId, args) {
   return { applied: true, ...data }; // data = { ok, position?, cash?, reason?, available?, needed? }
 }
 
-const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100 };
+// 'unlimited' is the beta tier (founder + invited testers); it must not fall through
+// the `?? 3` guard below, which is only meant for a genuinely unknown plan string.
+const POSITION_LIMITS = { free: 10, starter: 25, pro: 50, elite: 100, unlimited: 100_000 };
 
 // Cash balance helpers now live in services/cashBalance.js so every surface
 // (this router, the agent's North Star framing, the daily digest) reads the
