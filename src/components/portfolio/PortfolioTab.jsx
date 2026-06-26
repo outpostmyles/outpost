@@ -669,6 +669,40 @@ function SkipThesisModal({ kind, onWrite, onSkip }) {
   );
 }
 
+// DeletePositionModal: a TRUE delete (erase), deliberately distinct from CLOSE.
+// CLOSE records a realized win/loss into your history; DELETE wipes the position
+// and its whole per-ticker footprint with nothing recorded. Gated behind a typed
+// ticker confirmation so a user who means to close can't purge by reflex.
+function DeletePositionModal({ ticker, onClose, onConfirm }) {
+  const [confirmText, setConfirmText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const match = confirmText.trim().toUpperCase() === String(ticker).toUpperCase();
+  async function go() {
+    if (!match) { setErr(`Type ${ticker} to confirm`); return; }
+    setLoading(true); setErr('');
+    // On success the card unmounts (onRefresh drops it from the book), so we don't
+    // reset loading. On failure, surface the error and let them retry.
+    try { await onConfirm(); }
+    catch (e) { setErr(e?.error || 'Failed to delete'); setLoading(false); }
+  }
+  return (
+    <Modal title={`Delete ${ticker}`} onClose={onClose}>
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.6 }}>
+        This permanently deletes <strong>{ticker}</strong> and erases everything tied to it: its thesis, history, and anything the agent remembers about it. <strong>No win or loss is recorded</strong> and it won't touch your stats. This cannot be undone.
+      </p>
+      <p style={{ fontSize: 11.5, color: 'var(--faint)', marginBottom: 16, lineHeight: 1.6 }}>
+        Actually sold it? Use <strong>CLOSE</strong> instead so the result counts toward your track record.
+      </p>
+      <FormField label={`Type ${ticker} to confirm`}>
+        <input className="input" value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={ticker} autoFocus />
+      </FormField>
+      {err && <p style={{ fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{err}</p>}
+      <button onClick={go} disabled={loading || !match} className="btn btn-red btn-full">{loading ? 'Deleting...' : 'DELETE PERMANENTLY'}</button>
+    </Modal>
+  );
+}
+
 function AddModal({ onClose, onDone, showToast, prefill, onPrefillConsumed, isFirstPosition, onAdded }) {
   // Phase 4 — when opened via a Deploy Cash pick, prefill the form with
   // the chosen recommendation's ticker/shares/cost/reasoning. The user can
@@ -1647,6 +1681,7 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
   // their high-execution trades have a better win rate than their low.
   const [executionRating, setExecutionRating] = useState(null);
   const [skipReflectionConfirm, setSkipReflectionConfirm] = useState(false);
+  const [showDelete, setShowDelete] = useState(false); // true-delete (erase) warning modal
   const [err, setErr] = useState('');
   const [journalSave, setJournalSave] = useState(null);
 
@@ -1773,6 +1808,16 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
       setErr('Failed to remove');
       setRemoving(false);
     } finally { removingRef.current = false; } // clear on close (card unmounts), trim, or error
+  }
+
+  async function doPurge() {
+    // TRUE delete: erase the position with NO closed-trade and no win/loss recorded.
+    // The card unmounts on success (onRefresh drops it from the book), so there is no
+    // local reset to do. Throwing propagates to the modal so it can show + retry.
+    const res = await api.portfolio.purgePosition(pos.id);
+    onRefresh();
+    showToast(`${pos.ticker} deleted. Nothing recorded to your stats.`, 'success');
+    if (res?.cashSynced === false) showToast('Deleted, but your cash balance did not update. You can set it in Settings.', 'error');
   }
 
   // Border accent — drawdown amber wins, otherwise green/red by today's P&L
@@ -2026,6 +2071,13 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
                 style={{ flex: 1, fontSize: 10, padding: '7px 0' }}
               >CLOSE</button>
             </div>
+            {/* True delete: deliberately de-emphasized (faint text link, never a red
+                button) so it can't be mistaken for CLOSE. Opens a typed-confirm warning.
+                For erasing test/junk positions with no win or loss recorded. */}
+            <button
+              onClick={() => setShowDelete(true)}
+              style={{ display: 'block', margin: '9px auto 1px', background: 'none', border: 'none', color: 'var(--faint)', fontSize: 9.5, letterSpacing: '0.3px', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
+            >Delete instead (added by mistake)</button>
           </div>
         )}
 
@@ -2231,6 +2283,14 @@ function PositionCard({ pos, totalValue, onRefresh, showToast, status, thesisWat
           kind="reflection"
           onWrite={() => setSkipReflectionConfirm(false)}
           onSkip={doRemove}
+        />
+      )}
+
+      {showDelete && (
+        <DeletePositionModal
+          ticker={pos.ticker}
+          onClose={() => setShowDelete(false)}
+          onConfirm={doPurge}
         />
       )}
     </>

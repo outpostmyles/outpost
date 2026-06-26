@@ -69,3 +69,23 @@ export function buildFundedBuyArgs(input) {
     stopLoss: stopLoss || null,
   };
 }
+
+/**
+ * Inverse of a funded buy, for a TRUE delete (erase) of a position: the dollar
+ * amount to RESTORE to cash so deleting undoes the original buy's cash effect
+ * exactly. A delete erases the buy rather than selling it, so this restores the
+ * original COST BASIS (what was paid), never proceeds.
+ *
+ *   - funded_from_cash === false: a recorded holding that never debited cash, so
+ *     restore nothing (0).
+ *   - true, or null (legacy rows, treated as funded like the close path): restore
+ *     avg_cost * shares.
+ *
+ * Pure + clamped: never returns a negative, NaN, or non-finite amount, and rounds
+ * to whole cents to match how the funded-buy debit is rounded.
+ */
+export function cashToRestoreOnDelete({ funded_from_cash, avg_cost, shares } = {}) {
+  if (funded_from_cash === false) return 0;
+  const basis = (Number(avg_cost) || 0) * (Number(shares) || 0);
+  return Number.isFinite(basis) && basis > 0 ? Math.round(basis * 100) / 100 : 0;
+}

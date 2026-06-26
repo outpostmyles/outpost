@@ -18,7 +18,7 @@ import { assessTradePlan } from '../services/tradePlan.js';
 import { getThesisWatchesForUser } from '../services/thesisWatch.js';
 import { shouldReanchor } from '../../src/lib/readContinuity.js';
 import { computeBookStats, mergeLots } from '../../src/lib/bookStats.js';
-import { buildFundedBuyArgs } from '../../src/lib/buyMath.js';
+import { buildFundedBuyArgs, cashToRestoreOnDelete } from '../../src/lib/buyMath.js';
 import { computePortfolioValue } from '../../src/lib/portfolioValue.js';
 import { getCashBalance, setCashBalance, adjustCashBalanceSafe, isMissingRpc } from '../services/cashBalance.js';
 import { idempotencyGuard } from '../services/idempotency.js';
@@ -1226,6 +1226,75 @@ router.patch('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
 router.delete('/positions/:id', requireAuth, rateLimit(10), async (req, res) => {
   let idem = null, committed = false;
   try {
+    // TRUE DELETE (?purge=true): remove a position entirely with NO trace, distinct from
+    // CLOSE. It records no closed_trades row and no decision, so a test/junk position never
+    // pollutes win-rate stats or the Machine, and it purges every per-ticker footprint so
+    // the agent stops surfacing a position the user erased. Branches BEFORE the sell/close
+    // idempotency guard below (idem stays null; the finally block is a no-op for this path).
+    if (req.query.purge === 'true') {
+      const { data: pos, error: readErr } = await supabase
+        .from('positions')
+        .select('id, ticker, shares, avg_cost, funded_from_cash')
+        .eq('id', req.params.id)
+        .eq('user_id', req.user.id)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      if (!pos) return res.status(404).json({ error: 'Position not found' });
+
+      // 1) Hard-delete the row itself (user-scoped, never by id alone). No RPC: the
+      //    close_* RPCs all force a closed_trades insert, which is exactly what a delete
+      //    must NOT do. A null return means it was already gone (raced) -> 404.
+      const { data: del, error: delErr } = await supabase
+        .from('positions')
+        .delete()
+        .eq('id', req.params.id)
+        .eq('user_id', req.user.id)
+        .select('id')
+        .maybeSingle();
+      if (delErr) throw delErr;
+      if (!del) return res.status(404).json({ error: 'Position not found' });
+
+      // 2) Undo the buy's cash effect (symmetric with the funded-buy debit): restore the
+      //    original COST BASIS to cash iff the buy debited cash. funded_from_cash === false
+      //    is a recorded holding that never moved cash, so leave cash untouched; NULL
+      //    (legacy) and true both debited at buy, so both restore. We restore cost basis
+      //    (what was paid), NOT proceeds -- this is an erase, not a sale.
+      let cash = null, cashSynced = true;
+      const restore = cashToRestoreOnDelete(pos); // 0 for a recorded holding; cost basis for a funded buy
+      if (restore > 0) {
+        const cc = await adjustCashBalanceSafe(req.user.id, restore);
+        cash = cc.cash; cashSynced = cc.ok;
+        if (!cc.ok) console.error(`[req:${req.requestId}] [Portfolio] CASH DRIFT: failed to restore $${restore.toFixed(2)} cost basis after deleting ${pos.ticker} for user ${req.user.id}.`);
+      } else {
+        cash = await getCashBalance(req.user.id);
+      }
+
+      // 3) Purge every per-ticker trace so the position leaves NO footprint in stats or the
+      //    agent's memory. All are user+ticker scoped and best-effort: one failing must not
+      //    block the others (Supabase returns { error } rather than throwing).
+      //    - decisions: ONLY unresolved rows (outcome_status null) -> the open footprint of
+      //      THIS position; a prior real, closed trade on the same symbol stays intact.
+      //    - agent_memory: .eq('ticker', T) never matches cash_balance / onboarding_anchor
+      //      rows (those carry a null ticker), so the cash balance + identity anchors survive.
+      //    Kept on purpose: closed_trades (none created), the user's own journal_notes,
+      //    watchlist, portfolio_snapshots (book-level), and founder telemetry (ai_*).
+      const t = pos.ticker;
+      const purges = await Promise.allSettled([
+        supabase.from('decisions').delete().eq('user_id', req.user.id).eq('ticker', t).is('outcome_status', null),
+        supabase.from('agent_memory').delete().eq('user_id', req.user.id).eq('ticker', t),
+        supabase.from('research_status').delete().eq('user_id', req.user.id).eq('ticker', t),
+        supabase.from('price_alerts').delete().eq('user_id', req.user.id).eq('ticker', t),
+        supabase.from('portfolio_analyses').delete().eq('user_id', req.user.id).eq('ticker', t),
+      ]);
+      purges.forEach((p, i) => {
+        const err = p.status === 'rejected' ? p.reason : p.value?.error;
+        if (err) console.warn(`[req:${req.requestId}] [Portfolio] delete-purge step ${i} for ${t} failed:`, err.message || err);
+      });
+
+      trackFeature('position_deleted', req.user.id);
+      return res.json({ success: true, deleted: true, ticker: t, cash, cashSynced });
+    }
+
     // Double-submit guard: a double-clicked Sell/Trim or a retried request must not
     // credit cash or sell shares twice. (A full close is already safe via the RPC's
     // DELETE...RETURNING, but a trim is not, so we guard both.) Claimed synchronously

@@ -122,6 +122,9 @@ export const api = {
     assessPlan: (body) => post('/api/portfolio/assess-plan', body),
     editPosition: (id, body) => patch(`/api/portfolio/positions/${id}`, body),
     removePosition: (id, body) => del(`/api/portfolio/positions/${id}`, body),
+    // True DELETE: erase a position entirely with NO closed-trade and no win/loss recorded
+    // (distinct from removePosition/CLOSE). Purges the position's per-ticker footprint.
+    purgePosition: (id) => del(`/api/portfolio/positions/${id}?purge=true`),
     closedTrades: () => get('/api/portfolio/closed-trades'),
     snapshots: () => get('/api/portfolio/snapshots'),
     takeSnapshot: () => post('/api/portfolio/snapshot'),
